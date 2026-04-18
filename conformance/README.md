@@ -1,7 +1,7 @@
 # EPHEMERAL Conformance Test Vector Suite
 
 **Version**: 1.0.0
-**Spec reference**: `design-final.md` §15
+**Spec reference**: `design-final-v2.md` §15 (R7 + R8 integrated; supersedes `design-final.md` + `design-round7-tightenings.md` + `design-round8-operational-tightenings.md`)
 **Status**: Phase A artifact (design-phase, not yet validated by any implementation)
 
 ---
@@ -158,7 +158,7 @@ Open questions raised while authoring vectors (spec ambiguities) are tracked in 
 
 ## Relationship to spec revisions
 
-Every time `design-final.md` changes materially, the `spec_version` field in each vector file must be updated. If the change invalidates vectors, bump `schema_version` and annotate the migration in this README.
+Every time `design-final-v2.md` changes materially, the `spec_version` field in each vector file must be updated. If the change invalidates vectors, bump `schema_version` and annotate the migration in this README.
 
 The suite is an artifact of a specific spec commit. Vectors authored against one commit may not pass against a later commit without review.
 

@@ -1,0 +1,412 @@
+{
+  "artifact_type": "operator_reference",
+  "purpose": "Reference sensitive_path_patterns set for EPHEMERAL Tariff (§4.4 R8.F2) with Git, CI/CD, supply-chain, secrets, and IaC coverage. NOT a conformance test vector suite — this is a curated default operators embed (or adapt) into their signed Tariff.",
+  "version": "1.0.0",
+  "spec_reference": "design-final-v2.md §4.4 (R8.F2) + §14 residual flag Sec-N5 mitigation",
+  "spec_version": "round8-delta-applied",
+  "generated_at": "2026-04-18T00:00:00Z",
+  "audit_trail": "Phase 4 Review Swarm (security-reviewer, architect, code-reviewer, Explore) identified Sec-N5 as operator-configuration gap. Research pass (2026-04-18) consulted GitHub/GitLab branch-protection conventions, OWASP 2025 A03 Software Supply Chain Failures, and documented 2018-2026 supply-chain incidents (xz-utils CVE-2024-3094, tj-actions CVE-2025-30066, SpotBugs/reviewdog chain, Shai-Hulud 2025, axios 2026, event-stream 2018, ua-parser-js 2021, node-ipc 2022, Codecov 2021). Second security-review pass (2026-04-18) added: (a) `**/action.yml` / `**/action.yaml` MUST for GitHub reusable-action attack surface (SpotBugs/reviewdog rationale), (b) Bun ecosystem (`bun.lockb`, `bunfig.toml`) and depth-aware `**/.npmrc` MUST, (c) `pip.conf` / `.pip/pip.conf` / `pip.ini` MUST for pip registry-override pivot, (d) GitLab include-local fragments (`ci/**`, `pipelines/**`) SHOULD, (e) generic `Makefile` / `GNUmakefile` SHOULD extending xz-utils rationale, (f) SOPS-encrypted file variants (`*.sops.*`, `*.enc.*`) SHOULD, (g) lowercase ArgoCD variants + AppProject SHOULD, (h) Swift SPM and Dart/Flutter ecosystems SHOULD, (i) narrowed the `!**/examples/**` whitelist exception to documentation-only variants to prevent defeat of `.env` MUST rule, (j) narrowed `!**/vendor/**` to ecosystem-specific subtrees, (k) clarified `~DEFAULT_BRANCH` fork-PR resolution semantics, (l) documented `refs/heads/release/*` nested-branch limitation.",
+  "license_note": "Public-domain reference. Customers copy-and-adapt without attribution requirement.",
+
+  "match_grammar": {
+    "path_patterns": {
+      "syntax": "gitignore/CODEOWNERS-style globs with double-star directory crossing",
+      "reference_implementations": [
+        "Go: github.com/bmatcuk/doublestar",
+        "Rust: globset crate",
+        "Node: minimatch (with globstar=true)",
+        "Python: pathspec (gitwildmatch)"
+      ],
+      "semantics": {
+        "*": "matches zero-or-more non-separator characters",
+        "**": "matches zero-or-more path components (directories)",
+        "?": "matches exactly one non-separator character",
+        "[abc]": "character class",
+        "!pattern": "negation / whitelist exception (processed AFTER all MUST/SHOULD matches)"
+      }
+    },
+    "ref_patterns": {
+      "syntax": "Git refspec with explicit refs/ prefix + fnmatch (no ** directory crossing)",
+      "limitation_on_nested_release_branches": "A pattern like `refs/heads/release/*` matches only one path segment. Multi-level naming such as `refs/heads/release/2026/hotfix-123` is NOT matched. Operators with nested release hierarchies SHOULD either flatten to single-segment names or add explicit patterns per depth level (`refs/heads/release/*/*`, `refs/heads/release/*/*/*`). The `**` directory-crossing operator is intentionally NOT supported in ref_patterns to keep Git refspec semantics.",
+      "sentinels": {
+        "~DEFAULT_BRANCH": "Resolves to repository default-branch ref at Tariff-issuance time (per §4.4 R8.F6 frozen-at-issuance semantics). For fork-based pull-request workflows (e.g., GitHub pull_request_target, GitLab merge-request-from-fork), the sentinel resolves to the TARGET-repository's default branch — NOT the fork's — because the Tariff is issued against the target repository's identity. Operators with multi-target Tariffs SHOULD author one Tariff per target or use explicit branch names.",
+        "~ALL": "Matches every ref (use sparingly)"
+      }
+    },
+    "regex_escape_hatch": {
+      "prefix": "regex:",
+      "usage": "ONLY when glob grammar cannot express the constraint. Implementations SHOULD reject patterns with ReDoS-vulnerable constructs (catastrophic backtracking).",
+      "recommendation": "Avoid. Use globs."
+    }
+  },
+
+  "classifications": {
+    "MUST": "Industry consensus + documented supply-chain incidents. Omission creates known attack surface. Every Tariff SHOULD embed this set unchanged or explicitly justify omission in audit trail.",
+    "SHOULD": "Context-dependent. Applies when the integration/project uses the named toolchain. Operators evaluate applicability; non-applicable patterns MAY be omitted without audit justification.",
+    "WHITELIST": "Explicit exceptions (documentation/test fixtures) that would otherwise trigger false positives. Processed after MUST/SHOULD matches."
+  },
+
+  "categories": [
+    {
+      "id": "git_refs",
+      "title": "Git protected-branch and tag refs",
+      "classification": "MUST",
+      "default_tier_bump": 1,
+      "rationale": "Force-push / ref-delete / tag-overwrite on these refs enables code-injection into protected release paths. Sec-N5 original driver: the pre-v2 default {prod/*, root/*, admin/*, ceremony/*} missed Git ref operations entirely.",
+      "sensitive_actions_regardless_of_pattern": [
+        "force-push",
+        "delete-ref",
+        "tag-overwrite",
+        "refs/notes/* rewrite"
+      ],
+      "patterns": [
+        {"glob": "refs/heads/main", "classification": "MUST", "notes": "GitHub/GitLab current default branch name"},
+        {"glob": "refs/heads/master", "classification": "MUST", "notes": "Legacy default; still present in ~40% of repos"},
+        {"glob": "refs/heads/develop", "classification": "SHOULD", "notes": "git-flow integration branch — applies where git-flow is used"},
+        {"glob": "refs/heads/release/*", "classification": "MUST", "notes": "Release-train branches"},
+        {"glob": "refs/heads/hotfix/*", "classification": "MUST", "notes": "Emergency-path branches into production"},
+        {"glob": "refs/heads/production", "classification": "SHOULD"},
+        {"glob": "refs/heads/prod", "classification": "SHOULD"},
+        {"glob": "refs/heads/staging", "classification": "SHOULD"},
+        {"glob": "refs/heads/stage", "classification": "SHOULD"},
+        {"glob": "refs/tags/v*", "classification": "MUST", "notes": "Version tags; overwrite = supply-chain injection via re-tagging"},
+        {"glob": "refs/tags/release-*", "classification": "SHOULD"},
+        {"ref_sentinel": "~DEFAULT_BRANCH", "classification": "MUST", "notes": "Portable reference to whatever default branch is frozen-at-issuance in Tariff.integration_config.default_branch (§4.4 R8.F6)"}
+      ]
+    },
+
+    {
+      "id": "ci_cd_workflows",
+      "title": "CI/CD pipeline and workflow files",
+      "classification": "MUST",
+      "default_tier_bump": 1,
+      "rationale": "Direct attack surface. CVE-2025-30066 (tj-actions/changed-files, 23k repos compromised 2025-03), SpotBugs→reviewdog chain (Nov 2024–Mar 2025), Codecov 2021. Workflow-file modification is equivalent to build-time code execution.",
+      "patterns": [
+        {"glob": ".github/workflows/**/*.yml", "classification": "MUST"},
+        {"glob": ".github/workflows/**/*.yaml", "classification": "MUST"},
+        {"glob": ".github/actions/**", "classification": "MUST", "notes": "Composite/local Actions"},
+        {"glob": "**/action.yml", "classification": "MUST", "notes": "Reusable action root — SpotBugs/reviewdog 2024-25 attack surface (any depth)"},
+        {"glob": "**/action.yaml", "classification": "MUST"},
+        {"glob": ".github/CODEOWNERS", "classification": "MUST", "notes": "Modifying CODEOWNERS bypasses review gates"},
+        {"glob": ".github/dependabot.yml", "classification": "MUST"},
+        {"glob": ".gitlab-ci.yml", "classification": "MUST"},
+        {"glob": ".gitlab/**/*.yml", "classification": "MUST"},
+        {"glob": "ci/**/*.yml", "classification": "SHOULD", "notes": "GitLab include-local / generic CI fragments outside .gitlab/"},
+        {"glob": "ci/**/*.yaml", "classification": "SHOULD"},
+        {"glob": "pipelines/**/*.yml", "classification": "SHOULD"},
+        {"glob": "pipelines/**/*.yaml", "classification": "SHOULD"},
+        {"glob": ".circleci/config.yml", "classification": "MUST"},
+        {"glob": "**/Jenkinsfile", "classification": "MUST"},
+        {"glob": "Jenkinsfile.*", "classification": "MUST"},
+        {"glob": "azure-pipelines.yml", "classification": "MUST"},
+        {"glob": ".azuredevops/**", "classification": "MUST"},
+        {"glob": "bitbucket-pipelines.yml", "classification": "MUST"},
+        {"glob": ".buildkite/**", "classification": "SHOULD"},
+        {"glob": ".drone.yml", "classification": "SHOULD"},
+        {"glob": ".woodpecker.yml", "classification": "SHOULD"}
+      ]
+    },
+
+    {
+      "id": "build_and_container_files",
+      "title": "Build system and container specifications",
+      "classification": "MUST",
+      "default_tier_bump": 1,
+      "rationale": "CVE-2024-3094 (xz-utils, 2024-03) exploited autotools plumbing (`build-to-host.m4`) — a file most defenses ignore. Dockerfile compromise injects trojanized base images into every downstream build.",
+      "patterns": [
+        {"glob": "Dockerfile", "classification": "MUST"},
+        {"glob": "**/Dockerfile", "classification": "MUST"},
+        {"glob": "Containerfile", "classification": "MUST"},
+        {"glob": "**/Containerfile", "classification": "MUST"},
+        {"glob": "docker-compose*.yml", "classification": "MUST"},
+        {"glob": "docker-compose*.yaml", "classification": "MUST"},
+        {"glob": "compose.yml", "classification": "MUST"},
+        {"glob": "compose.yaml", "classification": "MUST"},
+        {"glob": "**/build-to-host.m4", "classification": "MUST", "notes": "xz-utils CVE-2024-3094 exploit path"},
+        {"glob": "configure.ac", "classification": "SHOULD"},
+        {"glob": "Makefile.am", "classification": "SHOULD"},
+        {"glob": "Makefile", "classification": "SHOULD", "notes": "Non-autotools projects — xz CVE-2024-3094 rationale extends"},
+        {"glob": "**/Makefile", "classification": "SHOULD"},
+        {"glob": "**/GNUmakefile", "classification": "SHOULD"},
+        {"glob": "aclocal.m4", "classification": "SHOULD"},
+        {"glob": ".buildpacks", "classification": "SHOULD"}
+      ]
+    },
+
+    {
+      "id": "dependency_manifests",
+      "title": "Package/dependency manifests and lockfiles",
+      "classification": "MUST",
+      "default_tier_bump": 1,
+      "rationale": "Primary supply-chain pivot point. Incidents: event-stream (2018), ua-parser-js (2021), node-ipc (2022), Shai-Hulud 1+2 (2025, 500+ packages), axios (2026). Lockfile-version-pin bypass is a documented 2026 attack vector.",
+      "patterns_by_ecosystem": {
+        "node": [
+          {"glob": "package.json", "classification": "MUST"},
+          {"glob": "**/package.json", "classification": "MUST"},
+          {"glob": "package-lock.json", "classification": "MUST"},
+          {"glob": "npm-shrinkwrap.json", "classification": "MUST"},
+          {"glob": "yarn.lock", "classification": "MUST"},
+          {"glob": "pnpm-lock.yaml", "classification": "MUST"},
+          {"glob": ".npmrc", "classification": "MUST", "notes": "Registry override = supply-chain pivot"},
+          {"glob": "**/.npmrc", "classification": "MUST", "notes": "Depth-aware — per-workspace registry override"},
+          {"glob": ".yarnrc", "classification": "MUST"},
+          {"glob": ".yarnrc.yml", "classification": "MUST"},
+          {"glob": "bun.lockb", "classification": "MUST", "notes": "Bun binary lockfile — ecosystem share ~8% (2025)"},
+          {"glob": "**/bun.lockb", "classification": "MUST"},
+          {"glob": "bunfig.toml", "classification": "MUST"},
+          {"glob": "**/bunfig.toml", "classification": "MUST"}
+        ],
+        "python": [
+          {"glob": "requirements*.txt", "classification": "MUST"},
+          {"glob": "pyproject.toml", "classification": "MUST"},
+          {"glob": "Pipfile", "classification": "MUST"},
+          {"glob": "Pipfile.lock", "classification": "MUST"},
+          {"glob": "poetry.lock", "classification": "MUST"},
+          {"glob": "uv.lock", "classification": "MUST"},
+          {"glob": "setup.py", "classification": "MUST"},
+          {"glob": "setup.cfg", "classification": "SHOULD"},
+          {"glob": "pip.conf", "classification": "MUST", "notes": "pip registry override — supply-chain pivot analogous to .npmrc"},
+          {"glob": ".pip/pip.conf", "classification": "MUST"},
+          {"glob": "**/.pip/pip.conf", "classification": "MUST"},
+          {"glob": "pip.ini", "classification": "MUST", "notes": "Windows variant"}
+        ],
+        "go": [
+          {"glob": "go.mod", "classification": "MUST"},
+          {"glob": "go.sum", "classification": "MUST"},
+          {"glob": "vendor/modules.txt", "classification": "SHOULD"}
+        ],
+        "rust": [
+          {"glob": "Cargo.toml", "classification": "MUST"},
+          {"glob": "Cargo.lock", "classification": "MUST"}
+        ],
+        "jvm": [
+          {"glob": "pom.xml", "classification": "MUST"},
+          {"glob": "build.gradle", "classification": "MUST"},
+          {"glob": "build.gradle.kts", "classification": "MUST"},
+          {"glob": "settings.gradle*", "classification": "MUST"},
+          {"glob": "gradle/wrapper/gradle-wrapper.properties", "classification": "MUST"},
+          {"glob": "gradle/wrapper/gradle-wrapper.jar", "classification": "MUST", "notes": "Binary wrapper — OWASP 2025 A03 explicit callout"}
+        ],
+        "ruby": [
+          {"glob": "Gemfile", "classification": "MUST"},
+          {"glob": "Gemfile.lock", "classification": "MUST"},
+          {"glob": "*.gemspec", "classification": "MUST"}
+        ],
+        "php": [
+          {"glob": "composer.json", "classification": "MUST"},
+          {"glob": "composer.lock", "classification": "MUST"}
+        ],
+        "dotnet": [
+          {"glob": "**/*.csproj", "classification": "MUST"},
+          {"glob": "packages.lock.json", "classification": "MUST"},
+          {"glob": "paket.lock", "classification": "SHOULD"}
+        ],
+        "elixir_erlang": [
+          {"glob": "mix.exs", "classification": "SHOULD"},
+          {"glob": "mix.lock", "classification": "SHOULD"},
+          {"glob": "rebar.config", "classification": "SHOULD"}
+        ],
+        "swift": [
+          {"glob": "Package.swift", "classification": "SHOULD", "notes": "SPM root manifest"},
+          {"glob": "Package.resolved", "classification": "SHOULD", "notes": "SPM lockfile"}
+        ],
+        "dart_flutter": [
+          {"glob": "pubspec.yaml", "classification": "SHOULD", "notes": "Dart/Flutter manifest — equivalent to package.json"},
+          {"glob": "pubspec.lock", "classification": "SHOULD"}
+        ]
+      }
+    },
+
+    {
+      "id": "secrets_and_credentials",
+      "title": "Secret files, private keys, credential stores",
+      "classification": "MUST",
+      "default_tier_bump": 2,
+      "rationale": "Direct exposure. GitGuardian Top-10 leaking-extensions statistics: 2023-2026 incidents consistently show .env, *.pem, kubeconfig as top-3 leak vectors. Tier bump is +2 (not +1) because exposure is immediate and not bounded by revocation latency.",
+      "patterns": [
+        {"glob": ".env", "classification": "MUST"},
+        {"glob": ".env.*", "classification": "MUST"},
+        {"glob": "**/.env", "classification": "MUST"},
+        {"glob": "**/.env.*", "classification": "MUST"},
+        {"glob": "*.pem", "classification": "MUST"},
+        {"glob": "*.key", "classification": "MUST"},
+        {"glob": "*.p12", "classification": "MUST"},
+        {"glob": "*.pfx", "classification": "MUST"},
+        {"glob": "*.jks", "classification": "MUST"},
+        {"glob": "*.keystore", "classification": "MUST"},
+        {"glob": "**/id_rsa", "classification": "MUST"},
+        {"glob": "**/id_ed25519", "classification": "MUST"},
+        {"glob": "**/id_ecdsa", "classification": "MUST"},
+        {"glob": "**/id_dsa", "classification": "MUST"},
+        {"glob": "*.ppk", "classification": "MUST"},
+        {"glob": "**/.aws/credentials", "classification": "MUST"},
+        {"glob": "**/.aws/config", "classification": "MUST"},
+        {"glob": "**/.kube/config", "classification": "MUST"},
+        {"glob": "**/kubeconfig", "classification": "MUST"},
+        {"glob": "**/.docker/config.json", "classification": "MUST"},
+        {"glob": "**/.netrc", "classification": "MUST"},
+        {"glob": "**/.pgpass", "classification": "MUST"},
+        {"glob": "**/.my.cnf", "classification": "MUST"},
+        {"glob": "secrets/**", "classification": "MUST"},
+        {"glob": "**/secrets.yml", "classification": "MUST"},
+        {"glob": "**/secrets.yaml", "classification": "MUST"},
+        {"glob": "**/credentials.json", "classification": "MUST"},
+        {"glob": "service-account*.json", "classification": "MUST", "notes": "GCP service account keys"},
+        {"glob": "*-sa.json", "classification": "MUST", "notes": "GCP service account keys (alternate naming)"},
+        {"glob": "*.gpg", "classification": "SHOULD", "notes": "Armored secrets — unless sealed via SOPS/sealed-secrets"},
+        {"glob": "*.age", "classification": "SHOULD", "notes": "age-encrypted files — unless signing-authority-verified"},
+        {"glob": "**/*.sops.yaml", "classification": "SHOULD", "notes": "SOPS-encrypted — ciphertext integrity attack surface"},
+        {"glob": "**/*.sops.yml", "classification": "SHOULD"},
+        {"glob": "**/*.sops.json", "classification": "SHOULD"},
+        {"glob": "**/*.enc.yaml", "classification": "SHOULD", "notes": "SOPS convention — encrypted payload"},
+        {"glob": "**/*.enc.yml", "classification": "SHOULD"},
+        {"glob": "**/*.enc.json", "classification": "SHOULD"}
+      ]
+    },
+
+    {
+      "id": "iac_manifests",
+      "title": "Infrastructure-as-Code and deployment manifests",
+      "classification": "SHOULD",
+      "default_tier_bump": 1,
+      "rationale": "Config-mutation attack path. Terraform state files (*.tfstate) contain live credentials per AWS Prescriptive Guidance. K8s/Helm values files control runtime capability grants. Classification is SHOULD (not MUST) because applicability depends on project layout.",
+      "patterns_by_tool": {
+        "terraform": [
+          {"glob": "**/*.tf", "classification": "SHOULD"},
+          {"glob": "**/*.tfvars", "classification": "SHOULD"},
+          {"glob": "**/*.tfvars.json", "classification": "SHOULD"},
+          {"glob": "**/*.tfstate", "classification": "MUST", "notes": "State files contain live secrets"},
+          {"glob": "**/*.tfstate.*", "classification": "MUST"},
+          {"glob": "**/.terraform.lock.hcl", "classification": "SHOULD"}
+        ],
+        "kubernetes_helm": [
+          {"glob": "k8s/**", "classification": "SHOULD"},
+          {"glob": "manifests/**", "classification": "SHOULD"},
+          {"glob": "deploy/**", "classification": "SHOULD"},
+          {"glob": "deployment/**", "classification": "SHOULD"},
+          {"glob": "helm/**", "classification": "SHOULD"},
+          {"glob": "charts/**/Chart.yaml", "classification": "SHOULD"},
+          {"glob": "charts/**/values*.yaml", "classification": "MUST", "notes": "values files encode capability grants"},
+          {"glob": "**/kustomization.yml", "classification": "SHOULD"},
+          {"glob": "**/kustomization.yaml", "classification": "SHOULD"}
+        ],
+        "ansible": [
+          {"glob": "playbooks/**/*.yml", "classification": "SHOULD"},
+          {"glob": "playbooks/**/*.yaml", "classification": "SHOULD"},
+          {"glob": "roles/**/tasks/*.yml", "classification": "SHOULD"},
+          {"glob": "inventory/**", "classification": "SHOULD"},
+          {"glob": "group_vars/**", "classification": "MUST", "notes": "Commonly contains secrets"},
+          {"glob": "host_vars/**", "classification": "MUST"}
+        ],
+        "pulumi": [
+          {"glob": "Pulumi.yaml", "classification": "SHOULD"},
+          {"glob": "Pulumi.*.yaml", "classification": "SHOULD"}
+        ],
+        "cloudformation_cdk_sam": [
+          {"glob": "**/cloudformation/*.yml", "classification": "SHOULD"},
+          {"glob": "**/cloudformation/*.yaml", "classification": "SHOULD"},
+          {"glob": "**/cfn/*.yml", "classification": "SHOULD"},
+          {"glob": "**/cfn/*.yaml", "classification": "SHOULD"},
+          {"glob": "**/*.template.json", "classification": "SHOULD"},
+          {"glob": "cdk.json", "classification": "SHOULD"},
+          {"glob": "cdk.context.json", "classification": "SHOULD"},
+          {"glob": "serverless.yml", "classification": "SHOULD"},
+          {"glob": "serverless.yaml", "classification": "SHOULD"},
+          {"glob": "samconfig.toml", "classification": "SHOULD"}
+        ],
+        "flux_argocd": [
+          {"glob": "**/Application.yml", "classification": "SHOULD"},
+          {"glob": "**/Application.yaml", "classification": "SHOULD"},
+          {"glob": "**/application.yml", "classification": "SHOULD", "notes": "Lowercase variant — common when rendered by Helm/kustomize"},
+          {"glob": "**/application.yaml", "classification": "SHOULD"},
+          {"glob": "**/AppProject.yml", "classification": "SHOULD", "notes": "ArgoCD AppProject — cluster-admin RBAC grants"},
+          {"glob": "**/AppProject.yaml", "classification": "SHOULD"},
+          {"glob": "**/appproject.yml", "classification": "SHOULD"},
+          {"glob": "**/appproject.yaml", "classification": "SHOULD"}
+        ]
+      }
+    },
+
+    {
+      "id": "legacy_original_defaults",
+      "title": "Original pre-R8 defaults (preserved for backwards compatibility)",
+      "classification": "MUST",
+      "default_tier_bump": 1,
+      "rationale": "Preserved from the pre-Sec-N5 default set {prod/*, root/*, admin/*, ceremony/*}. Operators already depending on these patterns retain coverage.",
+      "patterns": [
+        {"glob": "prod/*", "classification": "MUST"},
+        {"glob": "prod/**", "classification": "MUST"},
+        {"glob": "root/*", "classification": "MUST"},
+        {"glob": "root/**", "classification": "MUST"},
+        {"glob": "admin/*", "classification": "MUST"},
+        {"glob": "admin/**", "classification": "MUST"},
+        {"glob": "ceremony/*", "classification": "MUST"},
+        {"glob": "ceremony/**", "classification": "MUST"}
+      ]
+    }
+  ],
+
+  "whitelist_exceptions": {
+    "classification": "WHITELIST",
+    "purpose": "Documented false-positive exceptions. Processed AFTER all MUST/SHOULD matches via !pattern negation in operator Tariff.",
+    "patterns": [
+      {"glob": "!**/.env.example"},
+      {"glob": "!**/.env.sample"},
+      {"glob": "!**/.env.template"},
+      {"glob": "!**/examples/**/*.md", "notes": "Narrow exception — covers documentation only. Do NOT whitelist the whole examples/ tree (would defeat .env MUST rule on scaffolding .env files)."},
+      {"glob": "!**/examples/**/README*"},
+      {"glob": "!**/examples/**/*.txt"},
+      {"glob": "!**/testdata/**"},
+      {"glob": "!**/fixtures/**"},
+      {"glob": "!**/node_modules/**", "notes": "Node vendored deps — not the project's own source"},
+      {"glob": "!**/vendor/bundle/**", "notes": "Ruby bundled gems (narrow scope)"},
+      {"glob": "!**/vendor/composer/**", "notes": "PHP composer vendored deps"},
+      {"glob": "!**/.git/**"},
+      {"glob": "!**/docs/**/*.env"}
+    ],
+    "note": "Operators SHOULD audit that whitelist exceptions are genuinely documentation or test fixtures. A whitelist match on a real secret file is an audit-review finding. Pre-v1.1 versions had a blanket `!**/vendor/**` exception that incorrectly whitelisted `vendor/modules.txt` (Go) and `vendor/**/*.tf` (Terraform); narrowed in v1.0.0 to ecosystem-specific vendor subtrees."
+  },
+
+  "known_incidents_informing_coverage": [
+    {"id": "xz-utils-2024", "cve": "CVE-2024-3094", "date": "2024-03", "exploited_files": ["build-to-host.m4"], "category": "build_and_container_files"},
+    {"id": "tj-actions-2025", "cve": "CVE-2025-30066", "date": "2025-03", "exploited_files": [".github/workflows/*.yml"], "affected_repos": 23000, "category": "ci_cd_workflows"},
+    {"id": "spotbugs-reviewdog-2024-25", "date": "2024-11 to 2025-03", "exploited_files": [".github/workflows/*.yml (pull_request_target)"], "category": "ci_cd_workflows"},
+    {"id": "shai-hulud-2025", "date": "2025-11", "exploited_files": ["package.json (pre/post-install hooks)"], "affected_packages": 500, "category": "dependency_manifests"},
+    {"id": "axios-2026", "date": "2026-03", "exploited_files": ["package-lock.json"], "category": "dependency_manifests"},
+    {"id": "event-stream-2018", "date": "2018-11", "exploited_files": ["package.json"], "category": "dependency_manifests"},
+    {"id": "ua-parser-js-2021", "date": "2021-10", "exploited_files": ["package.json (preinstall)"], "category": "dependency_manifests"},
+    {"id": "node-ipc-2022", "date": "2022-03", "exploited_files": ["package.json"], "category": "dependency_manifests"},
+    {"id": "codecov-2021", "date": "2021-04", "exploited_files": ["CI pipeline bash uploader → env exfil"], "category": "ci_cd_workflows"}
+  ],
+
+  "false_positive_hotspots": {
+    "guidance": "Patterns known to match too broadly. Avoid as-is; scope tightly.",
+    "entries": [
+      {"antipattern": "**/*.yml", "problem": "Matches fixtures, OpenAPI specs, i18n files", "replacement": "Scope to `.github/workflows/**`, `k8s/**`, `charts/**`, `playbooks/**`"},
+      {"antipattern": "**/*.json", "problem": "Matches node_modules, fixtures, OpenAPI", "replacement": "Only `package*.json`, `composer*.json`, `*.tfstate`, `credentials.json`"},
+      {"antipattern": "**/*.tf", "problem": "Matches vendored examples", "replacement": "Exclude `**/examples/**`, `**/testdata/**`, `**/fixtures/**` via whitelist"},
+      {"antipattern": "**/config", "problem": "Matches any file named 'config' including docs", "replacement": "Scope to `.kube/config`, `**/docker/config.json`, etc."},
+      {"antipattern": "Dockerfile (root-wide)", "problem": "Matches test/Dockerfile and e2e/Dockerfile", "replacement": "Acceptable risk for simplicity; document if test Dockerfiles should be excluded"}
+    ]
+  },
+
+  "tariff_embedding_guidance": {
+    "integration_into_tariff": "Customers embed selected patterns into their signed Tariff as sensitive_path_patterns field (§4.4 R8.F2). The Tariff field is a SET-typed array of glob strings (R7.C6 §4.2.1). Structured metadata in this reference (classification, rationale, incident_refs) is operator-facing only — NOT included in the signed Tariff payload.",
+    "minimum_tariff_embedding": {
+      "description": "Minimum viable Tariff coverage per Sec-N5. Adopting ALL 'MUST' patterns from categories git_refs, ci_cd_workflows, build_and_container_files, dependency_manifests, secrets_and_credentials, legacy_original_defaults satisfies the pre-production requirement.",
+      "approximate_pattern_count": 188,
+      "pattern_count_breakdown": {"MUST": 114, "SHOULD": 74, "total": 188},
+      "approximate_pattern_count_note": "Counts verified 2026-04-18 post-review-swarm. Post-v1.0 internal security-review pass added ~30 patterns across action.yml, Bun, pip.conf, GitLab include-local, generic Makefile, SOPS, ArgoCD lowercase, Swift, and Dart/Flutter coverage before ship."
+    },
+    "customization": "Operators MUST review every pattern against their project layout. A SHOULD-classified pattern that doesn't apply (e.g., `mix.lock` in a non-Elixir project) MAY be omitted. A MUST-classified pattern SHOULD NOT be omitted without explicit audit-trail justification.",
+    "update_cadence": "This reference artifact is spec-version-pinned (round8-delta-applied). Updates ship with subsequent spec revisions. Incident-driven interim additions MAY be published as advisory updates without spec revision — operators SHOULD subscribe to EPHEMERAL advisory channel."
+  },
+
+  "conformance_cross_reference": {
+    "note": "This file is NOT a conformance test vector suite. For test vectors exercising R8.F2 sensitive-path bump behavior, see:",
+    "related_vectors": [
+      {"file": "conformance/fuzz-baseline.json", "vectors": ["fuzz-079", "fuzz-080", "fuzz-167"], "coverage": "R8.F2 prod/* and root/* bump; NFKC homoglyph bypass"}
+    ],
+    "phase_b_expansion": "Phase B validator harness SHOULD author additional fuzz-baseline vectors exercising ci_cd_workflows, dependency_manifests, and secrets_and_credentials coverage. Tracked as Sec-N5 Phase B instrumentation task."
+  }
+}

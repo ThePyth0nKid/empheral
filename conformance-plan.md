@@ -47,7 +47,7 @@ Three reasons, ordered by weight:
 
 ## Phase B — Reference validator harness (design→development boundary)
 
-**Trigger for starting Phase B**: conformance vectors passed an independent review (external or second-LLM) with zero ambiguity findings. If Phase A surfaces ambiguities in `design-final.md`, fix those first.
+**Trigger for starting Phase B**: conformance vectors passed an independent review (external or second-LLM) with zero ambiguity findings. If Phase A surfaces ambiguities in `design-final-v2.md`, fix those first.
 
 **Deliverables:**
 
@@ -128,7 +128,7 @@ The code-reviewer pass identified 4 CRITICAL (fixed), 6 HIGH (2 fixed inline, 4 
 
 **Fixed before Phase A commit:**
 - CRIT-1: duplicate JSON key in canonicalization.json `coverage_summary`.
-- CRIT-2: `spec_version` unified to `round6-final` across all files.
+- CRIT-2: `spec_version` unified to `round8-delta-applied` across all files (historical note: originally unified at `round6-final` during Phase A, bumped to `round7-applied` for R7 tightenings, and finally to `round8-delta-applied` when R8 operational tightenings merged into `design-final-v2.md`).
 - CRIT-3: 4 new vectors (trej-065..068) cover V3-6 `revocation_channel_ha` enforcement.
 - CRIT-4: `version-skew` renamed to `tariff-self-inconsistent-version` in tariff-reject to avoid cross-file code collision.
 - HIGH-1: 4 new vectors (ds-065..068) cover §3.1 Layer 1 narrowness-rule.
@@ -159,7 +159,7 @@ These 38 questions are the highest-value Phase A output. Each one is a spec-prec
 ## Phase B entry criteria (revised, post-Phase-A)
 
 Entry to Phase B requires one of:
-1. Independent second-LLM or human review of the 38 open spec questions — each resolved with a spec tightening or documented as "intentionally lenient". Raise spec to `design-final-round7.md` or equivalent.
+1. Independent second-LLM or human review of the 38 open spec questions — each resolved with a spec tightening or documented as "intentionally lenient". Raise spec to `design-final-v2.md` (R7 + R8 integrated) or equivalent.
 2. Decision to proceed with Phase B using the current suite as-is, with Phase B validator harness tracking ambiguities as work items rather than resolving them upfront.
 
 Path 1 is cheaper in total effort; Path 2 is faster to validator-reality-check.
@@ -168,7 +168,7 @@ Path 1 is cheaper in total effort; Path 2 is faster to validator-reality-check.
 
 **Actual resolution (2026-04-18)**: Path 1 adopted for **all 38 questions** — bounded 15 via R7 (`design-round7-tightenings.md`), operational 23 via R8 (`design-round8-operational-tightenings.md`). R8 was produced by a 4-architect agent swarm (one per cluster: PCR, Anomaly, Tariff, Fuzz) plus a two-pass review swarm (security-reviewer + code-reviewer + architect + Explore/redundancy). Pass 1: 6 findings (Sec-N1-N3, Code-N4/N5/N8) fixed in-place. Pass 2: 5 CRIT + 9 HIGH + 7 MED + 3 LOW findings across security/architect/code-reviewer reports; resolution strategy split into three categories — (A) mechanical count/rationale fixes applied directly to R8 delta + vectors; (B) four Pre-Integration Blockers (B-1 through B-4) documented in R8 as design-final.md/R7 amendment dependencies for the integration pass; (C) four operational residual flags (key_epoch self-declared, canary git-ref dead-zone, revocation cascade undefined, HWM bootstrap) added to R8 residual flags for Phase B instrumentation. Final strength direction: **23 STRENGTHEN / 0 NEUTRAL / 0 WEAKEN**, 32 new reject codes, 3 vector reject-code flips, 3 schema migrations, 0 outcome flips.
 
-**Phase B entry is satisfied via Path 1 — CONDITIONAL** on Pre-Integration Blockers B-1 through B-4 resolution during the integration pass. The reference validator harness can be scaffolded against `design-final.md` + `design-round7-tightenings.md` + `design-round8-operational-tightenings.md` provided R8-dependent behaviors that collide with R6/R7 baselines are conservatively rejected until integration lands.
+**Phase B entry is satisfied via Path 1 — CONDITIONAL** on Pre-Integration Blockers B-1 through B-4 resolution during the integration pass. The reference validator harness SHOULD be scaffolded against `design-final-v2.md` (the integrated R7 + R8 product, superseding the three-document stack `design-final.md` + `design-round7-tightenings.md` + `design-round8-operational-tightenings.md`). **[HISTORICAL NOTE — pre-integration guidance]**: during the integration pass itself, the harness was permitted to scaffold against the pre-integration three-document stack provided R8-dependent behaviors that collided with R6/R7 baselines were conservatively rejected. That guidance is superseded now that `design-final-v2.md` exists.
 
 ---
 
