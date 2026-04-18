@@ -51,8 +51,12 @@ pub use codec::{core_to_json, json_to_core, CoreToJsonError, CoreValue, MAX_JSON
 pub use error::{SchemaError, ValidatorError};
 pub use runner::{run_file, run_many, FileRunResult, RunConfig};
 pub use suite_file::{load_suite_file, LoadedSuite, MAX_SUITE_FILE_BYTES};
+pub use suites::audit::AuditRejectCode;
 pub use suites::canonicalization::CanonRejectCode;
 pub use suites::delegation::DelegationRejectCode;
+pub use suites::fuzz::FuzzRejectCode;
+pub use suites::pcr::PcrRejectCode;
+pub use suites::tariff::TariffRejectCode;
 pub use types::{
     ExpectedOutcome, Outcome, Severity, SkipReason, SuiteFile, SuiteReport, TestReport,
     ValidationOutcome, Vector, VectorFailure, VectorSuite,

@@ -17,9 +17,9 @@ use std::time::SystemTime;
 use crate::error::{SchemaError, ValidatorError};
 use crate::schema::CompiledSchema;
 use crate::suite_file::{load_suite_file, LoadedSuite};
-use crate::suites::{canonicalization, delegation};
+use crate::suites::{audit, canonicalization, delegation, fuzz, pcr, tariff};
 use crate::types::{
-    SkipReason, SuiteReport, TestReport, ValidationOutcome, Vector, VectorFailure, VectorSuite,
+    SuiteReport, TestReport, ValidationOutcome, Vector, VectorFailure, VectorSuite,
 };
 
 /// Harness config for a single run.
@@ -151,18 +151,15 @@ fn report_with_harness_error(path: &Path, err: &ValidatorError) -> SuiteReport {
 
 /// Dispatch a vector to its suite executor.
 ///
-/// Session 2: Canonicalization + DelegationScope are live; the remaining four
-/// suites stay skipped until Session 3.
+/// Session 3: all six suites execute semantic verdicts.
 fn execute_vector(loaded: &LoadedSuite, vector: &Vector) -> ValidationOutcome {
     match loaded.parsed.vector_suite {
         VectorSuite::Canonicalization => canonicalization::execute(vector),
         VectorSuite::DelegationScope => delegation::execute(vector),
-        VectorSuite::FuzzBaseline
-        | VectorSuite::TariffReject
-        | VectorSuite::PcrAttestationReject
-        | VectorSuite::AuditReplay => ValidationOutcome::Skipped {
-            reason: SkipReason::SuiteNotImplementedThisSession,
-        },
+        VectorSuite::FuzzBaseline => fuzz::execute(vector),
+        VectorSuite::TariffReject => tariff::execute(vector),
+        VectorSuite::PcrAttestationReject => pcr::execute(vector),
+        VectorSuite::AuditReplay => audit::execute(vector),
     }
 }
 

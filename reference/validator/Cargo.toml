@@ -34,6 +34,7 @@ unicode-normalization = "0.1"
 caseless = "0.2"
 proptest = "1.5"
 hex = "0.4"
+time = { version = "0.3", features = ["parsing", "formatting", "macros"] }
 
 [profile.release]
 lto = "thin"

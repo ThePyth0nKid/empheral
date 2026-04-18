@@ -155,7 +155,7 @@ fn default_inputs(dir: &Path) -> Vec<PathBuf> {
 
 fn print_report(report: &TestReport, verbose: bool) {
     let mut stdout = std::io::stdout().lock();
-    let _ = writeln!(stdout, "EPHEMERAL reference validator — Session 1 report");
+    let _ = writeln!(stdout, "EPHEMERAL reference validator — conformance report");
     let _ = writeln!(stdout, "{:=<56}", "");
     for (suite, sr) in &report.per_suite {
         let schema_label = match sr.schema_ok {

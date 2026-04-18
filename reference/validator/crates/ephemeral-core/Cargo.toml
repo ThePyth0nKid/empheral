@@ -17,6 +17,7 @@ thiserror = { workspace = true }
 jsonschema = { workspace = true }
 unicode-normalization = { workspace = true }
 caseless = { workspace = true }
+time = { workspace = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }

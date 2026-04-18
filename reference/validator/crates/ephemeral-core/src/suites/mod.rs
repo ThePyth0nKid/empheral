@@ -10,5 +10,9 @@
 //! audit-replay) stay [`crate::ValidationOutcome::Skipped`] with
 //! [`crate::SkipReason::SuiteNotImplementedThisSession`].
 
+pub mod audit;
 pub mod canonicalization;
 pub mod delegation;
+pub mod fuzz;
+pub mod pcr;
+pub mod tariff;

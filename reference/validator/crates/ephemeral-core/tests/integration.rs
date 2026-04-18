@@ -1,12 +1,12 @@
-//! Integration tests across both structural and Session-2 semantic layers.
+//! Integration tests across both structural and semantic layers.
 //!
 //! Points at the repo's real `conformance/` directory (four levels up from
 //! this file: `reference/validator/crates/ephemeral-core/tests`). Every
 //! check therefore runs against the canonical 515-vector suite — any drift
 //! surfaces here, not in a toy fixture.
 //!
-//! Session 2 runs canonicalization + delegation-scope executors; the
-//! remaining four suites stay skipped until Session 3.
+//! Session 3 closes the conformance ring: all six suites execute semantic
+//! verdicts with no skips.
 
 use std::path::{Path, PathBuf};
 
@@ -73,23 +73,6 @@ fn run_suite_file(name: &str, expected: VectorSuite) -> ephemeral_core::SuiteRep
     result.report
 }
 
-fn assert_file_all_skipped(name: &str, expected: VectorSuite) {
-    let report = run_suite_file(name, expected);
-    assert_eq!(
-        report.fail, 0,
-        "{name} vector failures: {:?}",
-        report.failures
-    );
-    assert!(
-        report.skipped > 0,
-        "{name} reported zero skipped vectors — Session-3 suite should still skip",
-    );
-    assert_eq!(
-        report.pass, 0,
-        "{name} unexpectedly executed vectors; Session-3 suite should stay skipped",
-    );
-}
-
 fn assert_file_all_executed(name: &str, expected: VectorSuite) {
     let report = run_suite_file(name, expected);
     assert_eq!(
@@ -99,11 +82,11 @@ fn assert_file_all_executed(name: &str, expected: VectorSuite) {
     );
     assert!(
         report.pass > 0,
-        "{name} had no passing vectors — Session-2 executor should pass conformance vectors",
+        "{name} had no passing vectors — executor should pass conformance vectors",
     );
     assert_eq!(
         report.skipped, 0,
-        "{name} still skipped vectors — Session-2 executor should cover every vector",
+        "{name} still skipped vectors — executor should cover every vector",
     );
 }
 
@@ -119,17 +102,17 @@ fn delegation_scope_structural() {
 
 #[test]
 fn fuzz_baseline_structural() {
-    assert_file_all_skipped("fuzz-baseline.json", VectorSuite::FuzzBaseline);
+    assert_file_all_executed("fuzz-baseline.json", VectorSuite::FuzzBaseline);
 }
 
 #[test]
 fn tariff_reject_structural() {
-    assert_file_all_skipped("tariff-reject.json", VectorSuite::TariffReject);
+    assert_file_all_executed("tariff-reject.json", VectorSuite::TariffReject);
 }
 
 #[test]
 fn pcr_attestation_reject_structural() {
-    assert_file_all_skipped(
+    assert_file_all_executed(
         "pcr-attestation-reject.json",
         VectorSuite::PcrAttestationReject,
     );
@@ -137,7 +120,7 @@ fn pcr_attestation_reject_structural() {
 
 #[test]
 fn audit_replay_structural() {
-    assert_file_all_skipped("audit-replay.json", VectorSuite::AuditReplay);
+    assert_file_all_executed("audit-replay.json", VectorSuite::AuditReplay);
 }
 
 #[test]
@@ -180,17 +163,18 @@ fn run_many_aggregates_all_six() {
         report.per_suite
     );
     assert!(report.is_clean());
-    // Session 2: canonicalization + delegation-scope (93 + 68 = 161 vectors)
-    // are executed, the other four suites still skip. Total skipped is
-    // therefore suite-total minus 161 ≈ 354.
-    assert!(
-        report.total_pass() > 150,
-        "expected > 150 vectors executed (canon+deleg), got {}",
+    // Session 3: all six suites execute. Conformance corpus is 515 vectors
+    // total (93 canon + 68 deleg + 205 fuzz + 68 tariff + 49 pcr + 32 audit).
+    assert_eq!(
+        report.total_pass(),
+        515,
+        "expected 515 vectors passing, got {}",
         report.total_pass()
     );
-    assert!(
-        report.total_skipped() > 300,
-        "expected > 300 vectors skipped (remaining 4 suites), got {}",
+    assert_eq!(
+        report.total_skipped(),
+        0,
+        "expected 0 skipped vectors, got {}",
         report.total_skipped()
     );
 }
