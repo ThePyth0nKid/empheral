@@ -1,69 +1,129 @@
 # decision.md — EPHEMERAL
 
-## Verdict: **NO** (preemptive, Round 0)
+**Date**: 2026-04-18
+**Status**: Final, after six rounds of adversarial review (Round 0 Skeptic → Round 1 Architect → Round 2 Red Team → Round 3 Architect → Round 4 Red Team → Round 5 Architect → Round 6 Red Team → Round 5 Skeptic Final).
 
-EPHEMERAL should not be built as specified. For the autonomous deployment agent use case — an agent acting within a single organization's cloud trust boundary — the 80% alternative meets ~96% of EPHEMERAL's security claims at roughly 5–7% of the implementation cost. The hard no-go trigger defined in the procedure ("80% alt achieves ≥90% of claims with ≤20% complexity") is met.
+---
 
-## The short argument
+## Verdict: **CONDITIONAL YES** (for cross-org asymmetric-trust use case only)
 
-EPHEMERAL's distinctive machinery — TEE-hardened orchestrator, SPIRE-issued SVIDs, cryptographic capabilities, in-enclave PDP, capability exchange proxy — defends against threats that do not arise in the stated use case: untrusted hosts, cross-organization delegation, offline-verifiable authority chains, and capability attenuation at scale. For an agent acting on its own organization's infrastructure, directed by its own LLM provider, logged to its own SIEM, every defended component is already inside a single trust boundary. The cryptographic ceremony does not buy additional trust; it rearranges it.
+The preemptive NO issued at Round 0 was correct **for the original premise** (in-cloud single-trust-boundary deployment agent) and stands for that premise. The design team explicitly pivoted the premise to cross-organization asymmetric-trust (SaaS vendor running autonomous agent on customer infrastructure). Under the pivoted premise, against the final design (`design-final.md`), the Skeptic's final review concludes that the architecture clears the bar — conditionally.
 
-On each in-scope threat:
+---
 
-- **A1 (malicious LLM-provider insider)** is handled identically by both architectures, because neither places credentials on the LLM I/O path. The enclave adds nothing here.
-- **A2, A4 (dep compromise, RCE)** — EPHEMERAL narrows the exploitation window from "≤15 min of authorized actions" to "per action," but realistic attackers operate in seconds to milliseconds inside a compromised process. The granularity delta is operationally meaningless.
-- **A3 (network attacker)** — TLS/mTLS in both. No structural difference.
-- **A5 (compromised target API)** — audit-based detection only in both. No structural difference.
+## The short argument (final)
 
-EPHEMERAL's unique value props are real, but they apply to scenarios not covered by the stated use case: cross-org delegation, untrusted-host execution, regulated offline-verifiable authority, capability markets. Build for those when and if they arise. Do not build general infrastructure for a specific niche.
+Three things reconciled the original objection:
 
-## Minimum viable implementation (of the 80% alt, not EPHEMERAL)
+1. **Proportional Authority Protocol** (introduced in `design-v2.md`, consolidated in `design-final.md`). Not all actions receive the same ceremony. Tier 0-1 actions use OIDC+DPoP+OPA — literally the Round 0 Skeptic's 80% alternative, renamed MV-0. Tier 2+ actions invoke cryptographic mandates and capabilities. Tier 4+ requires user step-up. Tier 5 requires M-of-N ceremony. Expensive machinery is reserved for actions where blast radius justifies it.
 
-For an org deploying an autonomous deployment agent today:
+2. **Cross-organization premise**. The original no-go was premised on single-trust-boundary agents where cryptographic capabilities provide no trust benefit beyond rearranging existing trust. The pivoted premise — vendor acting on customer infrastructure under customer authority — genuinely benefits from authority decoupled from the vendor's runtime.
 
-1. Workload identity via IRSA or equivalent (projected SA tokens from kubelet).
-2. Vault `auth/jwt` with `bound_audiences` + `bound_claims`; tokens TTL ≤ 15 min; narrow policy per action class.
-3. AWS `AssumeRoleWithWebIdentity` with inline `SessionPolicy` per call, narrowing to the specific action's permissions.
-4. OPA policy bundle evaluated before every tool call; decisions logged with `{mandate_id, action, params, verdict, reason}`.
-5. DPoP (RFC 9449) on APIs that support it; mTLS elsewhere; one-shot response-wrapped secrets from Vault for the rest.
-6. Structured audit logs (CloudTrail + S3 Object Lock or equivalent append-only store).
-7. Kill-switch runbook: revoke OIDC trust in Vault JWT auth + IAM IdP → all outstanding tokens expire in ≤15 min.
-8. Egress NetworkPolicy + VPC-level allowlist for target API endpoints only.
-9. Supply-chain hardening: SBOM + image signing + admission-controller verification.
+3. **Three red-team rounds surfaced no surviving showstoppers**. Round 2 crypto protocol bugs (OPCE, BOOT-KEY-SUB, PARAM-CANON) resolved in v2. Round 4 composition bugs (CROSS-TIER-AGGREGATION, TARIFF-SIGNING-KEY-COMPROMISE) resolved in v3 via the aggregation defense-in-depth stack and three-level key hierarchy. Round 6 found only spec-precision concerns; all resolved in design-final.
 
-**Engineering effort**: ~2 weeks with existing Vault/OPA/IRSA prereqs; ~6–8 weeks from zero.
+---
 
-## External validation required *if* this had been a "yes"
+## Conditions (normative; C1–C7 from skeptic-review.md §9)
 
-Not applicable for the no verdict. For future use cases that re-open the question:
-
-- External security audit by a firm with offensive capability against Nitro Enclaves, SPIRE attestation flows, and Biscuit/Macaroon implementations.
-- Formal verification of the mandate → capability → proxy protocol and its composition with target-API bearer semantics.
-- Deployment gated on mutual consent and operational coordination with the LLM provider, the mandate issuer, and the target-API operator.
-- Independent cryptographic review of any capability-attenuation scheme, and disclosure of all primitives to the IETF (OAuth/GNAP WG).
-
-## Cost comparison
-
-|  | 80% alt | EPHEMERAL |
+| # | Condition | Purpose |
 |---|---|---|
-| Engineering, org with prereqs | ~10 dev-days | ~160 dev-days (lower bound) |
-| Engineering, org from zero | ~40 dev-days | ~240 dev-days (lower bound) |
-| Monthly compute surcharge | 0% | ~2–3× on orchestrator + proxy infra |
-| Ops complexity | Existing SRE primitives | New: enclave tooling, SPIRE ops, proxy HA, bespoke audit pipeline |
-| Vendor coupling | Cloud-standard | Nitro-specific in practice (portability is claimed, not cheap) |
+| C1 | Use case confined to **genuine cross-org asymmetric trust** | Prevents deployment to the Round 0 case where 80% alt wins |
+| C2 | **Action mix justifies the tier** (skip MV-2+ if workload is 95% Tier 0-1) | Prevents machinery-theater for mostly-read agents |
+| C3 | **External audit by offensive-security firm** before Tier 3+ actions in production | Validates novel compositions (PAP, DelegationDocument, classifier-WASM) |
+| C4 | **Conformance test suite** (`design-final.md` §15) implemented and exercised | Catches subtle implementation bugs that would CVE-propagate |
+| C5 | **Customer operational maturity** (HSM access, M-of-N policy capacity, target-invariant bundles) | Prevents gap between spec and deployed reality |
+| C6 | **Honest aggregation-residual disclosure** in customer-facing docs | Prevents surprise-CVE from customers expecting cryptographic prevention |
+| C7 | **Plan for MV-0 as terminal state** for most adopters | Business case must not require >50% adoption at MV-2+ |
+
+Failure to meet any condition → do not deploy at the corresponding tier level.
+
+---
+
+## What EPHEMERAL provides that the 80% alternative does not (cross-org case only)
+
+- **Vendor-runtime-independent authority**. A vendor RCE in MV-1+ cannot forge Tier 2+ actions without the customer's mandate-signer key. The 80% alt's cross-org form (shared IAM role) does not close this gap.
+- **Cryptographic audit chain**. COSE-signed mandates, capabilities, and audit events verify offline with only public keys, years later. The 80% alt's CloudTrail logs are authoritative but custodial.
+- **Proportional ceremony**. Tier 4 step-up and Tier 5 multi-party ceremony are structurally integrated, not grafted on per-action by customer's change-control.
+- **Classifier-driven escalation**. Aggregation patterns, canary windows, and missing target invariants automatically increase ceremony. The 80% alt would require each customer to build this themselves.
+
+## What EPHEMERAL does not provide beyond the 80% alternative
+
+- **For in-cloud single-trust-boundary agents**: nothing meaningful. Do not deploy here.
+- **For agents that only read**: nothing beyond documentation. Use MV-0 (which is the 80% alt + Tariff-as-docs).
+- **For LLM provider compromise (A1)**: same mitigation both architectures — credentials off the LLM I/O path.
+- **For target API compromise (A5)**: same mitigation both architectures — audit-based detection.
+
+---
+
+## Supporting evidence trail
+
+| Artifact | Role |
+|---|---|
+| `no-go-preemptive.md` | Round 0 Skeptic, original no-go for single-trust-boundary premise |
+| `design-v1.md` | Round 1 Architect, cross-org pivot, first full design |
+| `redteam-round1.md` | Round 2 Red Team, 3 showstoppers + 5 serious |
+| `design-v2.md` | Round 3 Architect, Proportional Authority Protocol introduced |
+| `redteam-round2.md` | Round 4 Red Team, 2 showstoppers + 6 serious |
+| `design-v3.md` | Round 5 Architect, aggregation stack + key hierarchy |
+| `redteam-round3.md` | Round 6 Red Team, no new showstoppers, 5 serious |
+| `design-final.md` | Consolidated spec with Round 6 tightenings (V3-1, V3-3, V3-6, V3-8) |
+| `skeptic-review.md` | Round 5 Skeptic final, flip to conditional YES |
+
+---
+
+## External validation required (restated)
+
+1. **External security audit** by a firm with offensive capability against Nitro Enclaves, SPIRE attestation flows, COSE implementations, and WASM sandbox escape. Required before any Tier 3+ production deployment.
+2. **Formal verification** — not required but recommended — of the PAP composition and the delegation verification chain.
+3. **First production deployment under red-team engagement** by a different firm than the audit firm.
+4. **Public conformance report** for the reference implementation against all test vectors in `design-final.md` §15.
+5. **Cryptographic review** of the DelegationDocument format and the Tariff signing scheme. Public disclosure to IETF (OAuth/GNAP WG) for comment.
+
+---
+
+## Cost comparison (revised for cross-org premise)
+
+|  | Cross-org 80% alt | EPHEMERAL MV-0 | EPHEMERAL MV-1 | EPHEMERAL MV-3 |
+|---|---|---|---|---|
+| Customer setup | 3–5 dev-days | 3–5 dev-days | 15–25 dev-days | 40–80 dev-days |
+| Vendor setup | 20–40 dev-days | 20–40 dev-days | 100–180 dev-days | 250–400 dev-days |
+| Per-integration onboarding | 1 day | 1 day | 3–5 days | 5–10 days |
+| Monthly compute surcharge | 0% | 0% | ~20% (Signer enclave) | ~40% (full stack) |
+| Key custody ops | Existing IAM | Existing IAM + Tariff signing | Add customer HSM | Add spare root, audit key, ceremony signers |
+
+**Economic conclusion**: EPHEMERAL defensible for the cross-org premise IF action mix includes significant Tier 2-3+ AND the customer cares about vendor-compromise blast radius. For Tier 0-1-only workloads, MV-0 adds marginal value (documentation) over the 80% alt, which is fine but doesn't justify the effort to adopt MV-1+.
+
+---
 
 ## Conditions under which this verdict should be revisited
 
-1. The real first use case is cross-organization agent delegation, not in-org deployment.
-2. The agent must run on hosts where the host OS is untrusted (edge, colo, community compute).
-3. A regulatory requirement emerges for offline-verifiable cryptographic authority chains (not satisfiable by retained audit logs).
-4. A disclosed attack breaks the 80% composition in a way that cannot be patched incrementally with DPoP, OPA extensions, or short-TTL policy.
-5. Two or more major LLM providers and two or more major target-API operators publicly commit to accepting capability-based authorization (not bearer tokens). This would halve the proxy's architectural necessity and re-cast EPHEMERAL as a genuine standards play.
+**Reverting toward NO** would require:
+- Disclosed attack against the v3/final design under external audit. Specifically: anything that compromises mandate integrity, delegation chain, or Signer isolation.
+- Adoption data showing customers stop at MV-0 at higher than ~95% rate — suggesting the MV-1+ tiers are genuinely unnecessary rather than deferred.
+- A simpler architecture emerging (e.g., GNAP-based or confidential-inference-based) that achieves the same proportional-authority property at lower cost.
 
-## Caveat (mandatory)
+**Strengthening toward unconditional YES** would require:
+- Multiple production deployments with independent red-team validation.
+- Published CVE-free operational track record of at least 12 months.
+- Reference implementation adopted by at least one major cloud provider or standards body.
 
-This is a self-adversarial review by a single language model (2026-04-18). It finds known attack classes, design ambiguities, and composition issues. It is **not** a substitute for external security audit by a firm with offensive capability against the relevant primitives, formal verification of cryptographic protocols, or real-world red-team engagement under production threat. A surviving design from this process would be a candidate for external review, not a finished artifact. This no-go verdict carries the same caveat in reverse: it is a strong recommendation, not an infallible one. If the stated premises change, re-run the review.
+---
 
-## Supporting evidence
+## Mandatory caveat
 
-- `no-go-preemptive.md` — full Round 0 Skeptic analysis with per-claim and per-threat breakdown, steelmanned 80% alternative, and conditions for reconsidering.
+This is still a self-adversarial review by a single language model across a compressed timeframe. Six rounds produced a stable design and a defensible pivot, but:
+
+- No external audit has been performed.
+- No formal verification has been performed.
+- No real-world deployment has stress-tested the design.
+- The novel components (Proportional Authority Protocol, Tariff, Classifier-with-context, DelegationDocument) have no production track record.
+
+The conditional YES is a recommendation to proceed with design-driven engineering under the stated conditions, **not** a certification of correctness. C3 (external audit) is the minimum bar before any production deployment at Tier 3+.
+
+---
+
+## History preserved
+
+The preemptive NO from Round 0 stands for the single-trust-boundary use case. The conditional YES from Round 5 Skeptic Final applies to the pivoted cross-organization premise. These are not contradictory — they apply to different problems.
+
+The architectural lesson is that **authorization ceremony should match blast radius**, not average it. The Round 0 no-go forced this insight by refusing to allow one-size-fits-all expensive machinery. The resulting design (Proportional Authority) is stronger than either the original EPHEMERAL proposal or a flat application of the 80% alternative would have been.
