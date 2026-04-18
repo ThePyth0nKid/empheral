@@ -89,6 +89,10 @@ The following reject codes appear across multiple suites. Implementations should
 | `version-skew` | delegation-scope | Mandate's `min_tariff_version` exceeds current pinned Tariff version (fires at mandate acceptance). |
 | `tariff-self-inconsistent-version` | tariff-reject | Tariff's own internal `minimum_tiers` references a `min_tariff_version` higher than its own version (fires at Tariff load). Distinct from `version-skew` — different lifecycle stage. |
 | `narrowness-rule-violation` | delegation-scope | §3.1 Layer 1: mandate cap contains wildcard but budget.actions exceeds `narrowness_threshold` (default 20). |
+| `role-hierarchy-violation` | delegation-scope | R7.D1: direct `root`→`mandate_signer` delegation — must traverse `ops` role (three-level hierarchy). |
+| `scope-integrations-wildcard-forbidden` | delegation-scope | R7.D4: `integrations: ["*"]` forbidden at every delegation level. Explicit enumeration required. |
+| `mandate-empty-cap` | delegation-scope | R7.D5: mandates with `cap: []` forbidden. Every mandate MUST authorize ≥1 concrete action. |
+| `chain-depth-exceeded` | delegation-scope | R7.D3: delegation chain exceeds max depth (default 4 keys / 3 links). |
 | `normalization-not-applied` | canonicalization | Intent presented to classifier was not canonical. |
 | `tier-below-minimum` | fuzz-baseline | Classifier returned tier below Tariff's `minimum_tiers` floor for the action. |
 | `pcr-attestation-quorum-short` | pcr-attestation-reject | Fewer than quorum attestors signed. |

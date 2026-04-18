@@ -25,7 +25,7 @@
     "valid-narrowness-rule-boundary": 1,
     "valid-narrowness-rule-not-triggered": 1
   },
-  "notes": "Signatures are represented as boolean 'signature_valid' to keep vectors runnable without live Ed25519. Implementers replace with real signatures when integrating with their crypto stack. Vectors cover §7.3 scope-match table and V3-1 defense, plus §3.1 Layer-1 narrowness-rule enforcement (wildcards in cap require budget.actions ≤ narrowness_threshold, default 20). 'context' field simulates the Router's state: current Tariff version, current time, active revocation entries, narrowness_threshold. ds-021 encodes STRICT-REJECT for direct root→mandate_signer delegation (skipping ops role); spec §7.3 does not explicitly forbid but three-level hierarchy (§7.1) implies hierarchical enforcement — implementations that accept must document divergence.",
+  "notes": "Signatures are represented as boolean 'signature_valid' to keep vectors runnable without live Ed25519. Implementers replace with real signatures when integrating with their crypto stack. Vectors cover §7.3 scope-match table, V3-1 defense, §3.1 Layer-1 narrowness-rule (wildcards in cap require budget.actions ≤ narrowness_threshold, default 20), and R7 tightenings (design-round7-tightenings.md) for role hierarchy (R7.D1), chain depth (R7.D3), integration wildcards (R7.D4), and empty-cap mandates (R7.D5). 'context' field simulates the Router's state: current Tariff version, current time, active revocation entries, narrowness_threshold. Post-R7 status: ds-021 rejects direct root→mandate_signer (role-hierarchy-violation); ds-054 rejects integrations=['*'] (scope-integrations-wildcard-forbidden); ds-055 rejects empty-cap (mandate-empty-cap); ds-057 rejects 5-key chain (chain-depth-exceeded). All OPEN SPEC QUESTION markers in bounded areas (role hierarchy, chain depth, wildcards, empty-cap) are resolved; operational questions (valid_until inclusivity, max_tier_signable=0 semantics) remain documented per-vector.",
   "vectors": [
     {
       "id": "ds-001",
@@ -381,10 +381,10 @@
         "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_mandate_X_pk_TEST", "child_role": "mandate_signer", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
         "mandate": {"mandate_id": "01HTMANDATE021", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "prod/y", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_mandate_X_pk_TEST", "signed_by": "K_cust_mandate_X_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
       },
-      "expected": {"outcome": "reject", "reject_code": "signature-chain-broken"},
-      "rationale": "Direct-from-root delegation of role 'mandate_signer' skips 'ops' intermediate. Suite chooses STRICT-REJECT per three-level hierarchy in §7.1 (K_cust_root → K_cust_ops → K_cust_mandate_*). OPEN SPEC QUESTION: §7.3 does not explicitly forbid direct root→mandate_signer. Strict interpretation preferred because hierarchical roles are the Round-6 defense against ops-key compromise cascading directly to mandate authority. Implementations that accept direct root→mandate_signer must document spec interpretation divergence.",
+      "expected": {"outcome": "reject", "reject_code": "role-hierarchy-violation"},
+      "rationale": "R7.D1 (design-round7-tightenings.md): direct root→mandate_signer delegation is FORBIDDEN. The three-level hierarchy K_cust_root → K_cust_ops → K_cust_mandate_* is normative; Router MUST reject any chain that skips the ops level for mandate_signer terminal role. This closes a V3-1 defense-in-depth gap: ops-key compromise cascades only to ops-signable actions, not to mandate authority.",
       "redteam_refs": ["V3-1"],
-      "severity_if_failed": "high"
+      "severity_if_failed": "critical"
     },
     {
       "id": "ds-022",
@@ -808,9 +808,10 @@
         "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["*"], "max_tier_signable": 5, "max_budget": {"actions": 1000000, "tokens": 1000000000}, "max_exp_seconds": 86400, "allowed_verbs": ["*"], "allowed_resource_kinds": ["*"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
         "mandate": {"mandate_id": "01HTMANDATE054", "integration_ref": "any-integration", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "x", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
       },
-      "expected": {"outcome": "accept"},
-      "rationale": "OPEN SPEC QUESTION: is '*' in integrations allowed at delegation? §7 is silent. This vector accepts it (consistency with verbs/kinds). If spec tightens to forbid, flip this vector.",
-      "severity_if_failed": "medium"
+      "expected": {"outcome": "reject", "reject_code": "scope-integrations-wildcard-forbidden"},
+      "rationale": "R7.D4 (design-round7-tightenings.md): `integrations: [\"*\"]` is FORBIDDEN at every delegation level. Integrations MUST be explicitly enumerated. Wildcard at delegation would grant authority for any integration the Tariff ever adds, defeating the per-integration scope-match defense (§7.3). V3-1 defense strengthened by making integration enumeration orthogonal to verb/resource-kind enumeration.",
+      "redteam_refs": ["V3-1"],
+      "severity_if_failed": "critical"
     },
     {
       "id": "ds-055",
@@ -820,9 +821,10 @@
         "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
         "mandate": {"mandate_id": "01HTMANDATE055", "integration_ref": "k8s-prod", "cap": [], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
       },
-      "expected": {"outcome": "reject", "reject_code": "scope-verb-forbidden"},
-      "rationale": "OPEN SPEC QUESTION: can a mandate have zero caps? This vector interprets empty cap as malformed (no purpose). If spec explicitly permits empty-cap mandates (e.g., for placeholder), flip.",
-      "severity_if_failed": "low"
+      "expected": {"outcome": "reject", "reject_code": "mandate-empty-cap"},
+      "rationale": "R7.D5 (design-round7-tightenings.md): mandates with `cap: []` are FORBIDDEN. An empty-cap mandate authorizes nothing yet carries signature authority in the audit chain. Forbidding removes an attack-surface primitive (placeholder mandate mutated post-issuance). Distinct from `scope-verb-forbidden` which fires on specific verb absent; this is a structural rejection at mandate format check.",
+      "redteam_refs": ["V3-1"],
+      "severity_if_failed": "high"
     },
     {
       "id": "ds-056",
@@ -851,9 +853,10 @@
         "mandate": {"mandate_id": "01HTMANDATE057", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "x", "tier": 2}], "budget": {"actions": 10, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_mandate_N_pk_TEST", "signed_by": "K_cust_mandate_N_pk_TEST", "signature_valid": true},
         "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
       },
-      "expected": {"outcome": "accept"},
-      "rationale": "Deep chain stress test. OPEN SPEC QUESTION: does §7 impose a maximum chain length? Recommend ≤5 for protocol simplicity. If spec adds a max-depth rule, this may become a boundary test.",
-      "severity_if_failed": "medium"
+      "expected": {"outcome": "reject", "reject_code": "chain-depth-exceeded"},
+      "rationale": "R7.D3 (design-round7-tightenings.md): max chain depth = 4 keys / 3 links. This chain has 5 keys (root + L1..L4 + mandate_signer) = exceeds max. Rejected to prevent deep-chain complexity attacks and to keep validator runtime O(bounded). V3-1 defense: bounded chain depth makes scope-drift analysis tractable.",
+      "redteam_refs": ["V3-1"],
+      "severity_if_failed": "high"
     },
     {
       "id": "ds-058",
