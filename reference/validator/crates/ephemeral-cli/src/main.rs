@@ -14,6 +14,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use ephemeral_core::{run_many, RunConfig, TestReport, VectorSuite};
 use serde::Serialize;
+use serde_json::Value;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -127,14 +128,104 @@ fn run() -> Result<bool> {
     };
 
     let report = run_many(&inputs, &config);
-    print_report(&report, cli.verbose);
+    let crypto = summarize_crypto(&inputs);
+    print_report(&report, &crypto, cli.verbose);
 
     if let Some(out) = &cli.json_report {
-        write_json_report(out, &report, &inputs)
+        write_json_report(out, &report, &crypto, &inputs)
             .with_context(|| format!("writing JSON report to {}", out.display()))?;
     }
 
     Ok(report.is_clean())
+}
+
+/// Counts vectors whose `input` carries a cryptographic signature — live
+/// (`cose_sign1_bytes`) or mocked (`signature_valid` / `signed_by` / a
+/// `signature_verification_context`). Canonicalization and fuzz vectors
+/// have no crypto dimension and are excluded so the `mocked` count
+/// reflects actual mock-era signature vectors, not "every non-signed
+/// vector in the corpus."
+///
+/// The aggregate `mode` is `"live"` when every crypto-bearing vector uses
+/// live bytes, `"mocked"` when every one uses the mock bool, `"mixed"`
+/// when both are present, and `"none"` when no crypto-bearing vectors
+/// loaded.
+#[derive(Debug, Clone)]
+struct CryptoSummary {
+    mode: &'static str,
+    live: u32,
+    mocked: u32,
+}
+
+fn summarize_crypto(inputs: &[PathBuf]) -> CryptoSummary {
+    let mut live: u32 = 0;
+    let mut mocked: u32 = 0;
+    for path in inputs {
+        let Ok(bytes) = std::fs::read(path) else {
+            continue;
+        };
+        let Ok(v) = serde_json::from_slice::<Value>(&bytes) else {
+            continue;
+        };
+        let Some(vectors) = v.get("vectors").and_then(Value::as_array) else {
+            continue;
+        };
+        for vec in vectors {
+            let Some(input) = vec.get("input") else {
+                continue;
+            };
+            let has_live = contains_cose_sign1(input);
+            let has_mock = contains_mock_signature(input);
+            if has_live {
+                live += 1;
+            } else if has_mock {
+                mocked += 1;
+            }
+        }
+    }
+    let mode = match (live, mocked) {
+        (0, 0) => "none",
+        (_, 0) => "live",
+        (0, _) => "mocked",
+        _ => "mixed",
+    };
+    CryptoSummary { mode, live, mocked }
+}
+
+/// Recursively scans a JSON value for a `cose_sign1_bytes` string field.
+/// Used to detect live-crypto vectors without coupling the CLI to every
+/// suite's concrete input schema.
+fn contains_cose_sign1(v: &Value) -> bool {
+    match v {
+        Value::Object(map) => {
+            if map.get("cose_sign1_bytes").and_then(Value::as_str).is_some() {
+                return true;
+            }
+            map.values().any(contains_cose_sign1)
+        }
+        Value::Array(items) => items.iter().any(contains_cose_sign1),
+        _ => false,
+    }
+}
+
+/// Recursively scans for any mock-signature marker:
+/// `signature_valid`, `signed_by`, or `signature_verification_context`.
+/// A vector with any of these participates in the crypto dimension via
+/// the mock path (515-vector pre-Phase-C regime).
+fn contains_mock_signature(v: &Value) -> bool {
+    match v {
+        Value::Object(map) => {
+            if map.contains_key("signature_valid")
+                || map.contains_key("signed_by")
+                || map.contains_key("signature_verification_context")
+            {
+                return true;
+            }
+            map.values().any(contains_mock_signature)
+        }
+        Value::Array(items) => items.iter().any(contains_mock_signature),
+        _ => false,
+    }
 }
 
 fn default_inputs(dir: &Path) -> Vec<PathBuf> {
@@ -153,7 +244,7 @@ fn default_inputs(dir: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-fn print_report(report: &TestReport, verbose: bool) {
+fn print_report(report: &TestReport, crypto: &CryptoSummary, verbose: bool) {
     let mut stdout = std::io::stdout().lock();
     let _ = writeln!(stdout, "EPHEMERAL reference validator — conformance report");
     let _ = writeln!(stdout, "{:=<56}", "");
@@ -193,9 +284,19 @@ fn print_report(report: &TestReport, verbose: bool) {
         report.total_skipped(),
         report.is_clean()
     );
+    let _ = writeln!(
+        stdout,
+        "  crypto: mode={} live={} mocked={}",
+        crypto.mode, crypto.live, crypto.mocked
+    );
 }
 
-fn write_json_report(out: &Path, report: &TestReport, inputs: &[PathBuf]) -> Result<()> {
+fn write_json_report(
+    out: &Path,
+    report: &TestReport,
+    crypto: &CryptoSummary,
+    inputs: &[PathBuf],
+) -> Result<()> {
     let report_json = JsonReport {
         session: RUN_SESSION_TAG,
         clean: report.is_clean(),
@@ -203,6 +304,11 @@ fn write_json_report(out: &Path, report: &TestReport, inputs: &[PathBuf]) -> Res
             pass: report.total_pass(),
             failing: report.total_failing(),
             skipped: report.total_skipped(),
+        },
+        crypto: JsonCrypto {
+            mode: crypto.mode,
+            live: crypto.live,
+            mocked: crypto.mocked,
         },
         inputs: inputs.iter().map(|p| p.display().to_string()).collect(),
         suites: report
@@ -239,6 +345,7 @@ struct JsonReport {
     session: &'static str,
     clean: bool,
     totals: JsonTotals,
+    crypto: JsonCrypto,
     inputs: Vec<String>,
     suites: Vec<JsonSuiteEntry>,
 }
@@ -248,6 +355,13 @@ struct JsonTotals {
     pass: u32,
     failing: u32,
     skipped: u32,
+}
+
+#[derive(Serialize)]
+struct JsonCrypto {
+    mode: &'static str,
+    live: u32,
+    mocked: u32,
 }
 
 #[derive(Serialize)]

@@ -163,12 +163,13 @@ fn run_many_aggregates_all_six() {
         report.per_suite
     );
     assert!(report.is_clean());
-    // Session 3: all six suites execute. Conformance corpus is 515 vectors
-    // total (93 canon + 68 deleg + 205 fuzz + 68 tariff + 49 pcr + 32 audit).
+    // Phase C.1: all six suites execute. Conformance corpus is 520 vectors
+    // total: 93 canon + 70 deleg (68 mock + 2 live) + 205 fuzz + 71 tariff
+    // (68 mock + 3 live) + 49 pcr + 32 audit.
     assert_eq!(
         report.total_pass(),
-        515,
-        "expected 515 vectors passing, got {}",
+        520,
+        "expected 520 vectors passing, got {}",
         report.total_pass()
     );
     assert_eq!(

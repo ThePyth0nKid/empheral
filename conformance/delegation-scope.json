@@ -1029,6 +1029,235 @@
       "rationale": "§3.1 applies only when cap contains wildcard. Fully-qualified cap (verb=get, resource_kind=pod, resource_ref=specific-pod) may have any budget within delegation's max_budget. 1000 ≤ 5000 delegation cap → accepts. Distinguishes §3.1 narrowness from §7.3 budget-subsumption.",
       "redteam_refs": ["V3-1"],
       "severity_if_failed": "high"
+    },
+    {
+      "id": "ds-069",
+      "category": "live-sig-happy-two-link",
+      "description": "Phase C.1 live-crypto vector: a two-link delegation chain (root → ops → mandate-signer) with every link and the mandate signed for real with Ed25519 COSE_Sign1. All three signatures MUST verify live against the per-vector trust anchors for the vector to accept.",
+      "input": {
+        "delegation_chain": [
+          {
+            "parent_key": "K_cust_root_pk_TEST",
+            "child_key": "K_cust_ops_pk_TEST",
+            "child_role": "ops",
+            "scope": {
+              "integrations": [
+                "stripe"
+              ],
+              "max_tier_signable": 4,
+              "max_budget": {
+                "actions": 10000,
+                "tokens": 1000000
+              },
+              "max_exp_seconds": 86400,
+              "allowed_verbs": [
+                "charge"
+              ],
+              "allowed_resource_kinds": [
+                "payment"
+              ]
+            },
+            "valid_from": 1714608000,
+            "valid_until": 1767139200,
+            "signed_by": "K_cust_root_pk_TEST",
+            "signature_valid": true,
+            "cose_sign1_bytes": "845818a2012704534b5f637573745f726f6f745f706b5f54455354a05764656c65676174696f6e2d6c696e6b2d626f64792d76315840de1f19c0f2fc9eadf1dd7d133e50d56fd21903882ef02d409839e7a15d051e86f85e614dac44b68411bf70a18aebe2618d231dfe8d3fa4841bcacaaedf724207"
+          },
+          {
+            "parent_key": "K_cust_ops_pk_TEST",
+            "child_key": "K_mandate_signer_pk_TEST",
+            "child_role": "mandate_signer",
+            "scope": {
+              "integrations": [
+                "stripe"
+              ],
+              "max_tier_signable": 3,
+              "max_budget": {
+                "actions": 1000,
+                "tokens": 100000
+              },
+              "max_exp_seconds": 86400,
+              "allowed_verbs": [
+                "charge"
+              ],
+              "allowed_resource_kinds": [
+                "payment"
+              ]
+            },
+            "valid_from": 1714608000,
+            "valid_until": 1767139200,
+            "signed_by": "K_cust_ops_pk_TEST",
+            "signature_valid": true,
+            "cose_sign1_bytes": "8457a2012704524b5f637573745f6f70735f706b5f54455354a05764656c65676174696f6e2d6c696e6b2d626f64792d763158409e77af33ddd4e5bf8b8fb405ee284525e036bb830f7deb8a26dde5cf12c81ef819a2a02c9c5ebcb25f2a11d5f4f56d56ae539449b6b3a15fb9206bdae2afee0d"
+          }
+        ],
+        "mandate": {
+          "mandate_id": "m-phase-c1-068",
+          "integration_ref": "stripe",
+          "cap": [
+            {
+              "verb": "charge",
+              "resource_kind": "payment",
+              "tier": 2
+            }
+          ],
+          "budget": {
+            "actions": 5
+          },
+          "issued_at": 1714608100,
+          "exp": 1714694400,
+          "min_tariff_version": 1,
+          "signer_key_hint": "K_mandate_signer_pk_TEST",
+          "signed_by": "K_mandate_signer_pk_TEST",
+          "signature_valid": true,
+          "cose_sign1_bytes": "84581ea201270458184b5f6d616e646174655f7369676e65725f706b5f54455354a04f6d616e646174652d626f64792d76315840b33f6694754acc420b5fe87f72f6fcf2b886dcd62b4e06292035bab64f9736e37a2558c5486268f0678f2aee7ab6c6172b243b6386774ad94727a7083c83a60d"
+        },
+        "context": {
+          "current_tariff_version": 2,
+          "current_time": 1714608500,
+          "revocation_list": []
+        },
+        "trust_anchor_keys": [
+          {
+            "kid": "K_cust_root_pk_TEST",
+            "alg": "ed25519",
+            "pk_hex": "2983a04f6d5651bcacc40df8f5735330b07e451fa8a42be352f533c72e47db2f"
+          },
+          {
+            "kid": "K_cust_ops_pk_TEST",
+            "alg": "ed25519",
+            "pk_hex": "214684ecde75930a66c1604e90c1793a45738dd03fc7cfa1022c5e308b30bd22"
+          },
+          {
+            "kid": "K_mandate_signer_pk_TEST",
+            "alg": "ed25519",
+            "pk_hex": "c61d26ccfbfe39190aafa3884620137ec546d6d72734be3fe1e9501a61cdeed1"
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "accept"
+      },
+      "rationale": "design-final.md §7.3 scope-match + §7.3.1 depth cap: the canonical minimum happy-path chain. Exercises scope-match at both hops AND the mandate's own signature end-to-end under live crypto, which is the path mocks could only approximate.",
+      "redteam_refs": [
+        "PHASE-C1-LIVE"
+      ],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "ds-070",
+      "category": "live-sig-mandate-tampered",
+      "description": "Phase C.1 live-crypto vector: two-link chain with valid signatures, but the mandate's payload has been flipped in one byte after signing. Live verify on the mandate envelope MUST fail with signature-invalid even though the chain links themselves are intact.",
+      "input": {
+        "delegation_chain": [
+          {
+            "parent_key": "K_cust_root_pk_TEST",
+            "child_key": "K_cust_ops_pk_TEST",
+            "child_role": "ops",
+            "scope": {
+              "integrations": [
+                "stripe"
+              ],
+              "max_tier_signable": 4,
+              "max_budget": {
+                "actions": 10000,
+                "tokens": 1000000
+              },
+              "max_exp_seconds": 86400,
+              "allowed_verbs": [
+                "charge"
+              ],
+              "allowed_resource_kinds": [
+                "payment"
+              ]
+            },
+            "valid_from": 1714608000,
+            "valid_until": 1767139200,
+            "signed_by": "K_cust_root_pk_TEST",
+            "signature_valid": true,
+            "cose_sign1_bytes": "845818a2012704534b5f637573745f726f6f745f706b5f54455354a05764656c65676174696f6e2d6c696e6b2d626f64792d76315840de1f19c0f2fc9eadf1dd7d133e50d56fd21903882ef02d409839e7a15d051e86f85e614dac44b68411bf70a18aebe2618d231dfe8d3fa4841bcacaaedf724207"
+          },
+          {
+            "parent_key": "K_cust_ops_pk_TEST",
+            "child_key": "K_mandate_signer_pk_TEST",
+            "child_role": "mandate_signer",
+            "scope": {
+              "integrations": [
+                "stripe"
+              ],
+              "max_tier_signable": 3,
+              "max_budget": {
+                "actions": 1000,
+                "tokens": 100000
+              },
+              "max_exp_seconds": 86400,
+              "allowed_verbs": [
+                "charge"
+              ],
+              "allowed_resource_kinds": [
+                "payment"
+              ]
+            },
+            "valid_from": 1714608000,
+            "valid_until": 1767139200,
+            "signed_by": "K_cust_ops_pk_TEST",
+            "signature_valid": true,
+            "cose_sign1_bytes": "8457a2012704524b5f637573745f6f70735f706b5f54455354a05764656c65676174696f6e2d6c696e6b2d626f64792d763158409e77af33ddd4e5bf8b8fb405ee284525e036bb830f7deb8a26dde5cf12c81ef819a2a02c9c5ebcb25f2a11d5f4f56d56ae539449b6b3a15fb9206bdae2afee0d"
+          }
+        ],
+        "mandate": {
+          "mandate_id": "m-phase-c1-068",
+          "integration_ref": "stripe",
+          "cap": [
+            {
+              "verb": "charge",
+              "resource_kind": "payment",
+              "tier": 2
+            }
+          ],
+          "budget": {
+            "actions": 5
+          },
+          "issued_at": 1714608100,
+          "exp": 1714694400,
+          "min_tariff_version": 1,
+          "signer_key_hint": "K_mandate_signer_pk_TEST",
+          "signed_by": "K_mandate_signer_pk_TEST",
+          "signature_valid": true,
+          "cose_sign1_bytes": "84581ea201270458184b5f6d616e646174655f7369676e65725f706b5f54455354a04f6c616e646174652d626f64792d76315840b33f6694754acc420b5fe87f72f6fcf2b886dcd62b4e06292035bab64f9736e37a2558c5486268f0678f2aee7ab6c6172b243b6386774ad94727a7083c83a60d"
+        },
+        "context": {
+          "current_tariff_version": 2,
+          "current_time": 1714608500,
+          "revocation_list": []
+        },
+        "trust_anchor_keys": [
+          {
+            "kid": "K_cust_root_pk_TEST",
+            "alg": "ed25519",
+            "pk_hex": "2983a04f6d5651bcacc40df8f5735330b07e451fa8a42be352f533c72e47db2f"
+          },
+          {
+            "kid": "K_cust_ops_pk_TEST",
+            "alg": "ed25519",
+            "pk_hex": "214684ecde75930a66c1604e90c1793a45738dd03fc7cfa1022c5e308b30bd22"
+          },
+          {
+            "kid": "K_mandate_signer_pk_TEST",
+            "alg": "ed25519",
+            "pk_hex": "c61d26ccfbfe39190aafa3884620137ec546d6d72734be3fe1e9501a61cdeed1"
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "signature-invalid"
+      },
+      "rationale": "design-final.md §2.2 + §7.3: the mandate MAC is independent from the chain MACs. A tamper on mandate bytes must fail at the mandate-signature step and never leak through via a successful chain walk.",
+      "redteam_refs": [
+        "PHASE-C1-LIVE"
+      ],
+      "severity_if_failed": "high"
     }
   ]
 }

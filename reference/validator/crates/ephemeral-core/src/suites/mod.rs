@@ -12,6 +12,7 @@
 
 pub mod audit;
 pub mod canonicalization;
+mod crypto_support;
 pub mod delegation;
 pub mod fuzz;
 pub mod pcr;

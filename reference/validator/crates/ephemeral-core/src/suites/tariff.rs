@@ -59,9 +59,11 @@
 
 use std::fmt;
 
+use ephemeral_crypto::CoseError;
 use serde::Deserialize;
 use time::OffsetDateTime;
 
+use super::crypto_support::{verify_with_defs, TrustAnchorKeyDef};
 use crate::types::{Outcome, ValidationOutcome, Vector};
 
 // ---------------- constants ------------------------------------------------
@@ -201,6 +203,16 @@ struct TariffInput {
     #[serde(default)]
     #[allow(dead_code)]
     known_integrations: Option<Vec<String>>,
+    /// Phase C.1 — optional hex-encoded COSE_Sign1 blob. When supplied
+    /// together with [`trust_anchor_keys`], step 6 runs live Ed25519
+    /// verification via `ephemeral-crypto` instead of consulting the
+    /// mock `signature_valid_under_current_bytes` bool.
+    #[serde(default)]
+    cose_sign1_bytes: Option<String>,
+    /// Phase C.1 — per-vector trust anchor bag. Paired with
+    /// [`cose_sign1_bytes`] to enable live verification.
+    #[serde(default)]
+    trust_anchor_keys: Option<Vec<TrustAnchorKeyDef>>,
     // Remaining known-vocabulary hints are accepted but not inspected directly;
     // category-driven dispatch handles their cases. We keep serde happy without
     // `deny_unknown_fields` because vectors carry heterogeneous hint fields.
@@ -346,9 +358,30 @@ fn classify(input: &TariffInput, category: &str) -> Result<(), TariffRejectCode>
         }
     }
 
-    // 6. Signature math (raw bytes).
-    if ctx.signature_valid_under_current_bytes == Some(false) {
-        return Err(TariffRejectCode::SignatureInvalid);
+    // 6. Signature math (raw bytes). Phase C.1 four-way dispatch:
+    //    - (bytes, anchors)          → live Ed25519 verify
+    //    - (bytes, no-anchors)       → authoring error, reject as
+    //                                   signature-invalid (live bytes
+    //                                   with no anchors to verify them
+    //                                   against must not silently pass)
+    //    - (no-bytes, anchors)       → same — anchors without bytes is a
+    //                                   missing signature, not a free pass
+    //    - (no-bytes, no-anchors)    → legacy mock path; reject iff
+    //                                   `signature_valid_under_current_bytes == Some(false)`.
+    match (&input.cose_sign1_bytes, &input.trust_anchor_keys) {
+        (Some(hex_bytes), Some(defs)) => {
+            if let Err(e) = verify_with_defs(hex_bytes, defs, b"tariff") {
+                return Err(map_cose_error_to_tariff(&e));
+            }
+        }
+        (Some(_), None) | (None, Some(_)) => {
+            return Err(TariffRejectCode::SignatureInvalid);
+        }
+        (None, None) => {
+            if ctx.signature_valid_under_current_bytes == Some(false) {
+                return Err(TariffRejectCode::SignatureInvalid);
+            }
+        }
     }
 
     // 7. Revocation (§7.5). Runs before the trust-anchor membership check so
@@ -551,6 +584,29 @@ fn dispatch_by_category(category: &str) -> Result<(), TariffRejectCode> {
 fn parse_iso(s: &str) -> Result<OffsetDateTime, TariffRejectCode> {
     OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339)
         .map_err(|_| TariffRejectCode::TariffMalformed)
+}
+
+/// Map a live-crypto [`CoseError`] onto the tariff suite's reject codes.
+///
+/// Step-6 live verify surfaces only after the mock structural gates
+/// (steps 2-5). The mapping mirrors what those gates would have emitted
+/// if they had inspected the same failure, so live and mock vectors
+/// report via identical reject-code strings.
+fn map_cose_error_to_tariff(e: &CoseError) -> TariffRejectCode {
+    match e {
+        CoseError::UnknownKid { .. } => TariffRejectCode::KidUnknown,
+        CoseError::UnsupportedAlg { .. } => TariffRejectCode::SignatureAlgorithmUnsupported,
+        CoseError::AlgMismatch { .. } => TariffRejectCode::SignatureAlgorithmMismatch,
+        CoseError::MalformedHeader { .. }
+        | CoseError::CborParse
+        | CoseError::CborDepthExceeded { .. }
+        | CoseError::HexDecode => TariffRejectCode::CoseMalformed,
+        CoseError::PayloadTooLarge { .. } => TariffRejectCode::TariffOversize,
+        // SignatureInvalid, WeakPublicKey, InvalidPublicKeyEncoding,
+        // chain-* and anything future all surface as the generic
+        // signature failure for tariff.
+        _ => TariffRejectCode::SignatureInvalid,
+    }
 }
 
 fn render_outcome(vector: &Vector, got: Result<(), TariffRejectCode>) -> ValidationOutcome {

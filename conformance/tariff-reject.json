@@ -1404,6 +1404,111 @@
       "rationale": "§8.4 admin-bypass-protocol was added in V3-6 as the documented break-glass path when all revocation endpoints fail. Its absence creates an un-recoverable deadlock condition.",
       "redteam_refs": ["V3-6"],
       "severity_if_failed": "high"
+    },
+    {
+      "id": "trej-069",
+      "category": "sig-live-payload-mutated",
+      "description": "Phase C.1 live-crypto vector: a valid COSE_Sign1 over the tariff body with a single payload byte flipped after signing. Live Ed25519 verify MUST fail with signature-invalid.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: live-crypto vector drives verification via cose_sign1_bytes>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": [
+            "K_cust_root_pk_TEST"
+          ],
+          "signature_valid_under_original_bytes": true,
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1,
+        "cose_sign1_bytes": "84581ca2012704574b5f7461726966665f7369676e65725f706b5f54455354a04e7561726966662d626f64792d763158401479c8f87b681e55ef73bcf10e821f435faaee1c9464367716905368d8901709cde579d214f8a692f3fcada80a66151073082ece13eace8f5f4e07400c88ce05",
+        "trust_anchor_keys": [
+          {
+            "kid": "K_tariff_signer_pk_TEST",
+            "alg": "ed25519",
+            "pk_hex": "fffddb195d9634250ef37728d3d51f2e5d1c9367d078fffaa09e7884ebb092a0"
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "signature-invalid"
+      },
+      "rationale": "design-final.md §2.2 / RFC 9052 §4.4: any post-signing mutation of the signed payload breaks the MAC. Live verify is expected to detect what the mock path only asserts.",
+      "redteam_refs": [
+        "PHASE-C1-LIVE"
+      ],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-070",
+      "category": "sig-live-aad-mismatch",
+      "description": "Phase C.1 live-crypto vector: COSE_Sign1 signed with AAD=\"delegation-link\", verified under the tariff domain AAD=\"tariff\". Domain separation MUST cause signature-invalid.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: live-crypto vector drives verification via cose_sign1_bytes>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": [
+            "K_cust_root_pk_TEST"
+          ],
+          "signature_valid_under_original_bytes": true,
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1,
+        "cose_sign1_bytes": "84581ca2012704574b5f7461726966665f7369676e65725f706b5f54455354a04e7461726966662d626f64792d76315840b72bb95d94d11c4070e316eca3433a592c5805a8abdc5abdddf4ed442f03daf9462a765f5fc5e2b214be48e2072157655dd6410e458d5379960fb43a380a390d",
+        "trust_anchor_keys": [
+          {
+            "kid": "K_tariff_signer_pk_TEST",
+            "alg": "ed25519",
+            "pk_hex": "fffddb195d9634250ef37728d3d51f2e5d1c9367d078fffaa09e7884ebb092a0"
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "signature-invalid"
+      },
+      "rationale": "design-final.md §2.2 + RFC 9052 §4.4: external AAD is part of Sig_structure_1. Reusing a delegation-link blob as a tariff blob is exactly the cross-suite replay the AAD is meant to block.",
+      "redteam_refs": [
+        "PHASE-C1-LIVE"
+      ],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-071",
+      "category": "sig-live-impostor-key",
+      "description": "Phase C.1 live-crypto vector: payload signed by an attacker-controlled Ed25519 key whose COSE header carries the authorized kid. The trust anchor resolves kid→pk using anchor-pinned bytes, so verify MUST fail.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: live-crypto vector drives verification via cose_sign1_bytes>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": [
+            "K_cust_root_pk_TEST"
+          ],
+          "signature_valid_under_original_bytes": true,
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1,
+        "cose_sign1_bytes": "84581ca2012704574b5f7461726966665f7369676e65725f706b5f54455354a04e7461726966662d626f64792d76315840d2ffe62d50849e3467e16f8690d164f2754ad4ec28058a4fcee0a27b8fd0c849b4c1b2270ec82ed33c33d85896f51ac5134d1c8eee89584fdabcfb3d6d6a220b",
+        "trust_anchor_keys": [
+          {
+            "kid": "K_tariff_signer_pk_TEST",
+            "alg": "ed25519",
+            "pk_hex": "fffddb195d9634250ef37728d3d51f2e5d1c9367d078fffaa09e7884ebb092a0"
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "signature-invalid"
+      },
+      "rationale": "design-final.md §7.1: trust-anchor resolution is keyed on pubkey bytes, not on the attacker-supplied kid. Live verify catches the mismatch where the mock path would have needed a mock bool to flag it.",
+      "redteam_refs": [
+        "PHASE-C1-LIVE"
+      ],
+      "severity_if_failed": "critical"
     }
   ]
 }

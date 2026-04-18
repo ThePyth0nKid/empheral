@@ -18,8 +18,9 @@ jsonschema = { workspace = true }
 unicode-normalization = { workspace = true }
 caseless = { workspace = true }
 time = { workspace = true }
+hex = { workspace = true }
+ephemeral-crypto = { path = "../ephemeral-crypto" }
 
 [dev-dependencies]
 anyhow = { workspace = true }
 proptest = { workspace = true }
-hex = { workspace = true }

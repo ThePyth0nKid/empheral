@@ -32,8 +32,10 @@
 
 use std::fmt;
 
+use ephemeral_crypto::CoseError;
 use serde::Deserialize;
 
+use super::crypto_support::{verify_with_defs, TrustAnchorKeyDef};
 use crate::types::{Outcome, ValidationOutcome, Vector};
 
 // ---------------- constants ------------------------------------------------
@@ -188,6 +190,11 @@ struct DelegationLink {
     #[serde(default)]
     signed_by: Option<String>,
     signature_valid: bool,
+    /// Phase C.1 — optional hex-encoded COSE_Sign1 blob. When paired
+    /// with [`VectorInput::trust_anchor_keys`], this link's signature
+    /// is verified live via `ephemeral-crypto`.
+    #[serde(default)]
+    cose_sign1_bytes: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -227,6 +234,9 @@ struct Mandate {
     #[serde(default)]
     signed_by: Option<String>,
     signature_valid: bool,
+    /// Phase C.1 — optional hex-encoded COSE_Sign1 blob for the mandate.
+    #[serde(default)]
+    cose_sign1_bytes: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -248,6 +258,10 @@ struct VectorInput {
     delegation_chain: Vec<DelegationLink>,
     mandate: Mandate,
     context: Context,
+    /// Phase C.1 — shared trust anchor bag used by live verify for every
+    /// link and the mandate. Absent on mock-era vectors.
+    #[serde(default)]
+    trust_anchor_keys: Option<Vec<TrustAnchorKeyDef>>,
 }
 
 // ---------------- pipeline --------------------------------------------------
@@ -257,14 +271,18 @@ fn verify(input: &VectorInput) -> Result<(), DelegationRejectCode> {
 
     // 1. Signature validity — any broken cryptographic seal reports as
     //    `signature-invalid`, regardless of position (ds-015/016/017).
+    //    Phase C.1: when a link (or the mandate) carries
+    //    `cose_sign1_bytes` AND the vector supplies `trust_anchor_keys`,
+    //    the signature is verified live via `ephemeral-crypto` with
+    //    external AAD domain-separating links (`b"delegation-link"`)
+    //    from mandates (`b"mandate"`). Otherwise the mock
+    //    `signature_valid` bool is honoured so the mock-era vectors
+    //    stay green without mutation.
+    let anchor_defs = input.trust_anchor_keys.as_deref();
     for link in chain {
-        if !link.signature_valid {
-            return Err(DelegationRejectCode::SignatureInvalid);
-        }
+        check_link_signature(link, anchor_defs)?;
     }
-    if !input.mandate.signature_valid {
-        return Err(DelegationRejectCode::SignatureInvalid);
-    }
+    check_mandate_signature(&input.mandate, anchor_defs)?;
 
     // 2. Structural chain integrity → `signature-chain-broken`.
     //    Must run BEFORE chain-depth / role-hierarchy so that duplicate-link
@@ -333,6 +351,68 @@ fn verify(input: &VectorInput) -> Result<(), DelegationRejectCode> {
     }
 
     Ok(())
+}
+
+/// Phase C.1 — gate one link's signature. Four-way dispatch: (bytes,
+/// anchors) → live verify; (bytes, no-anchors) and (no-bytes, anchors)
+/// → reject with `SignatureInvalid` (these are authoring errors that
+/// must not silently fall through to the mock `signature_valid` bool);
+/// (no-bytes, no-anchors) → legacy mock path.
+///
+/// Why strict: if a vector advertises `trust_anchor_keys` it is opting
+/// in to live crypto for every signature in scope. A link that omits
+/// `cose_sign1_bytes` under that regime would be an unverified assertion
+/// and must not accept on the mock bool alone.
+fn check_link_signature(
+    link: &DelegationLink,
+    anchor_defs: Option<&[TrustAnchorKeyDef]>,
+) -> Result<(), DelegationRejectCode> {
+    match (&link.cose_sign1_bytes, anchor_defs) {
+        (Some(hex_bytes), Some(defs)) => verify_with_defs(hex_bytes, defs, b"delegation-link")
+            .map(|_| ())
+            .map_err(|e| map_cose_error_to_delegation(&e)),
+        (Some(_), None) | (None, Some(_)) => Err(DelegationRejectCode::SignatureInvalid),
+        (None, None) => {
+            if link.signature_valid {
+                Ok(())
+            } else {
+                Err(DelegationRejectCode::SignatureInvalid)
+            }
+        }
+    }
+}
+
+/// Phase C.1 — gate the mandate's signature. Same four-way dispatch as
+/// [`check_link_signature`] but with the mandate's domain separation
+/// AAD (`b"mandate"`) so mandate bytes cannot be replayed as link bytes
+/// or vice versa.
+fn check_mandate_signature(
+    mandate: &Mandate,
+    anchor_defs: Option<&[TrustAnchorKeyDef]>,
+) -> Result<(), DelegationRejectCode> {
+    match (&mandate.cose_sign1_bytes, anchor_defs) {
+        (Some(hex_bytes), Some(defs)) => verify_with_defs(hex_bytes, defs, b"mandate")
+            .map(|_| ())
+            .map_err(|e| map_cose_error_to_delegation(&e)),
+        (Some(_), None) | (None, Some(_)) => Err(DelegationRejectCode::SignatureInvalid),
+        (None, None) => {
+            if mandate.signature_valid {
+                Ok(())
+            } else {
+                Err(DelegationRejectCode::SignatureInvalid)
+            }
+        }
+    }
+}
+
+/// Map any live-crypto [`CoseError`] onto the delegation suite's reject
+/// codes. Delegation's error surface is coarser than tariff's: the suite
+/// exposes only `signature-invalid` and `signature-chain-broken` at the
+/// crypto step, so any decode / alg / kid failure folds to
+/// `signature-invalid` (§7.3 — "crypto failure is indistinguishable from
+/// tamper for the receiver").
+fn map_cose_error_to_delegation(_e: &CoseError) -> DelegationRejectCode {
+    DelegationRejectCode::SignatureInvalid
 }
 
 fn structural_chain_check(input: &VectorInput) -> Result<(), DelegationRejectCode> {

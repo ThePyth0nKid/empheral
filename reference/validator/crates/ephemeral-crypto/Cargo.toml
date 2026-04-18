@@ -1,0 +1,21 @@
+[package]
+name = "ephemeral-crypto"
+description = "EPHEMERAL live COSE_Sign1 / Ed25519 verification primitives"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+coset = { workspace = true }
+ed25519-dalek = { workspace = true }
+ciborium = { workspace = true }
+thiserror = { workspace = true }
+hex = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
