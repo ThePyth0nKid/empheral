@@ -2,7 +2,7 @@
   "schema_version": "1.0.0",
   "vector_suite": "tariff-reject",
   "spec_reference": "design-final.md §2.2, §3-§7",
-  "spec_version": "round6-final",
+  "spec_version": "round8-delta-applied",
   "generated_at": "2026-04-18T12:40:00Z",
   "coverage_summary": {
     "sig-invalid-payload-mutated": 2,
@@ -60,7 +60,7 @@
     "revocation_channel_ha-multi-provider-violation-tier4": 1,
     "revocation_channel_ha-admin-bypass-missing": 1
   },
-  "notes": "Vectors describe malformed Tariffs that MUST be rejected at Router startup or on push-update (design-final.md §2.2, §10.3). The `tariff_cbor_hex` field uses placeholder descriptions; implementers generate real bytes locally from test fixtures. Every vector specifies a signature_verification_context capturing trust-anchor state so the test is self-contained. NEW reject codes introduced by this suite (extending README taxonomy): `signature-algorithm-unsupported`, `signature-algorithm-mismatch`, `signature-chain-broken` (already in README), `cose-malformed`, `kid-unknown`, `clock-skew-exceeded`, `not-yet-valid`, `tariff-malformed`, `tariff-tier-out-of-range`, `tariff-pcr-attestors-empty`, `tariff-pcr-quorum-invalid`, `tariff-fuzz-attestation-missing`, `tariff-fuzz-attestation-mismatch`, `tariff-integration-unknown`, `tariff-verb-invalid`, `tariff-resource-kind-invalid`, `tariff-validity-period-excessive`, `tariff-duplicate-entries`, `tariff-oversize`, `tariff-circular-reference`, `rate-matrix-incomplete`, `payload-encoding-invalid`, `payload-not-deterministic-cbor`, `pcr-attestor-not-trusted`, `tariff-self-inconsistent-version` (distinct from delegation-scope's `version-skew` — fires at Tariff load time on self-inconsistency, whereas `version-skew` fires at mandate acceptance time). trej-065..068 cover V3-6 `revocation_channel_ha` enforcement (§8.4 field requirements: presence, ≥2 secondary_endpoints, multi_provider=true for Tier 4+, admin_bypass_protocol present). AMBIGUITY FLAGS: (1) Spec does not define a numeric upper bound on Tariff size — 1 MiB used as reasonable default (§2.2 silent); flagged in edge-oversize vector. (2) Spec does not define `iat`→`not_before` maximum gap — flagged in expired-iat-after-not_before vector; implementations may accept. (3) Spec does not define maximum validity period; 30-day policy-cap used as illustrative; real deployments configure. (4) Strict vs lenient on unknown top-level fields — suite chooses STRICT (reject) per COSE-over-CBOR deterministic-encoding posture; lenient implementations may warn-and-accept. (5) `integration-unknown` may be accept-but-warn for forward compatibility across integration catalog updates; suite chooses REJECT for unknown-to-spec integrations. Conventions: current_time is 2026-05-01T00:00:00Z unless noted; trust_anchors defaults to [\"K_cust_root_pk_TEST\"]; previously_seen_version defaults to 1.",
+  "notes": "Vectors describe malformed Tariffs that MUST be rejected at Router startup or on push-update (design-final.md §2.2, §10.3). The `tariff_cbor_hex` field uses placeholder descriptions; implementers generate real bytes locally from test fixtures. Every vector specifies a signature_verification_context capturing trust-anchor state so the test is self-contained. NEW reject codes introduced by this suite (extending README taxonomy): `signature-algorithm-unsupported`, `signature-algorithm-mismatch`, `signature-chain-broken` (already in README), `cose-malformed`, `kid-unknown`, `clock-skew-exceeded`, `not-yet-valid`, `tariff-malformed`, `tariff-tier-out-of-range`, `tariff-pcr-attestors-empty`, `tariff-pcr-quorum-invalid`, `tariff-fuzz-attestation-missing`, `tariff-fuzz-attestation-mismatch`, `tariff-integration-unknown`, `tariff-verb-invalid`, `tariff-resource-kind-invalid`, `tariff-validity-period-excessive`, `tariff-duplicate-entries`, `tariff-oversize`, `tariff-circular-reference`, `rate-matrix-incomplete`, `payload-encoding-invalid`, `payload-not-deterministic-cbor`, `pcr-attestor-not-trusted`, `tariff-self-inconsistent-version` (distinct from delegation-scope's `version-skew` — fires at Tariff load time on self-inconsistency, whereas `version-skew` fires at mandate acceptance time). trej-065..068 cover V3-6 `revocation_channel_ha` enforcement (§8.4 field requirements: presence, ≥2 secondary_endpoints, multi_provider=true for Tier 4+, admin_bypass_protocol present). AMBIGUITY FLAGS: (1) Resolved by R8.T1 — Tariff size cap is normatively 262144 bytes (256 KiB); edge-oversize vector policy_max_tariff_bytes updated accordingly. (2) Resolved by R8.T2 — `iat`→`not_before` gap MUST NOT exceed 2592000s (30 days); excess → `tariff-iat-nbf-gap-excessive`. (3) Resolved by R8.T3 — (exp - not_before) MUST NOT exceed 2592000s (30 days); excess → `tariff-validity-period-excessive`. Not operator-configurable. (4) Resolved by R8.T4 — Strict posture confirmed; unknown top-level fields MUST reject with `tariff-unknown-field`. (5) `integration-unknown` may be accept-but-warn for forward compatibility across integration catalog updates; suite chooses REJECT for unknown-to-spec integrations. Conventions: current_time is 2026-05-01T00:00:00Z unless noted; trust_anchors defaults to [\"K_cust_root_pk_TEST\"]; previously_seen_version defaults to 1.",
   "vectors": [
     {
       "id": "trej-001",
@@ -501,7 +501,7 @@
     {
       "id": "trej-023",
       "category": "expired-iat-after-not_before-gap-too-large",
-      "description": "issued_at is 2 years prior to valid_from; policy cap on issuance-to-activation gap is 30 days. AMBIGUOUS — spec does not define the cap explicitly.",
+      "description": "issued_at is 2 years prior to valid_from; R8.T2 caps the iat→not_before gap at 30 days (2592000s).",
       "input": {
         "tariff_cbor_hex": "<placeholder: Tariff issued_at=2024-05-01, valid_from=2026-05-01>",
         "signature_verification_context": {
@@ -515,8 +515,8 @@
         "policy_max_iat_to_valid_from_gap_seconds": 2592000,
         "previously_seen_version": 1
       },
-      "expected": {"outcome": "reject", "reject_code": "tariff-malformed"},
-      "rationale": "Large iat→valid_from gaps enable pre-signed-dormant-Tariff attacks by a compromised signer. Flagged ambiguity: spec §2.2 does not specify the cap. Suite recommends 30-day policy default.",
+      "expected": {"outcome": "reject", "reject_code": "tariff-iat-nbf-gap-excessive"},
+      "rationale": "R8.T2 normatively caps (not_before - iat) at 2592000s (30d). Pre-signed-dormant-Tariff attacks via compromised K_tariff_signer are bounded by pairing this cap with the R8.T2 key-epoch cap (max 2 Tariffs per epoch) and the future-dating ceremony-quorum requirement (>7d future). Reject code flipped from tariff-malformed to the specific tariff-iat-nbf-gap-excessive for audit-log discrimination.",
       "redteam_refs": ["R2-TARIFF-SIGNING-KEY-COMPROMISE"],
       "severity_if_failed": "medium"
     },
@@ -639,7 +639,7 @@
     {
       "id": "trej-030",
       "category": "extra-unrecognized-field",
-      "description": "Tariff payload contains an unknown top-level field 'magic_backdoor'. Suite chooses strict-reject; lenient implementations might ignore.",
+      "description": "Tariff payload contains an unknown top-level field 'magic_backdoor'. R8.T4 mandates strict-reject.",
       "input": {
         "tariff_cbor_hex": "<placeholder: Tariff payload with extra entry 'magic_backdoor': true>",
         "signature_verification_context": {
@@ -650,8 +650,8 @@
         "current_time": "2026-05-01T00:00:00Z",
         "previously_seen_version": 1
       },
-      "expected": {"outcome": "reject", "reject_code": "tariff-malformed"},
-      "rationale": "Strict-schema posture: deterministic CBOR + known-field-set prevents smuggling hidden policy. Ambiguity noted in file-level notes; strict wins here.",
+      "expected": {"outcome": "reject", "reject_code": "tariff-unknown-field"},
+      "rationale": "R8.T4 normatively mandates strict rejection of unknown top-level fields (applies recursively to nested structures). No extensions map; schema evolution goes via version integer only. Rationale anchors: RFC 8949 §4.2 deterministic encoding, RFC 9052 §3 COSE critical-headers, RFC 5280 §4.2 critical-extension semantics. Lenient-warn posture would create split-brain vulnerability (Router vs auditor divergent enforcement, extending V2-2 asymmetry to Tariff layer). Reject code flipped from tariff-malformed to tariff-unknown-field for specificity.",
       "redteam_refs": [],
       "severity_if_failed": "high"
     },
@@ -1205,7 +1205,7 @@
     {
       "id": "trej-059",
       "category": "edge-oversize",
-      "description": "Tariff encoded payload is 2 MiB — exceeds 1 MiB reasonable-size policy cap. AMBIGUITY: spec does not fix a size cap; 1 MiB used as sane default.",
+      "description": "Tariff encoded payload is 2 MiB — exceeds R8.T1 normative cap of 262144 bytes (256 KiB).",
       "input": {
         "tariff_cbor_hex": "<placeholder: Tariff payload of 2 MiB with inflated narrowness_rules list>",
         "signature_verification_context": {
@@ -1214,12 +1214,12 @@
           "signature_valid_under_current_bytes": true
         },
         "current_time": "2026-05-01T00:00:00Z",
-        "policy_max_tariff_bytes": 1048576,
+        "policy_max_tariff_bytes": 262144,
         "observed_size_bytes": 2097152,
         "previously_seen_version": 1
       },
       "expected": {"outcome": "reject", "reject_code": "tariff-oversize"},
-      "rationale": "Oversized Tariffs enable DoS on Router parse/verify paths. Spec ambiguity: no cap defined. Suite adopts 1 MiB default; implementations should document their own.",
+      "rationale": "R8.T1 normatively caps Tariff size at 262144 bytes (256 KiB) on COSE_Sign1 outer envelope; measured before signature verification to prevent verification-DoS. Rationale anchors: AWS IAM managed-policy 6 KiB, JWT practical 8-16 KiB, X.509 1-4 KiB (EV+SCT ~16 KiB), TLS handshake 16 KiB max — 256 KiB provides 4-8x growth headroom over realistic ~32-64 KiB Tariff content while remaining in L2 cache. Customers needing larger policy sets split into per-integration Tariffs (§10.2).",
       "redteam_refs": [],
       "severity_if_failed": "medium"
     },
@@ -1280,7 +1280,7 @@
         "previously_seen_version": 1
       },
       "expected": {"outcome": "reject", "reject_code": "tariff-validity-period-excessive"},
-      "rationale": "§7.5 suggests frequent rotation; long validity windows amplify key-compromise blast radius. AMBIGUITY: spec does not fix a maximum; 30-day policy cap used as illustrative default.",
+      "rationale": "§7.5 suggests frequent rotation; long validity windows amplify key-compromise blast radius. R8.T3 normatively caps (exp - not_before) at 2592000s (30 days); exceeding this MUST reject with `tariff-validity-period-excessive`. Not operator-configurable.",
       "redteam_refs": ["R2-TARIFF-SIGNING-KEY-COMPROMISE"],
       "severity_if_failed": "medium"
     },

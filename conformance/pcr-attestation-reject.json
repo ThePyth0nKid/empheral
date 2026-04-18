@@ -2,7 +2,7 @@
   "schema_version": "1.0.0",
   "vector_suite": "pcr-attestation-reject",
   "spec_reference": "design-final.md §9.3, §9.4",
-  "spec_version": "round6-final",
+  "spec_version": "round8-delta-applied",
   "generated_at": "2026-04-18T12:45:00Z",
   "coverage_summary": {
     "quorum-short-by-one": 2,
@@ -626,13 +626,16 @@
     {
       "id": "pcrrej-023",
       "category": "transparency-log-unknown-log",
-      "description": "Proof references log_id 'rogue-log-v1' not in Tariff's trusted_transparency_logs set.",
+      "description": "Proof references log_id 'rogue-log-v1' not in Tariff's trusted_transparency_logs set. Schema migrated to R8.P3 object-array form (log_id + public_key + key_alg).",
       "input": {
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3"],
           "quorum": 2,
           "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
-          "trusted_transparency_logs": ["rekor-v1", "sigstore-prod"]
+          "trusted_transparency_logs": [
+            {"log_id": "rekor-v1", "public_key": "<placeholder: SPKI DER of Rekor v1 Ed25519 pubkey>", "key_alg": "ed25519", "origin_url": "https://rekor.sigstore.dev"},
+            {"log_id": "sigstore-prod", "public_key": "<placeholder: SPKI DER of sigstore-prod ECDSA P-256 pubkey>", "key_alg": "ecdsa-p256-sha256", "origin_url": "https://log.sigstore.dev"}
+          ]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -646,7 +649,7 @@
         "router_nonce_issued": "r23"
       },
       "expected": {"outcome": "reject", "reject_code": "pcr-attestation-transparency-log-unknown"},
-      "rationale": "Adversary stands up their own log and serves proofs against it. Tariff MUST pin trusted log set. §9.4 + trusted-log enumeration.",
+      "rationale": "R8.P3 pins the trusted-log set as a non-empty CBOR array of log-identity objects (log_id + public_key SPKI DER + key_alg allowlist). Adversary log_id 'rogue-log-v1' is not in the set, so membership check (byte-compare post-NFC over log_id projection per R7.C6 SET semantics) fails → pcr-attestation-transparency-log-unknown. Schema migrated from string-array (reject_code unchanged).",
       "redteam_refs": ["V3-3"],
       "severity_if_failed": "critical"
     },
@@ -1220,8 +1223,8 @@
         "current_time": 1714525200,
         "router_nonce_issued": "r45"
       },
-      "expected": {"outcome": "reject", "reject_code": "pcr-attestation-transparency-invalid"},
-      "rationale": "OPEN PROBLEM: split-view attacks on transparency logs are fundamentally hard without gossip/witness protocols. Spec should reference CT-style witness cosignatures (e.g., RFC 9162 §5.3) for full defense. This vector models a Tariff requiring witnesses; absence of them triggers transparency-invalid. Without witnesses, attack remains feasible for a strong adversary — flagged as residual.",
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestation-witness-cosignature-missing"},
+      "rationale": "R8.P6 (RFC 9162 §5.3): Tariff declares required_witness_cosignatures=2; bundle's witness_cosignatures=[] is empty, so Router MUST reject with the specific code pcr-attestation-witness-cosignature-missing rather than the broader pcr-attestation-transparency-invalid. The specific code discriminates the split-view defense from generic STH/inclusion-proof failures in audit logs.",
       "redteam_refs": ["V3-3"],
       "severity_if_failed": "high"
     },

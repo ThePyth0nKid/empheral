@@ -109,7 +109,7 @@ Not a deliverable we build — a process we run. Items:
 | C | Phase B clean + external spec audit clean | MV-1 feature-complete + conformance suite gates CI | Product exists |
 | D | MV-1 feature-complete | External audit report with no CRITICAL | Production-audit clean |
 
-**Current position**: **Phase A delivery complete** (2026-04-18). 515 vectors across 6 files, schema-valid, all agent-produced output reviewed by a code-reviewer sub-agent, 4 critical findings fixed, 38 open spec questions consolidated across files.
+**Current position**: **Phase A + R7 + R8 delivery complete** (2026-04-18). 515 vectors across 6 files, schema-valid, all agent-produced output reviewed by a code-reviewer sub-agent, 4 critical findings fixed, 38 open spec questions fully resolved (R7: 15 bounded, R8: 23 operational). **Phase B entry satisfied via Path 1.**
 
 ### Phase A delivery summary
 
@@ -164,7 +164,11 @@ Entry to Phase B requires one of:
 
 Path 1 is cheaper in total effort; Path 2 is faster to validator-reality-check.
 
-**Recommendation**: Path 1 for all 10 canonicalization questions and 5 delegation questions (bounded, architect can decide in one pass); Path 2 for the other 23 (more operationally dependent, better resolved against a real implementation).
+**Original recommendation**: Path 1 for all 10 canonicalization questions and 5 delegation questions (bounded, architect can decide in one pass); Path 2 for the other 23 (more operationally dependent, better resolved against a real implementation).
+
+**Actual resolution (2026-04-18)**: Path 1 adopted for **all 38 questions** — bounded 15 via R7 (`design-round7-tightenings.md`), operational 23 via R8 (`design-round8-operational-tightenings.md`). R8 was produced by a 4-architect agent swarm (one per cluster: PCR, Anomaly, Tariff, Fuzz) plus a two-pass review swarm (security-reviewer + code-reviewer + architect + Explore/redundancy). Pass 1: 6 findings (Sec-N1-N3, Code-N4/N5/N8) fixed in-place. Pass 2: 5 CRIT + 9 HIGH + 7 MED + 3 LOW findings across security/architect/code-reviewer reports; resolution strategy split into three categories — (A) mechanical count/rationale fixes applied directly to R8 delta + vectors; (B) four Pre-Integration Blockers (B-1 through B-4) documented in R8 as design-final.md/R7 amendment dependencies for the integration pass; (C) four operational residual flags (key_epoch self-declared, canary git-ref dead-zone, revocation cascade undefined, HWM bootstrap) added to R8 residual flags for Phase B instrumentation. Final strength direction: **23 STRENGTHEN / 0 NEUTRAL / 0 WEAKEN**, 32 new reject codes, 3 vector reject-code flips, 3 schema migrations, 0 outcome flips.
+
+**Phase B entry is satisfied via Path 1 — CONDITIONAL** on Pre-Integration Blockers B-1 through B-4 resolution during the integration pass. The reference validator harness can be scaffolded against `design-final.md` + `design-round7-tightenings.md` + `design-round8-operational-tightenings.md` provided R8-dependent behaviors that collide with R6/R7 baselines are conservatively rejected until integration lands.
 
 ---
 

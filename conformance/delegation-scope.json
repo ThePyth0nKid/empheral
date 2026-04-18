@@ -2,7 +2,7 @@
   "schema_version": "1.0.0",
   "vector_suite": "delegation-scope",
   "spec_reference": "design-final.md §7.3",
-  "spec_version": "round6-final",
+  "spec_version": "round8-delta-applied",
   "generated_at": "2026-04-18T12:30:00Z",
   "coverage_summary": {
     "valid-exact-match": 4,

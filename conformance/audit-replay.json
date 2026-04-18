@@ -2,7 +2,7 @@
   "schema_version": "1.0.0",
   "vector_suite": "audit-replay",
   "spec_reference": "design-final.md §3.5, §11, §8.4",
-  "spec_version": "round6-final",
+  "spec_version": "round8-delta-applied",
   "generated_at": "2026-04-18T12:50:00Z",
   "coverage_summary": {
     "pattern-delete-storm": 1,
@@ -740,23 +740,35 @@
     {
       "id": "arep-025",
       "category": "time-outside-business-hours",
-      "description": "Actions at 3am Sunday when user's Tariff declares 9-5 weekday operating hours.",
+      "description": "Tier 3 RDS snapshot deletes on Sunday 03:00 America/New_York. Tariff's operating_hours declares Mon-Fri 09:00-17:00 with default_action=reject. Schema migrated to R8.A4 normative form (IANA tz + windows with day_of_week 0=Mon..6=Sun + start_minute/end_minute).",
       "input": {
         "audit_stream": {
           "events": [
-            {"event_id": "evt-oh1", "timestamp": "2026-05-03T03:00:00Z", "mandate_id": "m-hours-1", "tier": 3, "integration": "aws-rds", "verb": "delete-snapshot", "resource_kind": "rds-snapshot", "resource_ref": "rds-snap-prod-backup-1", "outcome": "executed", "weekday": "Sunday", "local_hour": 3},
-            {"event_id": "evt-oh2", "timestamp": "2026-05-03T03:02:00Z", "mandate_id": "m-hours-1", "tier": 3, "integration": "aws-rds", "verb": "delete-snapshot", "resource_kind": "rds-snapshot", "resource_ref": "rds-snap-prod-backup-2", "outcome": "executed", "weekday": "Sunday", "local_hour": 3},
-            {"event_id": "evt-oh3", "timestamp": "2026-05-03T03:05:00Z", "mandate_id": "m-hours-1", "tier": 3, "integration": "aws-rds", "verb": "delete-snapshot", "resource_kind": "rds-snapshot", "resource_ref": "rds-snap-prod-backup-3", "outcome": "executed", "weekday": "Sunday", "local_hour": 3}
+            {"event_id": "evt-oh1", "timestamp": "2026-05-03T03:00:00Z", "mandate_id": "m-hours-1", "tier": 3, "integration": "aws-rds", "verb": "delete-snapshot", "resource_kind": "rds-snapshot", "resource_ref": "rds-snap-prod-backup-1", "outcome": "executed", "local_day_of_week": 6, "local_minute_of_day": 180},
+            {"event_id": "evt-oh2", "timestamp": "2026-05-03T03:02:00Z", "mandate_id": "m-hours-1", "tier": 3, "integration": "aws-rds", "verb": "delete-snapshot", "resource_kind": "rds-snapshot", "resource_ref": "rds-snap-prod-backup-2", "outcome": "executed", "local_day_of_week": 6, "local_minute_of_day": 182},
+            {"event_id": "evt-oh3", "timestamp": "2026-05-03T03:05:00Z", "mandate_id": "m-hours-1", "tier": 3, "integration": "aws-rds", "verb": "delete-snapshot", "resource_kind": "rds-snapshot", "resource_ref": "rds-snap-prod-backup-3", "outcome": "executed", "local_day_of_week": 6, "local_minute_of_day": 185}
           ]
         },
         "detector_state": {
-          "tariff_declared_operating_hours": {"days": ["Mon", "Tue", "Wed", "Thu", "Fri"], "start_hour": 9, "end_hour": 17, "timezone": "America/New_York"},
-          "pattern_name": "outside-operating-hours"
+          "tariff_operating_hours": {
+            "timezone": "America/New_York",
+            "windows": [
+              {"day_of_week": 0, "start_minute": 540, "end_minute": 1020, "label": "weekday-business"},
+              {"day_of_week": 1, "start_minute": 540, "end_minute": 1020, "label": "weekday-business"},
+              {"day_of_week": 2, "start_minute": 540, "end_minute": 1020, "label": "weekday-business"},
+              {"day_of_week": 3, "start_minute": 540, "end_minute": 1020, "label": "weekday-business"},
+              {"day_of_week": 4, "start_minute": 540, "end_minute": 1020, "label": "weekday-business"}
+            ],
+            "default_action": "reject",
+            "applies_to_tiers": [3, 4, 5],
+            "exempt_mandate_ids": []
+          },
+          "pattern_name": "operating-hours-violation"
         },
-        "summary": "Tier 3 destructive actions on Sunday 3am, Tariff operating hours weekday 9-5."
+        "summary": "Tier 3 destructive actions on Sunday (day_of_week=6) 03:00 outside every declared weekday 09:00-17:00 window under America/New_York."
       },
       "expected": {"outcome": "reject", "reject_code": "aggregation-pattern-detected"},
-      "rationale": "§11: if Tariff declares operating hours, actions outside that window are by definition anomalous. Flags spec: Tariff currently lacks an `operating_hours` field (§2.2) — this vector implies the field should be added to the Tariff schema. Detector behavior conditional on customer opting in via this field.",
+      "rationale": "R8.A4 normative schema: IANA timezone (named zone carries DST), day_of_week 0=Mon..6=Sun per ISO 8601, minutes-of-day in [0,1440). Events at local_day_of_week=6 fall outside every declared weekday window; Tier 3 is within applies_to_tiers=[3,4,5]; default_action=reject → pattern operating-hours-violation fires, reported via R8.A1 companion-pattern aggregation-pattern-detected code with structured payload {pattern_id, library_version, severity=high, firing_rule=first-match}.",
       "redteam_refs": ["V2-1"],
       "severity_if_failed": "high"
     },
@@ -934,7 +946,7 @@
     {
       "id": "arep-032",
       "category": "negative-scheduled-rotation-burst",
-      "description": "Scheduled secret rotation burst during declared maintenance window; 10 rotations in 5 min, all known-pattern.",
+      "description": "Scheduled secret rotation burst during exempted maintenance window; 10 rotations in 5 min by dedicated rotation mandate listed in exempt_mandate_ids. Schema migrated to R8.A4 operating_hours + exempt_mandate_ids form (replaces ad-hoc tariff_declared_maintenance_window).",
       "input": {
         "audit_stream": {
           "pattern_description": {
@@ -943,20 +955,29 @@
             "count": 10,
             "interval_seconds": 30,
             "template_event": {"mandate_id": "m-rotation-schedule", "tier": 3, "integration": "vault-prod", "verb": "rotate", "resource_kind": "secret", "outcome": "executed"},
-            "resource_ref_pattern": "secret/prod/scheduled-rotation/{i}",
-            "scheduled_rotation": true,
-            "tariff_declared_maintenance_window": true
+            "resource_ref_pattern": "secret/prod/scheduled-rotation/{i}"
           }
         },
         "detector_state": {
-          "tariff_maintenance_window": {"start": "2026-05-03T16:00:00Z", "end": "2026-05-03T16:30:00Z"},
-          "tariff_declared_scheduled_rotations": {"mandate": "m-rotation-schedule", "max_in_window": 20},
-          "pattern_name": "none-scheduled-in-maintenance"
+          "tariff_operating_hours": {
+            "timezone": "America/New_York",
+            "windows": [
+              {"day_of_week": 0, "start_minute": 540, "end_minute": 1020, "label": "weekday-business"},
+              {"day_of_week": 1, "start_minute": 540, "end_minute": 1020, "label": "weekday-business"},
+              {"day_of_week": 2, "start_minute": 540, "end_minute": 1020, "label": "weekday-business"},
+              {"day_of_week": 3, "start_minute": 540, "end_minute": 1020, "label": "weekday-business"},
+              {"day_of_week": 4, "start_minute": 540, "end_minute": 1020, "label": "weekday-business"}
+            ],
+            "default_action": "reject",
+            "applies_to_tiers": [3, 4, 5],
+            "exempt_mandate_ids": ["m-rotation-schedule"]
+          },
+          "pattern_name": "operating-hours-violation"
         },
-        "summary": "10 secret rotations in 5 min by dedicated rotation mandate during declared maintenance; well under declared cap of 20."
+        "summary": "10 secret rotations in 5 min by m-rotation-schedule, which is listed in exempt_mandate_ids — operating-hours-violation pattern MUST NOT fire for this mandate."
       },
       "expected": {"outcome": "accept"},
-      "rationale": "§11 and §8.4: legitimate scheduled rotations share signature with attack arep-003 (vault-rotate-storm). Differentiator is explicit customer declaration. Detector must honor Tariff-declared maintenance windows with scoped rotation caps. Flags spec: without such declaration, detector cannot distinguish legitimate mass-rotation from attack — strong argument for adding declared_maintenance_window to Tariff.",
+      "rationale": "R8.A4: exempt_mandate_ids carves specific mandates out of operating-hours enforcement. The dedicated rotation mandate m-rotation-schedule is listed, so its out-of-window destructive actions do not fire operating-hours-violation — false-positive suppression for legitimate scheduled automation. Complements arep-025 (same pattern, no exemption → fires). Signature collision with vault-rotate-storm (arep-003) is separately governed by that pattern's own thresholds and scope.",
       "redteam_refs": [],
       "severity_if_failed": "high"
     }

@@ -98,7 +98,48 @@ The following reject codes appear across multiple suites. Implementations should
 | `pcr-attestation-quorum-short` | pcr-attestation-reject | Fewer than quorum attestors signed. |
 | `pcr-attestation-mismatch` | pcr-attestation-reject | Attestors computed different PCR values. |
 | `pcr-attestation-transparency-missing` | pcr-attestation-reject | No transparency-log inclusion proof. |
-| `aggregation-pattern-detected` | audit-replay | Pattern matched; revocation should be pushed. |
+| `aggregation-pattern-detected` | audit-replay | Pattern matched; revocation should be pushed. Payload extended by R8.A2 with `{pattern_id, library_version, severity, firing_rule}`. |
+| `tariff-pcr-expected-empty` | pcr-attestation-reject | R8.P1: `Tariff.pcr_requirement.expected_pcrs` is empty. |
+| `pcr-expected-missing-in-bundle` | pcr-attestation-reject | R8.P1: bundle omits a PCR index pinned by Tariff. |
+| `pcr-bundle-malformed` | pcr-attestation-reject | R8.P1: bundle reports PCR indices outside TPM 2.0 [0,23] / Nitro [0,15] range. |
+| `tariff-pcr-sth-age-unset` | pcr-attestation-reject | R8.P2: `transparency_log_max_root_age_seconds` absent. |
+| `tariff-pcr-sth-age-too-lax` | pcr-attestation-reject | R8.P2: STH age ceiling > 604800s (7d). |
+| `tariff-pcr-sth-age-invalid` | pcr-attestation-reject | R8.P2: STH age ceiling ≤ 0. |
+| `pcr-attestation-transparency-stale` | pcr-attestation-reject | R8.P2: `root_age_seconds` exceeds Tariff ceiling. |
+| `pcr-attestation-transparency-invalid` | pcr-attestation-reject | R8.P2: STH signature or proof fails; residual code. |
+| `tariff-pcr-trusted-logs-empty` | pcr-attestation-reject | R8.P3: `trusted_transparency_logs` empty. |
+| `tariff-pcr-trusted-logs-duplicate` | pcr-attestation-reject | R8.P3: duplicate `log_id` under R7.C6 SET semantics. |
+| `tariff-pcr-trusted-log-alg-unsupported` | pcr-attestation-reject | R8.P3: `key_alg` outside allowlist. |
+| `pcr-attestation-transparency-log-unknown` | pcr-attestation-reject | R8.P3: proof references `log_id` not in Tariff set. |
+| `pcr-attestation-nonce-missing` | pcr-attestation-reject | R8.P4: attestation lacks nonce. |
+| `pcr-attestation-nonce-mismatch` | pcr-attestation-reject | R8.P4: nonce ≠ Router challenge (also serves TTL-elapsed). |
+| `pcr-attestation-nonce-reuse` | pcr-attestation-reject | R8.P4: nonce appears in Router consumed-ledger. |
+| `pcr-attestation-nonce-inconsistent` | pcr-attestation-reject | R8.P4: attestors signed distinct nonces within one bundle (split-attestor forgery). |
+| `tariff-pcr-bundle-max-size-too-strict` | pcr-attestation-reject | R8.P5: `bundle_max_size_bytes` < 4096. |
+| `tariff-pcr-bundle-max-size-too-lax` | pcr-attestation-reject | R8.P5: `bundle_max_size_bytes` > 1048576. |
+| `pcr-bundle-too-large` | pcr-attestation-reject | R8.P5: bundle byte-size exceeds Tariff cap (measured before CBOR decode). |
+| `pcr-attestation-witness-cosignature-missing` | pcr-attestation-reject | R8.P6: bundle lacks required witness cosignatures. |
+| `pcr-attestation-witness-cosignature-invalid` | pcr-attestation-reject | R8.P6: witness cosignature fails verification. |
+| `tariff-pcr-witnessing-insufficient-for-tier` | pcr-attestation-reject | R8.P6: Tier 4+ Tariff has `required < 2` or `trusted_witnesses.length < 3`. |
+| `tariff-pcr-witnessing-single-provider` | pcr-attestation-reject | R8.P6: Tier 4+ Tariff's witnesses span fewer than 2 distinct `provider` labels. |
+| `pattern-library-version-too-old` | audit-replay | R8.A1: `AnomalyPatternLibrary.library_version` ≤ current pinned (distinct from Tariff `version-too-old`). |
+| `pattern-library-signer-role-violation` | audit-replay | R8.A1: library signed by key other than `K_cust_anomaly_library_signer`. |
+| `pattern-library-relaxation-without-exception` | audit-replay | R8.A1: new library relaxes threshold below high-water-mark without ceremony_quorum `PatternRelaxationException`. |
+| `tariff-invalid-timezone` | tariff-reject, audit-replay | R8.A4: `operating_hours.timezone` not a valid IANA zone name. |
+| `operating-hours-overlap` | tariff-reject | R8.A4: two `windows` entries with same `day_of_week` overlap on `(start_minute, end_minute)`. |
+| `operating-hours-window-inverted` | tariff-reject | R8.A4: window's `end_minute` ≤ `start_minute`. |
+| `operating-hours-day-invalid` | tariff-reject | R8.A4: `day_of_week` > 6. |
+| `tariff-oversize` | tariff-reject | R8.T1: Tariff COSE envelope > 262144 bytes (256 KiB); checked before signature verify. |
+| `tariff-iat-nbf-gap-excessive` | tariff-reject | R8.T2: `not_before - iat` > 2592000s (30d). |
+| `tariff-iat-after-nbf` | tariff-reject | R8.T2: `iat > not_before`. |
+| `clock-skew-exceeded` | tariff-reject | R8.T2: `iat > current_time + tolerance`. |
+| `tariff-key-epoch-cap-exceeded` | tariff-reject | R8.T2: more than 2 Tariffs share one `K_tariff_signer` epoch. |
+| `tariff-future-dated-requires-ceremony-quorum` | tariff-reject | R8.T2: Tariff with `not_before > current_time + 604800s` lacks ceremony_quorum co-signature. |
+| `tariff-validity-period-excessive` | tariff-reject | R8.T3: `exp - not_before` > 2592000s (30d). |
+| `tariff-validity-window-empty` | tariff-reject | R8.T3: `exp ≤ not_before`. |
+| `tariff-unknown-field` | tariff-reject | R8.T4: payload contains top-level or nested key outside §2.2 schema (strict, no extensions map). |
+| `tariff-version-unsupported` | tariff-reject | R8.T4: `version` integer outside supported range. |
+| `tariff-integration-unknown` | tariff-reject | R8.T5: `integration_ref` (top-level, in `minimum_tiers`, or in `rate_matrix`) not in integration catalog. |
 
 Implementations MAY extend this list with vendor-specific codes but MUST support these when applicable.
 
