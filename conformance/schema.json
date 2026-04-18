@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ephemeral.example/conformance/schema.json",
+  "title": "EPHEMERAL Conformance Vector Suite Schema",
+  "description": "JSON Schema defining the file format for EPHEMERAL conformance test vector files. Vector files are JSON for source form; implementers serialize to deterministic CBOR at consumer time per RFC 8949 §4.2.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "vector_suite",
+    "spec_reference",
+    "spec_version",
+    "generated_at",
+    "vectors"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0",
+      "description": "Version of this schema definition. Vectors compatible with 1.0.0 will remain parseable by 1.x validators."
+    },
+    "vector_suite": {
+      "type": "string",
+      "enum": [
+        "delegation-scope",
+        "canonicalization",
+        "fuzz-baseline",
+        "tariff-reject",
+        "pcr-attestation-reject",
+        "audit-replay"
+      ],
+      "description": "Which of the six conformance suites this file represents (see design-final.md §15)."
+    },
+    "spec_reference": {
+      "type": "string",
+      "description": "Dotted spec section reference, e.g., 'design-final.md §7.3'."
+    },
+    "spec_version": {
+      "type": "string",
+      "description": "Git commit hash or version tag of the design-final.md at the time vectors were authored."
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 timestamp."
+    },
+    "coverage_summary": {
+      "type": "object",
+      "description": "Optional structured summary of what categories are covered and how many vectors per category.",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "notes": {
+      "type": "string",
+      "description": "Free-form notes for implementers."
+    },
+    "vectors": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/vector" }
+    }
+  },
+  "$defs": {
+    "vector": {
+      "type": "object",
+      "required": ["id", "category", "description", "input", "expected", "rationale"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z]{2,6}-\\d{3,4}$",
+          "description": "Stable identifier. Prefix matches the vector suite (e.g., 'ds-' for delegation-scope, 'canon-' for canonicalization, 'fuzz-' for fuzz-baseline, 'trej-' for tariff-reject, 'pcrrej-' for pcr-attestation-reject, 'arep-' for audit-replay). Zero-padded sequence."
+        },
+        "category": {
+          "type": "string",
+          "description": "Short category tag, kebab-case. Categories group vectors by attack class or spec-ambiguity area. Use consistently within a file."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 10,
+          "description": "One-line human-readable description of what this vector tests."
+        },
+        "input": {
+          "type": "object",
+          "description": "The input payload the implementation under test receives. Shape is suite-specific; see per-suite README."
+        },
+        "expected": {
+          "type": "object",
+          "required": ["outcome"],
+          "additionalProperties": false,
+          "properties": {
+            "outcome": {
+              "type": "string",
+              "enum": ["accept", "reject"],
+              "description": "Top-level expected result."
+            },
+            "reject_code": {
+              "type": "string",
+              "description": "Machine-readable reject reason. Present if outcome is 'reject'. Suite-specific enum; see per-suite README."
+            },
+            "output": {
+              "type": "object",
+              "description": "Expected output object for suites where outcome='accept' produces a value (e.g., canonicalization emits a canonical form; fuzz-baseline emits a tier)."
+            }
+          }
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 10,
+          "description": "Cite spec section or redteam finding that motivated this vector. This is the trace that proves coverage."
+        },
+        "redteam_refs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Optional list of redteam finding IDs (e.g., 'V3-1', 'V2-2') that this vector defends against."
+        },
+        "severity_if_failed": {
+          "type": "string",
+          "enum": ["critical", "high", "medium", "low"],
+          "description": "Severity of an implementation failing this vector. CRITICAL = would ship a security bug; HIGH = would ship a correctness bug that could be exploited; MEDIUM = correctness issue without immediate exploit; LOW = cosmetic or ergonomic."
+        }
+      }
+    }
+  }
+}

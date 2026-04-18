@@ -1,0 +1,2291 @@
+{
+  "schema_version": "1.0.0",
+  "vector_suite": "canonicalization",
+  "spec_reference": "design-final.md §4.2, §4.4",
+  "spec_version": "round6-final",
+  "generated_at": "2026-04-18T12:30:00Z",
+  "coverage_summary": {
+    "identity-idempotent": 10,
+    "whitespace-normalization": 8,
+    "unicode-nfc-nfd-nfkc-nfkd": 10,
+    "case-folding": 6,
+    "structural-reorder": 8,
+    "numeric-normalization": 6,
+    "string-escape-equivalence": 6,
+    "array-handling": 4,
+    "null-vs-missing": 4,
+    "injected-control-chars": 6,
+    "homoglyph-attacks": 6,
+    "locale-sensitive": 4,
+    "roundtrip-jsoncbor": 4,
+    "attack-bypass-attempts": 6,
+    "empty-and-boundary": 5
+  },
+  "notes": "Canonicalization vectors defend against V2-2 (CLASSIFIER-BYPASS via normalization). Input shape is {raw_intent}; expected.output.canonical_intent is the normalized form that both classifier and mandate-signer must see. Where spec is silent, the stricter option (reject) is chosen.\n\nOPEN SPEC QUESTIONS (raised by authoring these vectors; require future spec precision):\n1. Spec §4.2 says 'Verbs: lowercased'. It does NOT say whether resource_kind, namespace, or name identifiers are case-folded. Canon-020..025 assume: resource_kind lowercased (since K8s kinds are case-insensitive in API discovery), namespace and name are case-preserved (since K8s names are case-sensitive). If spec intent differs, these vectors require revision.\n2. Spec §4.2 says 'Parameter keys: forbidden case variation' — this is ambiguous. Canon interprets as: if two keys differ only by case, the intent is REJECTED (`normalization-not-applied`). It does NOT say keys should be auto-lowercased.\n3. Spec does not explicitly pick a Unicode normalization form. Canon assumes NFC (standard for IDN and JSON best practice). NFD/NFKC/NFKD inputs are REJECTED rather than silently converted, because silent conversion creates the exact V2-2 attack surface (classifier sees one form, signer sees another).\n4. Spec does not specify behavior for null vs missing keys. Canon treats them as distinct (a null value is a concrete assertion, a missing key is an absence). Extra keys that are null are rejected so that canonical form is minimal.\n5. Spec does not specify max string length or max nesting depth. Canon uses conservative defaults (max_string_bytes=4096, max_depth=8) and rejects with `max-length-exceeded` / `max-depth-exceeded`.\n6. Spec does not specify array-ordering semantics for cap/verb lists. Canon assumes: arrays inside a single intent's verbs/caps are SETS (sorted, deduplicated); positional arrays (e.g., argv-style params) are SEQUENCES (preserved order). Marked per-vector.\n7. Spec does not say whether canonicalization happens before or after JSON→CBOR. Canon assumes the sequence: parse JSON → canonicalize as an in-memory structure → serialize to deterministic CBOR per RFC 8949 §4.2. Roundtrip category validates this.\n8. Spec does not explicitly require stripping zero-width or bidi-override characters. Canon REJECTS any intent containing U+200B, U+200C, U+200D, U+2060, U+FEFF, U+202A-202E, U+2066-2069 with `invalid-control-char`. Rationale: these are the homoglyph/spoofing primary attack vector.\n9. Spec §4.2 says 'Identifiers: canonical form <kind>/<namespace>/<name>'. Does not specify separator escaping if name contains '/'. Canon disallows '/' in name component; any raw_intent with '/' in name is rejected.\n10. Spec does not state locale neutrality. Canon mandates locale-independent case folding (Unicode default case folding, NOT tr-TR locale). Turkish dotless-i and German eszett cases enforce this.",
+  "vectors": [
+    {
+      "id": "canon-001",
+      "category": "identity-idempotent",
+      "description": "Already-canonical minimal intent passes through unchanged",
+      "input": {
+        "raw_intent": {
+          "verb": "get",
+          "resource_kind": "pod",
+          "namespace": "default",
+          "name": "nginx-1",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "get",
+            "resource_kind": "pod",
+            "namespace": "default",
+            "name": "nginx-1",
+            "params": {}
+          }
+        }
+      },
+      "rationale": "design-final.md §4.2: canonicalization must be idempotent — running twice produces same output as running once. Baseline identity test.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "canon-002",
+      "category": "identity-idempotent",
+      "description": "Canonical intent with nested params preserved exactly",
+      "input": {
+        "raw_intent": {
+          "verb": "patch",
+          "resource_kind": "deployment",
+          "namespace": "prod",
+          "name": "frontend",
+          "params": {
+            "replicas": 3,
+            "selector": {"app": "frontend"}
+          }
+        }
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "patch",
+            "resource_kind": "deployment",
+            "namespace": "prod",
+            "name": "frontend",
+            "params": {
+              "replicas": 3,
+              "selector": {"app": "frontend"}
+            }
+          }
+        }
+      },
+      "rationale": "§4.2: canonical nested structure preserved. Sorted-keys property holds at both top and nested levels.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "canon-003",
+      "category": "identity-idempotent",
+      "description": "Empty params object preserved as empty object (not omitted)",
+      "input": {
+        "raw_intent": {
+          "verb": "get",
+          "resource_kind": "service",
+          "namespace": "kube-system",
+          "name": "kube-dns",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "get",
+            "resource_kind": "service",
+            "namespace": "kube-system",
+            "name": "kube-dns",
+            "params": {}
+          }
+        }
+      },
+      "rationale": "§4.2: canonical form has mandatory params field even if empty. Prevents ambiguity between 'no params' and 'omitted params'.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "canon-004",
+      "category": "identity-idempotent",
+      "description": "ASCII-only canonical intent with numeric params",
+      "input": {
+        "raw_intent": {
+          "verb": "scale",
+          "resource_kind": "deployment",
+          "namespace": "staging",
+          "name": "api",
+          "params": {"replicas": 5}
+        }
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "scale",
+            "resource_kind": "deployment",
+            "namespace": "staging",
+            "name": "api",
+            "params": {"replicas": 5}
+          }
+        }
+      },
+      "rationale": "§4.2: idempotent baseline with numeric value. Confirms integer passes unchanged.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "canon-005",
+      "category": "identity-idempotent",
+      "description": "Boolean params preserved exactly",
+      "input": {
+        "raw_intent": {
+          "verb": "delete",
+          "resource_kind": "pod",
+          "namespace": "test",
+          "name": "worker-3",
+          "params": {"force": true, "grace_period": 0}
+        }
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "delete",
+            "resource_kind": "pod",
+            "namespace": "test",
+            "name": "worker-3",
+            "params": {"force": true, "grace_period": 0}
+          }
+        }
+      },
+      "rationale": "§4.2: boolean primitive survives canonicalization. No auto-coercion.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "canon-006",
+      "category": "identity-idempotent",
+      "description": "Lowercase verb, hyphenated resource_kind (compound), canonical",
+      "input": {
+        "raw_intent": {
+          "verb": "apply",
+          "resource_kind": "configmap",
+          "namespace": "default",
+          "name": "app-config",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "apply",
+            "resource_kind": "configmap",
+            "namespace": "default",
+            "name": "app-config",
+            "params": {}
+          }
+        }
+      },
+      "rationale": "§4.2: hyphens in name are legal; not a separator; preserved.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "canon-007",
+      "category": "identity-idempotent",
+      "description": "Running canonicalization twice yields same result (explicit idempotency test)",
+      "input": {
+        "raw_intent": {
+          "verb": "list",
+          "resource_kind": "namespace",
+          "namespace": "",
+          "name": "",
+          "params": {}
+        },
+        "apply_twice": true
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "list",
+            "resource_kind": "namespace",
+            "namespace": "",
+            "name": "",
+            "params": {}
+          }
+        }
+      },
+      "rationale": "§4.2: f(f(x)) == f(x). Implementation must produce bit-identical output when canonicalizer is run twice.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "canon-008",
+      "category": "identity-idempotent",
+      "description": "Canonical form with ASCII-safe string value in params",
+      "input": {
+        "raw_intent": {
+          "verb": "create",
+          "resource_kind": "secret",
+          "namespace": "prod",
+          "name": "db-creds",
+          "params": {"type": "Opaque"}
+        }
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "create",
+            "resource_kind": "secret",
+            "namespace": "prod",
+            "name": "db-creds",
+            "params": {"type": "Opaque"}
+          }
+        }
+      },
+      "rationale": "§4.2: param values are not case-folded (only keys and verbs are, per normative spec). 'Opaque' stays 'Opaque'.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "canon-009",
+      "category": "identity-idempotent",
+      "description": "Canonical intent with Unicode-safe ASCII subset only",
+      "input": {
+        "raw_intent": {
+          "verb": "patch",
+          "resource_kind": "ingress",
+          "namespace": "prod",
+          "name": "gateway",
+          "params": {"host": "api.example.com"}
+        }
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "patch",
+            "resource_kind": "ingress",
+            "namespace": "prod",
+            "name": "gateway",
+            "params": {"host": "api.example.com"}
+          }
+        }
+      },
+      "rationale": "§4.2: pure ASCII input (all codepoints < 128) is its own NFC and passes identity.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "canon-010",
+      "category": "identity-idempotent",
+      "description": "Canonical empty intent (verb='list', no specific target)",
+      "input": {
+        "raw_intent": {
+          "verb": "list",
+          "resource_kind": "pod",
+          "namespace": "*",
+          "name": "*",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "list",
+            "resource_kind": "pod",
+            "namespace": "*",
+            "name": "*",
+            "params": {}
+          }
+        }
+      },
+      "rationale": "§4.2: wildcard identifiers ('*') are legal canonical form; preserved.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "canon-011",
+      "category": "whitespace-normalization",
+      "description": "Leading/trailing ASCII spaces in verb rejected (NOT silently trimmed)",
+      "input": {
+        "raw_intent": {
+          "verb": "  get  ",
+          "resource_kind": "pod",
+          "namespace": "default",
+          "name": "nginx-1",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2: verb must be pre-trimmed before presentation. Silent trimming would create classifier/signer asymmetry (V2-2). OPEN SPEC QUESTION: spec could equally say 'trim automatically'. Stricter option chosen.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "canon-012",
+      "category": "whitespace-normalization",
+      "description": "Internal tab in verb rejected",
+      "input": {
+        "raw_intent": {
+          "verb": "ge\tt",
+          "resource_kind": "pod",
+          "namespace": "default",
+          "name": "nginx-1",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2: verbs must not contain whitespace. Internal tab (U+0009) is control-char and verb-invalid.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "canon-013",
+      "category": "whitespace-normalization",
+      "description": "Non-breaking space (U+00A0) in verb rejected",
+      "input": {
+        "raw_intent": {
+          "verb": "get\u00a0",
+          "resource_kind": "pod",
+          "namespace": "default",
+          "name": "nginx-1",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2 + V2-2: U+00A0 NBSP visually identical to space; silent trim would let attacker craft 'get' that classifier sees vs 'get\\u00a0' that signer sees.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "canon-014",
+      "category": "whitespace-normalization",
+      "description": "Unicode en-quad (U+2000) in identifier rejected",
+      "input": {
+        "raw_intent": {
+          "verb": "get",
+          "resource_kind": "pod",
+          "namespace": "default",
+          "name": "nginx\u20001",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2: U+2000 en-quad is whitespace but visually narrow; would let 'nginx 1' name slip past a substring matcher.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "canon-015",
+      "category": "whitespace-normalization",
+      "description": "Ideographic space (U+3000) in namespace rejected",
+      "input": {
+        "raw_intent": {
+          "verb": "delete",
+          "resource_kind": "namespace",
+          "namespace": "prod\u3000",
+          "name": "",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2 + V2-2: U+3000 ideographic space trailing 'prod' would let attacker craft namespace 'prod\\u3000' that classifier matches as 'prod' but signer/API sees distinctly.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "canon-016",
+      "category": "whitespace-normalization",
+      "description": "Multiple internal spaces in value NOT collapsed (preserved verbatim)",
+      "input": {
+        "raw_intent": {
+          "verb": "patch",
+          "resource_kind": "configmap",
+          "namespace": "default",
+          "name": "app-config",
+          "params": {"message": "hello  world"}
+        }
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "patch",
+            "resource_kind": "configmap",
+            "namespace": "default",
+            "name": "app-config",
+            "params": {"message": "hello  world"}
+          }
+        }
+      },
+      "rationale": "§4.2: param VALUES are not whitespace-normalized — only structural fields (verb, identifiers). Content preserved exactly. Double-space in message stays double-space.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "canon-017",
+      "category": "whitespace-normalization",
+      "description": "Leading space in parameter KEY rejected",
+      "input": {
+        "raw_intent": {
+          "verb": "patch",
+          "resource_kind": "deployment",
+          "namespace": "prod",
+          "name": "api",
+          "params": {" replicas": 5}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2: parameter keys must not contain whitespace. A classifier keying on 'replicas' would miss ' replicas'.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "canon-018",
+      "category": "whitespace-normalization",
+      "description": "Carriage return (U+000D) in verb rejected",
+      "input": {
+        "raw_intent": {
+          "verb": "get\r",
+          "resource_kind": "pod",
+          "namespace": "default",
+          "name": "x",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "invalid-control-char"
+      },
+      "rationale": "§4.2 + OPEN SPEC Q#8: carriage-return is a control character; not merely whitespace. Rejected with control-char code.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "canon-019",
+      "category": "unicode-nfc-nfd-nfkc-nfkd",
+      "description": "NFD-decomposed e-acute rejected; canonical form requires NFC",
+      "input": {
+        "raw_intent": {
+          "verb": "get",
+          "resource_kind": "pod",
+          "namespace": "caf\u0065\u0301",
+          "name": "pod-1",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2 + OPEN SPEC Q#3: 'caf\\u0065\\u0301' is NFD (e + combining acute). NFC form is 'caf\\u00e9'. Silent conversion creates V2-2 asymmetry; rejection forces caller to normalize first.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "canon-020",
+      "category": "unicode-nfc-nfd-nfkc-nfkd",
+      "description": "NFC-composed e-acute accepted unchanged",
+      "input": {
+        "raw_intent": {
+          "verb": "get",
+          "resource_kind": "pod",
+          "namespace": "caf\u00e9",
+          "name": "pod-1",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "get",
+            "resource_kind": "pod",
+            "namespace": "caf\u00e9",
+            "name": "pod-1",
+            "params": {}
+          }
+        }
+      },
+      "rationale": "§4.2: 'caf\\u00e9' is already NFC. Passes identity test for Unicode input.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "canon-021",
+      "category": "unicode-nfc-nfd-nfkc-nfkd",
+      "description": "NFKC compatibility form (superscript 2) rejected — not same codepoint as digit 2",
+      "input": {
+        "raw_intent": {
+          "verb": "scale",
+          "resource_kind": "deployment",
+          "namespace": "prod",
+          "name": "worker-\u00b2",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2 + OPEN SPEC Q#3: U+00B2 (superscript 2) is NFKC-equivalent to ASCII '2' but NOT NFC-equivalent. If we silently NFKC-fold, 'worker-\\u00b2' would collide with 'worker-2'. Reject with clear code.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "canon-022",
+      "category": "unicode-nfc-nfd-nfkc-nfkd",
+      "description": "Ligature 'fi' (U+FB01) rejected; NFC does NOT decompose ligatures",
+      "input": {
+        "raw_intent": {
+          "verb": "get",
+          "resource_kind": "configmap",
+          "namespace": "default",
+          "name": "con\ufb01g-map",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2: NFC preserves ligatures (only NFKC decomposes them). 'con\\ufb01g-map' != 'config-map' under NFC. Classifier matching on 'config-map' would miss ligature form — silent NFKC would fix but opens other attacks. Reject.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "canon-023",
+      "category": "unicode-nfc-nfd-nfkc-nfkd",
+      "description": "Korean Hangul NFD (decomposed jamo) rejected",
+      "input": {
+        "raw_intent": {
+          "verb": "get",
+          "resource_kind": "pod",
+          "namespace": "\u1112\u1161\u11ab",
+          "name": "x",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2: Korean syllable '한' has NFC form U+D55C (single codepoint) and NFD form as jamo sequence U+1112 U+1161 U+11AB. NFD input rejected.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "canon-024",
+      "category": "unicode-nfc-nfd-nfkc-nfkd",
+      "description": "Korean Hangul NFC (composed syllable) accepted",
+      "input": {
+        "raw_intent": {
+          "verb": "get",
+          "resource_kind": "pod",
+          "namespace": "\ud55c",
+          "name": "x",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "get",
+            "resource_kind": "pod",
+            "namespace": "\ud55c",
+            "name": "x",
+            "params": {}
+          }
+        }
+      },
+      "rationale": "§4.2: Hangul syllable '한' (U+D55C) is its own NFC form. Accepted.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "canon-025",
+      "category": "unicode-nfc-nfd-nfkc-nfkd",
+      "description": "Angstrom sign U+212B rejected (NFC would map to U+00C5)",
+      "input": {
+        "raw_intent": {
+          "verb": "get",
+          "resource_kind": "pod",
+          "namespace": "prod",
+          "name": "\u212bngstrom",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2: U+212B (angstrom sign) NFC-normalizes to U+00C5 (A with ring above). Input is not NFC; rejected to prevent collision attack.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "canon-026",
+      "category": "unicode-nfc-nfd-nfkc-nfkd",
+      "description": "Precomposed umlaut o (U+00F6) accepted; matches NFC",
+      "input": {
+        "raw_intent": {
+          "verb": "get",
+          "resource_kind": "pod",
+          "namespace": "m\u00fcnchen",
+          "name": "x",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "get",
+            "resource_kind": "pod",
+            "namespace": "m\u00fcnchen",
+            "name": "x",
+            "params": {}
+          }
+        }
+      },
+      "rationale": "§4.2: U+00FC (u with diaeresis) is precomposed and NFC. Accepted unchanged.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "canon-027",
+      "category": "unicode-nfc-nfd-nfkc-nfkd",
+      "description": "Decomposed umlaut o (u + combining diaeresis) rejected",
+      "input": {
+        "raw_intent": {
+          "verb": "get",
+          "resource_kind": "pod",
+          "namespace": "m\u0075\u0308nchen",
+          "name": "x",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2: 'm\\u0075\\u0308nchen' is NFD form of 'm\\u00fcnchen'. Silent conversion creates asymmetry; reject.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "canon-028",
+      "category": "unicode-nfc-nfd-nfkc-nfkd",
+      "description": "NFKD input of full-width digits rejected",
+      "input": {
+        "raw_intent": {
+          "verb": "get",
+          "resource_kind": "pod",
+          "namespace": "prod",
+          "name": "worker-\uff11",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2: U+FF11 is full-width digit '1'. NFKC/NFKD would map to '1'; NFC preserves. Reject to block visual-equivalence attacks.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "canon-029",
+      "category": "case-folding",
+      "description": "Uppercase verb 'GET' rejected (not pre-normalized)",
+      "input": {
+        "raw_intent": {
+          "verb": "GET",
+          "resource_kind": "pod",
+          "namespace": "default",
+          "name": "x",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2 explicitly says 'Verbs: lowercased'. Input not lowercase → caller did not canonicalize. Reject to force explicit canonicalization at caller. (Alternative spec interpretation: silently lowercase. Chose stricter option per policy; document as OPEN SPEC Q.)",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "canon-030",
+      "category": "case-folding",
+      "description": "Mixed-case verb 'Delete' rejected",
+      "input": {
+        "raw_intent": {
+          "verb": "Delete",
+          "resource_kind": "namespace",
+          "namespace": "prod",
+          "name": "prod",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2 + V2-2: V2-2 attack scenario literally uses 'DELETE' mixed-case to bypass classifier matching 'delete'. Must reject.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "canon-031",
+      "category": "case-folding",
+      "description": "Uppercase resource_kind 'Namespace' rejected",
+      "input": {
+        "raw_intent": {
+          "verb": "delete",
+          "resource_kind": "Namespace",
+          "namespace": "prod",
+          "name": "prod",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2: resource_kind lowercased by spec (OPEN SPEC Q#1 — assumed). V2-2 attack example uses 'kind: namespace' vs 'kind: Namespace'; reject non-canonical.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "canon-032",
+      "category": "case-folding",
+      "description": "Camel-case resource_kind 'ConfigMap' rejected",
+      "input": {
+        "raw_intent": {
+          "verb": "apply",
+          "resource_kind": "ConfigMap",
+          "namespace": "default",
+          "name": "app",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2: K8s uses 'ConfigMap' natively but canonical form per spec requires lowercase. Reject.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "canon-033",
+      "category": "case-folding",
+      "description": "Namespace identifier with uppercase 'PROD' preserved (case-sensitive per OPEN SPEC Q#1)",
+      "input": {
+        "raw_intent": {
+          "verb": "get",
+          "resource_kind": "pod",
+          "namespace": "PROD",
+          "name": "x",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2 + OPEN SPEC Q#1: K8s namespaces are DNS-1123 which REQUIRES lowercase. 'PROD' is not a valid namespace at the target API level. Reject.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "canon-034",
+      "category": "case-folding",
+      "description": "Parameter KEY with mixed case in the same object as all-lowercase key rejected",
+      "input": {
+        "raw_intent": {
+          "verb": "patch",
+          "resource_kind": "deployment",
+          "namespace": "prod",
+          "name": "api",
+          "params": {"replicas": 3, "Replicas": 5}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2: 'Parameter keys: forbidden case variation' — OPEN SPEC Q#2 interprets as reject-if-colliding. 'replicas' and 'Replicas' both present → reject.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "canon-035",
+      "category": "structural-reorder",
+      "description": "Top-level keys in alphabetical order is canonical",
+      "input": {
+        "raw_intent": {
+          "name": "api",
+          "namespace": "prod",
+          "params": {},
+          "resource_kind": "deployment",
+          "verb": "patch"
+        }
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "patch",
+            "resource_kind": "deployment",
+            "namespace": "prod",
+            "name": "api",
+            "params": {}
+          }
+        }
+      },
+      "rationale": "§4.2 + CBOR determinism (RFC 8949 §4.2): canonical output has fixed key order (verb, resource_kind, namespace, name, params). Implementation must emit canonical order regardless of input order. JSON object member-order is not semantically significant in source; CBOR-serialized form must be stable.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "canon-036",
+      "category": "structural-reorder",
+      "description": "Reverse-alphabetical input keys produce same canonical output",
+      "input": {
+        "raw_intent": {
+          "verb": "patch",
+          "resource_kind": "deployment",
+          "params": {},
+          "namespace": "prod",
+          "name": "api"
+        }
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "patch",
+            "resource_kind": "deployment",
+            "namespace": "prod",
+            "name": "api",
+            "params": {}
+          }
+        }
+      },
+      "rationale": "§4.2: input key order is immaterial to canonical output. Same intent data → same canonical form.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "canon-037",
+      "category": "structural-reorder",
+      "description": "Random key order in nested params canonicalized consistently",
+      "input": {
+        "raw_intent": {
+          "verb": "patch",
+          "resource_kind": "deployment",
+          "namespace": "prod",
+          "name": "api",
+          "params": {"selector": {"version": "v2", "app": "api"}, "replicas": 3}
+        }
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "patch",
+            "resource_kind": "deployment",
+            "namespace": "prod",
+            "name": "api",
+            "params": {"replicas": 3, "selector": {"app": "api", "version": "v2"}}
+          }
+        }
+      },
+      "rationale": "§4.2 + RFC 8949: nested objects also get canonical (lexicographic) key ordering. 'selector' keys sorted alphabetically.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "canon-038",
+      "category": "structural-reorder",
+      "description": "Two differently-ordered inputs produce bit-identical CBOR when serialized",
+      "input": {
+        "raw_intent_a": {
+          "verb": "get",
+          "resource_kind": "pod",
+          "namespace": "default",
+          "name": "x",
+          "params": {"a": 1, "b": 2}
+        },
+        "raw_intent_b": {
+          "params": {"b": 2, "a": 1},
+          "name": "x",
+          "namespace": "default",
+          "resource_kind": "pod",
+          "verb": "get"
+        },
+        "compare_cbor_bytes": true
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "get",
+            "resource_kind": "pod",
+            "namespace": "default",
+            "name": "x",
+            "params": {"a": 1, "b": 2}
+          }
+        }
+      },
+      "rationale": "§4.2 + RFC 8949 §4.2: canonical CBOR serialization produces bit-identical bytes for semantically-equal inputs. Critical for signature verification: same content → same bytes → same signature.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "canon-039",
+      "category": "structural-reorder",
+      "description": "Deep nesting: keys at depth 3 sorted canonically",
+      "input": {
+        "raw_intent": {
+          "verb": "create",
+          "resource_kind": "deployment",
+          "namespace": "prod",
+          "name": "api",
+          "params": {
+            "spec": {
+              "template": {"spec": {"image": "nginx", "command": "run"}}
+            }
+          }
+        }
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "create",
+            "resource_kind": "deployment",
+            "namespace": "prod",
+            "name": "api",
+            "params": {
+              "spec": {
+                "template": {"spec": {"command": "run", "image": "nginx"}}
+              }
+            }
+          }
+        }
+      },
+      "rationale": "§4.2: canonical ordering applies at every level of nesting. Depth-3 keys 'command' and 'image' sorted.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "canon-040",
+      "category": "structural-reorder",
+      "description": "Key-order invariance confirmed across semantically-equal inputs with nested arrays",
+      "input": {
+        "raw_intent": {
+          "params": {"ports": [80, 443], "protocol": "tcp"},
+          "verb": "create",
+          "resource_kind": "service",
+          "namespace": "default",
+          "name": "web"
+        }
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "create",
+            "resource_kind": "service",
+            "namespace": "default",
+            "name": "web",
+            "params": {"ports": [80, 443], "protocol": "tcp"}
+          }
+        }
+      },
+      "rationale": "§4.2: object keys sorted; array element order preserved (sequence semantics per OPEN SPEC Q#6).",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "canon-041",
+      "category": "structural-reorder",
+      "description": "Duplicate keys in input object rejected (invalid JSON in strict mode)",
+      "input": {
+        "raw_intent_raw_json": "{\"verb\":\"get\",\"verb\":\"delete\",\"resource_kind\":\"pod\",\"namespace\":\"prod\",\"name\":\"x\",\"params\":{}}"
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2 + RFC 8259: JSON duplicates are implementation-defined. Permissive parser might pick last ('delete') while strict picks first ('get') — classic V2-2 asymmetry. Reject duplicates.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "canon-042",
+      "category": "structural-reorder",
+      "description": "Extra unknown top-level key rejected (strict schema)",
+      "input": {
+        "raw_intent": {
+          "verb": "get",
+          "resource_kind": "pod",
+          "namespace": "default",
+          "name": "x",
+          "params": {},
+          "extra_field": "ignored?"
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2: canonical form has a fixed schema (verb, resource_kind, namespace, name, params). Unknown fields could hide attacker payloads that pass through one component but not another. Strict reject.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "canon-043",
+      "category": "numeric-normalization",
+      "description": "Integer '5' and float '5.0' canonicalized to same integer 5 (if numeric domain is integer)",
+      "input": {
+        "raw_intent": {
+          "verb": "scale",
+          "resource_kind": "deployment",
+          "namespace": "prod",
+          "name": "api",
+          "params": {"replicas": 5.0}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2 + RFC 8949: CBOR has distinct integer and float types. '5' (int) and '5.0' (float) serialize to different bytes → different signatures. Silent coercion creates V2-2 asymmetry. Reject non-integer where integer is expected.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "canon-044",
+      "category": "numeric-normalization",
+      "description": "Leading-zero integer '007' rejected (JSON parse level)",
+      "input": {
+        "raw_intent_raw_json": "{\"verb\":\"scale\",\"resource_kind\":\"deployment\",\"namespace\":\"prod\",\"name\":\"api\",\"params\":{\"replicas\":007}}"
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2 + RFC 8259: leading-zero integers are invalid JSON. Implementations differ on whether they accept this; reject to force strictness.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "canon-045",
+      "category": "numeric-normalization",
+      "description": "Negative zero '-0' rejected (collides with positive zero under some representations)",
+      "input": {
+        "raw_intent": {
+          "verb": "scale",
+          "resource_kind": "deployment",
+          "namespace": "prod",
+          "name": "api",
+          "params": {"replicas": -0}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2 + RFC 8949 §4.2.2: deterministic CBOR requires canonical numeric encoding. -0 float and +0 float are distinct in IEEE-754 but equal numerically. Reject to avoid ambiguity.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "canon-046",
+      "category": "numeric-normalization",
+      "description": "Exponential notation '5e0' rejected in integer field",
+      "input": {
+        "raw_intent": {
+          "verb": "scale",
+          "resource_kind": "deployment",
+          "namespace": "prod",
+          "name": "api",
+          "params": {"replicas": 5e0}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2: 5e0 parsed as float=5.0, not integer=5. Even if mathematically equal, CBOR-serialization differs → signature differs. Reject.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "canon-047",
+      "category": "numeric-normalization",
+      "description": "Very large integer above CBOR uint64 range rejected",
+      "input": {
+        "raw_intent": {
+          "verb": "scale",
+          "resource_kind": "deployment",
+          "namespace": "prod",
+          "name": "api",
+          "params": {"replicas": 99999999999999999999}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2 + RFC 8949: CBOR major type 0 (uint) limited to 2^64-1. Larger requires bignum (major type 6, tag 2). Reject to avoid ambiguous serialization.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "canon-048",
+      "category": "numeric-normalization",
+      "description": "Float '1.0' in a float-typed field accepted and preserved",
+      "input": {
+        "raw_intent": {
+          "verb": "patch",
+          "resource_kind": "horizontalpodautoscaler",
+          "namespace": "prod",
+          "name": "api",
+          "params": {"target_cpu_utilization": 0.75}
+        }
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "patch",
+            "resource_kind": "horizontalpodautoscaler",
+            "namespace": "prod",
+            "name": "api",
+            "params": {"target_cpu_utilization": 0.75}
+          }
+        }
+      },
+      "rationale": "§4.2: float values in float-typed fields pass through. RFC 8949 §4.2.2 defines float canonical form (shortest representation).",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "canon-049",
+      "category": "string-escape-equivalence",
+      "description": "JSON escaped ASCII sequence '\\u0066\\u006f\\u006f' semantically equals 'foo' but rejected",
+      "input": {
+        "raw_intent_raw_json": "{\"verb\":\"get\",\"resource_kind\":\"\\u0070\\u006f\\u0064\",\"namespace\":\"default\",\"name\":\"x\",\"params\":{}}"
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "get",
+            "resource_kind": "pod",
+            "namespace": "default",
+            "name": "x",
+            "params": {}
+          }
+        }
+      },
+      "rationale": "§4.2 + RFC 8259: JSON \\uXXXX escapes for basic-plane characters decode to the same string as literal form. Canonical output is literal UTF-8; escapes are purely source-form.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "canon-050",
+      "category": "string-escape-equivalence",
+      "description": "Escaped forward slash '\\/' in JSON decodes to '/' — accepted",
+      "input": {
+        "raw_intent_raw_json": "{\"verb\":\"get\",\"resource_kind\":\"pod\",\"namespace\":\"default\",\"name\":\"api-v1\",\"params\":{\"host\":\"example.com\\/path\"}}"
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "get",
+            "resource_kind": "pod",
+            "namespace": "default",
+            "name": "api-v1",
+            "params": {"host": "example.com/path"}
+          }
+        }
+      },
+      "rationale": "§4.2 + RFC 8259: '\\/' is optional escape for '/'. Both decode to same string. Canonical output uses literal '/'.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "canon-051",
+      "category": "string-escape-equivalence",
+      "description": "Unpaired surrogate high U+D800 rejected (invalid UTF-8 after decoding)",
+      "input": {
+        "raw_intent_raw_json": "{\"verb\":\"get\",\"resource_kind\":\"pod\",\"namespace\":\"default\",\"name\":\"x\\uD800\",\"params\":{}}"
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "invalid-utf8"
+      },
+      "rationale": "§4.2 + RFC 8259: unpaired surrogates are invalid Unicode. Decoding 'x\\uD800' produces invalid UTF-8. Reject.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "canon-052",
+      "category": "string-escape-equivalence",
+      "description": "Valid surrogate pair U+D83D U+DCA9 decodes to U+1F4A9 accepted",
+      "input": {
+        "raw_intent_raw_json": "{\"verb\":\"patch\",\"resource_kind\":\"configmap\",\"namespace\":\"default\",\"name\":\"emoji-test\",\"params\":{\"icon\":\"\\uD83D\\uDCA9\"}}"
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "patch",
+            "resource_kind": "configmap",
+            "namespace": "default",
+            "name": "emoji-test",
+            "params": {"icon": "\ud83d\udca9"}
+          }
+        }
+      },
+      "rationale": "§4.2: valid surrogate pair decoded to supplementary-plane codepoint. UTF-8 encoded in canonical output.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "canon-053",
+      "category": "string-escape-equivalence",
+      "description": "Mixed literal and escape-decoded UTF-8 for same semantic string produces same canonical",
+      "input": {
+        "raw_intent_a_raw_json": "{\"verb\":\"get\",\"resource_kind\":\"pod\",\"namespace\":\"default\",\"name\":\"caf\u00e9\",\"params\":{}}",
+        "raw_intent_b_raw_json": "{\"verb\":\"get\",\"resource_kind\":\"pod\",\"namespace\":\"default\",\"name\":\"caf\\u00e9\",\"params\":{}}",
+        "compare_canonical": true
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "get",
+            "resource_kind": "pod",
+            "namespace": "default",
+            "name": "caf\u00e9",
+            "params": {}
+          }
+        }
+      },
+      "rationale": "§4.2: '\\u00e9' and literal UTF-8 'é' decode to same codepoint. Canonical output identical.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "canon-054",
+      "category": "string-escape-equivalence",
+      "description": "JSON escape of DEL character (U+007F) rejected as control char",
+      "input": {
+        "raw_intent_raw_json": "{\"verb\":\"get\",\"resource_kind\":\"pod\",\"namespace\":\"default\",\"name\":\"x\\u007f\",\"params\":{}}"
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "invalid-control-char"
+      },
+      "rationale": "§4.2 + OPEN SPEC Q#8: DEL (U+007F) is C0 control character. Reject.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "canon-055",
+      "category": "array-handling",
+      "description": "Array of ports [80, 443] treated as sequence; order preserved",
+      "input": {
+        "raw_intent": {
+          "verb": "create",
+          "resource_kind": "service",
+          "namespace": "default",
+          "name": "web",
+          "params": {"ports": [80, 443]}
+        }
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "create",
+            "resource_kind": "service",
+            "namespace": "default",
+            "name": "web",
+            "params": {"ports": [80, 443]}
+          }
+        }
+      },
+      "rationale": "§4.2 + OPEN SPEC Q#6: positional arrays (ports list) preserve order. Arrays are sequences, not sets, unless schema specifies otherwise.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "canon-056",
+      "category": "array-handling",
+      "description": "Reordered sequence array [443, 80] NOT auto-sorted — produces different canonical form",
+      "input": {
+        "raw_intent": {
+          "verb": "create",
+          "resource_kind": "service",
+          "namespace": "default",
+          "name": "web",
+          "params": {"ports": [443, 80]}
+        }
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "create",
+            "resource_kind": "service",
+            "namespace": "default",
+            "name": "web",
+            "params": {"ports": [443, 80]}
+          }
+        }
+      },
+      "rationale": "§4.2: ports is a positional sequence. [443, 80] and [80, 443] are DISTINCT canonical forms. This confirms arrays are NOT auto-sorted.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "canon-057",
+      "category": "array-handling",
+      "description": "Duplicate element in sequence array preserved",
+      "input": {
+        "raw_intent": {
+          "verb": "create",
+          "resource_kind": "configmap",
+          "namespace": "default",
+          "name": "dup",
+          "params": {"tags": ["a", "b", "a"]}
+        }
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "create",
+            "resource_kind": "configmap",
+            "namespace": "default",
+            "name": "dup",
+            "params": {"tags": ["a", "b", "a"]}
+          }
+        }
+      },
+      "rationale": "§4.2 + OPEN SPEC Q#6: sequence arrays preserve duplicates. No auto-dedup.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "canon-058",
+      "category": "array-handling",
+      "description": "Empty array preserved as empty array (not omitted or null)",
+      "input": {
+        "raw_intent": {
+          "verb": "create",
+          "resource_kind": "service",
+          "namespace": "default",
+          "name": "web",
+          "params": {"ports": []}
+        }
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "create",
+            "resource_kind": "service",
+            "namespace": "default",
+            "name": "web",
+            "params": {"ports": []}
+          }
+        }
+      },
+      "rationale": "§4.2: empty array [] != missing key != null. Canonical form preserves [] explicitly.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "canon-059",
+      "category": "null-vs-missing",
+      "description": "Explicit null value in params rejected (forces minimal canonical form)",
+      "input": {
+        "raw_intent": {
+          "verb": "get",
+          "resource_kind": "pod",
+          "namespace": "default",
+          "name": "x",
+          "params": {"selector": null}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2 + OPEN SPEC Q#4: {selector: null} and {} are semantically equivalent but serialize to different CBOR. Reject null to force caller to use omission. Keeps canonical form minimal.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "canon-060",
+      "category": "null-vs-missing",
+      "description": "Missing optional param accepted; key simply absent",
+      "input": {
+        "raw_intent": {
+          "verb": "get",
+          "resource_kind": "pod",
+          "namespace": "default",
+          "name": "x",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "get",
+            "resource_kind": "pod",
+            "namespace": "default",
+            "name": "x",
+            "params": {}
+          }
+        }
+      },
+      "rationale": "§4.2: missing key is canonical for 'no value'. Paired with canon-059 to establish null-vs-missing rule.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "canon-061",
+      "category": "null-vs-missing",
+      "description": "Null top-level required field 'verb' rejected (not normalization, but structural)",
+      "input": {
+        "raw_intent": {
+          "verb": null,
+          "resource_kind": "pod",
+          "namespace": "default",
+          "name": "x",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2: verb is required non-null. Null equivalent to missing required field. Reject.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "canon-062",
+      "category": "null-vs-missing",
+      "description": "Null inside nested params at depth 2 rejected consistently",
+      "input": {
+        "raw_intent": {
+          "verb": "patch",
+          "resource_kind": "deployment",
+          "namespace": "prod",
+          "name": "api",
+          "params": {"selector": {"app": null}}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2 + OPEN SPEC Q#4: null-rejection applies recursively. Prevents nested null/missing ambiguity.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "canon-063",
+      "category": "injected-control-chars",
+      "description": "Null byte U+0000 in name rejected",
+      "input": {
+        "raw_intent": {
+          "verb": "delete",
+          "resource_kind": "namespace",
+          "namespace": "prod",
+          "name": "prod\u0000extra",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "invalid-control-char"
+      },
+      "rationale": "§4.2 + V2-2: null byte terminates strings in many C/C++ libraries. Classifier in Rust sees full 'prod\\u0000extra'; legacy C tool sees only 'prod'. Classic V2-2 attack. Reject.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "canon-064",
+      "category": "injected-control-chars",
+      "description": "Zero-width space U+200B in namespace rejected",
+      "input": {
+        "raw_intent": {
+          "verb": "delete",
+          "resource_kind": "namespace",
+          "namespace": "prod\u200bdev",
+          "name": "any",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "invalid-control-char"
+      },
+      "rationale": "§4.2 + V2-2: U+200B invisible; 'prod\\u200bdev' visually equals 'proddev' but matches neither 'prod' nor 'dev' as substring. Pure V2-2 bypass. Reject.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "canon-065",
+      "category": "injected-control-chars",
+      "description": "Byte Order Mark U+FEFF at string start rejected",
+      "input": {
+        "raw_intent": {
+          "verb": "\ufeffget",
+          "resource_kind": "pod",
+          "namespace": "default",
+          "name": "x",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "invalid-control-char"
+      },
+      "rationale": "§4.2 + V2-2: U+FEFF invisible at start. 'get' != '\\ufeffget' but visually identical. Reject.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "canon-066",
+      "category": "injected-control-chars",
+      "description": "Right-to-left override U+202E in name rejected",
+      "input": {
+        "raw_intent": {
+          "verb": "delete",
+          "resource_kind": "pod",
+          "namespace": "prod",
+          "name": "admin\u202eseldipp",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "invalid-control-char"
+      },
+      "rationale": "§4.2 + V2-2: U+202E is bidi override. 'admin\\u202eseldipp' renders visually as 'adminppidles'. Audit-reviewer sees different name than classifier. Reject all bidi overrides (U+202A-202E, U+2066-2069).",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "canon-067",
+      "category": "injected-control-chars",
+      "description": "Zero-width joiner U+200D in verb rejected",
+      "input": {
+        "raw_intent": {
+          "verb": "de\u200dlete",
+          "resource_kind": "namespace",
+          "namespace": "prod",
+          "name": "prod",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "invalid-control-char"
+      },
+      "rationale": "§4.2 + V2-2: U+200D invisible; 'de\\u200dlete' matches neither 'delete' nor any other verb in allowlist. Reject.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "canon-068",
+      "category": "injected-control-chars",
+      "description": "Word joiner U+2060 in resource_kind rejected",
+      "input": {
+        "raw_intent": {
+          "verb": "delete",
+          "resource_kind": "names\u2060pace",
+          "namespace": "prod",
+          "name": "prod",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "invalid-control-char"
+      },
+      "rationale": "§4.2 + V2-2: U+2060 word joiner invisible. Reject.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "canon-069",
+      "category": "homoglyph-attacks",
+      "description": "Cyrillic 'а' (U+0430) in 'namespace' value rejected — distinct codepoint from Latin 'a'",
+      "input": {
+        "raw_intent": {
+          "verb": "delete",
+          "resource_kind": "namespace",
+          "namespace": "pr\u043ed",
+          "name": "pr\u043ed",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "delete",
+            "resource_kind": "namespace",
+            "namespace": "pr\u043ed",
+            "name": "pr\u043ed",
+            "params": {}
+          }
+        }
+      },
+      "rationale": "§4.2 + V2-2: 'pr\\u043ed' (with Cyrillic 'о') is visually identical to 'prod' but is a DISTINCT namespace. Canonicalizer MUST preserve it verbatim. Classifier then sees the difference. If a scope-allowlist contains 'prod', this intent does NOT match — exactly the desired behavior. (We do NOT reject; we preserve so classifier can see the distinction.)",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "canon-070",
+      "category": "homoglyph-attacks",
+      "description": "Greek 'ο' (U+03BF) in resource_kind — preserved, NOT folded to Latin 'o'",
+      "input": {
+        "raw_intent": {
+          "verb": "get",
+          "resource_kind": "p\u03bfd",
+          "namespace": "default",
+          "name": "x",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "get",
+            "resource_kind": "p\u03bfd",
+            "namespace": "default",
+            "name": "x",
+            "params": {}
+          }
+        }
+      },
+      "rationale": "§4.2 + V2-2: Greek omicron != Latin o. Preserved. Classifier will then fail to find 'p\\u03bfd' in resource-kind allowlist (which contains only 'pod') → tier rejected. Design intent.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "canon-071",
+      "category": "homoglyph-attacks",
+      "description": "Full-width Latin 'ａ' (U+FF41) in name rejected as NFKC-equivalent to 'a'",
+      "input": {
+        "raw_intent": {
+          "verb": "get",
+          "resource_kind": "pod",
+          "namespace": "default",
+          "name": "\uff41pi",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2 + OPEN SPEC Q#3: U+FF41 is full-width 'a'. NFC-distinct from U+0061; NFKC-equivalent. Silent NFKC would merge; silent NFC preserves collision risk. We reject full-width Latin-range as non-canonical to block visual-spoof class entirely.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "canon-072",
+      "category": "homoglyph-attacks",
+      "description": "Cherokee 'Ꭺ' (U+13AA) visually like 'A' — preserved as distinct codepoint",
+      "input": {
+        "raw_intent": {
+          "verb": "get",
+          "resource_kind": "pod",
+          "namespace": "default",
+          "name": "\u13aapi",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "get",
+            "resource_kind": "pod",
+            "namespace": "default",
+            "name": "\u13aapi",
+            "params": {}
+          }
+        }
+      },
+      "rationale": "§4.2 + V2-2: Cherokee 'Ꭺ' is a distinct codepoint from Latin 'A'. Preserved. Name 'Ꭺpi' != 'Api' != 'api'. All three are distinct canonical forms. This is the desired V2-2 defense: downstream components ALL see the exact bytes.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "canon-073",
+      "category": "homoglyph-attacks",
+      "description": "Mathematical bold 'a' (U+1D41A) rejected as non-ASCII variant of 'a'",
+      "input": {
+        "raw_intent": {
+          "verb": "get",
+          "resource_kind": "pod",
+          "namespace": "default",
+          "name": "\ud835\udc1api",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2 + OPEN SPEC Q#3: U+1D41A (math bold a) NFKC-equivalent to 'a'. Reject non-ASCII math alphabet on identifiers that accept ASCII.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "canon-074",
+      "category": "homoglyph-attacks",
+      "description": "Latin small letter turned 'ɐ' (U+0250) preserved; not same codepoint as 'a'",
+      "input": {
+        "raw_intent": {
+          "verb": "get",
+          "resource_kind": "pod",
+          "namespace": "default",
+          "name": "\u0250pi",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "get",
+            "resource_kind": "pod",
+            "namespace": "default",
+            "name": "\u0250pi",
+            "params": {}
+          }
+        }
+      },
+      "rationale": "§4.2: IPA turned-a (U+0250) is a distinct codepoint. Preserved. Name 'ɐpi' does not match 'api' in any allowlist. Correct V2-2 defense.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "canon-075",
+      "category": "locale-sensitive",
+      "description": "Turkish capital I + Latin lowercase — lowercasing must NOT use tr_TR locale (dotless i trap)",
+      "input": {
+        "raw_intent": {
+          "verb": "GET",
+          "resource_kind": "pod",
+          "namespace": "Istanbul",
+          "name": "x",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2 + OPEN SPEC Q#10: under Turkish locale, 'I'.lower() == 'ı' (U+0131 dotless i). Under default locale, 'I'.lower() == 'i'. If canonicalizer uses runtime locale, output depends on deployment environment → V2-2 asymmetry. Here we reject uppercase verb anyway, but canon-076 tests the broader locale-neutrality rule.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "canon-076",
+      "category": "locale-sensitive",
+      "description": "German eszett 'ß' in identifier — must NOT auto-expand to 'ss' under locale-specific rules",
+      "input": {
+        "raw_intent": {
+          "verb": "get",
+          "resource_kind": "pod",
+          "namespace": "gro\u00dfe",
+          "name": "x",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "get",
+            "resource_kind": "pod",
+            "namespace": "gro\u00dfe",
+            "name": "x",
+            "params": {}
+          }
+        }
+      },
+      "rationale": "§4.2 + OPEN SPEC Q#10: German eszett U+00DF under some locale-specific uppercase rules → 'SS'. Canonicalizer must NOT fold. 'große' preserved exactly. NFC does not touch it. Confirms locale neutrality.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "canon-077",
+      "category": "locale-sensitive",
+      "description": "Lithuanian i-ogonek with dot — NFD form must still be rejected regardless of locale",
+      "input": {
+        "raw_intent": {
+          "verb": "get",
+          "resource_kind": "pod",
+          "namespace": "\u012f\u0307",
+          "name": "x",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2 + OPEN SPEC Q#10: Lithuanian locale does special things with i + combining dots. Canonicalizer must be locale-neutral and treat '\\u012f\\u0307' as NFD (not NFC). Reject.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "canon-078",
+      "category": "locale-sensitive",
+      "description": "Dotless-i U+0131 preserved as distinct codepoint from 'i'",
+      "input": {
+        "raw_intent": {
+          "verb": "get",
+          "resource_kind": "pod",
+          "namespace": "default",
+          "name": "\u0131stanbul",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "get",
+            "resource_kind": "pod",
+            "namespace": "default",
+            "name": "\u0131stanbul",
+            "params": {}
+          }
+        }
+      },
+      "rationale": "§4.2: dotless-i (U+0131) is a valid identifier codepoint but distinct from 'i'. Preserved. If allowlist contains 'istanbul' it will NOT match 'ıstanbul' — correct V2-2 behavior.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "canon-079",
+      "category": "empty-and-boundary",
+      "description": "Empty verb string rejected",
+      "input": {
+        "raw_intent": {
+          "verb": "",
+          "resource_kind": "pod",
+          "namespace": "default",
+          "name": "x",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2: verb is required; empty-string verb is a malformed intent.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "canon-080",
+      "category": "empty-and-boundary",
+      "description": "Maximum-length name at boundary (4096 bytes exactly) accepted",
+      "input": {
+        "raw_intent": {
+          "verb": "get",
+          "resource_kind": "pod",
+          "namespace": "default",
+          "name": "boundary-4096-byte-string-would-appear-here-but-is-elided-for-file-size-testers-should-generate-exactly-4096-bytes-of-ascii-alphanumeric",
+          "params": {},
+          "generator_hint": "expand 'name' to exactly 4096 ASCII bytes via repetition of 'abcdefghijklmnopqrstuvwxyz0123456789' before running"
+        }
+      },
+      "expected": {
+        "outcome": "accept"
+      },
+      "rationale": "§4.2 + OPEN SPEC Q#5: default max_string_bytes=4096. Names AT the boundary accepted. Implementations that use a smaller limit MUST document as vendor-specific extension.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "canon-081",
+      "category": "empty-and-boundary",
+      "description": "Name exceeding 4096 bytes rejected with max-length-exceeded",
+      "input": {
+        "raw_intent": {
+          "verb": "get",
+          "resource_kind": "pod",
+          "namespace": "default",
+          "name": "boundary-4097-bytes-would-appear-here-elided-testers-generate-exactly-4097",
+          "params": {},
+          "generator_hint": "expand 'name' to exactly 4097 ASCII bytes before running"
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "max-length-exceeded"
+      },
+      "rationale": "§4.2 + OPEN SPEC Q#5: over-limit identifiers rejected. Prevents memory-exhaustion on classifier + prevents a long-string smuggling attack.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "canon-082",
+      "category": "empty-and-boundary",
+      "description": "Nested params at depth 8 accepted; depth 9 rejected",
+      "input": {
+        "raw_intent": {
+          "verb": "create",
+          "resource_kind": "customresource",
+          "namespace": "default",
+          "name": "deep",
+          "params": {"a": {"b": {"c": {"d": {"e": {"f": {"g": {"h": "leaf-depth-8"}}}}}}}}
+        }
+      },
+      "expected": {
+        "outcome": "accept"
+      },
+      "rationale": "§4.2 + OPEN SPEC Q#5: default max_depth=8. At-depth accepted. See canon-083 for over-depth rejection.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "canon-083",
+      "category": "empty-and-boundary",
+      "description": "Nested params at depth 9 rejected",
+      "input": {
+        "raw_intent": {
+          "verb": "create",
+          "resource_kind": "customresource",
+          "namespace": "default",
+          "name": "too-deep",
+          "params": {"a": {"b": {"c": {"d": {"e": {"f": {"g": {"h": {"i": "leaf-depth-9"}}}}}}}}}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "max-depth-exceeded"
+      },
+      "rationale": "§4.2 + OPEN SPEC Q#5: over-depth rejected. Bounds recursion, prevents stack-exhaustion attacks, prevents deeply-nested payload smuggling.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "canon-084",
+      "category": "roundtrip-jsoncbor",
+      "description": "Canonical JSON → canonical CBOR → back to JSON yields identical structure",
+      "input": {
+        "raw_intent": {
+          "verb": "patch",
+          "resource_kind": "deployment",
+          "namespace": "prod",
+          "name": "api",
+          "params": {"replicas": 3}
+        },
+        "roundtrip_via_cbor": true
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "patch",
+            "resource_kind": "deployment",
+            "namespace": "prod",
+            "name": "api",
+            "params": {"replicas": 3}
+          }
+        }
+      },
+      "rationale": "§4.2 + OPEN SPEC Q#7 + RFC 8949 §4.2: after JSON→CBOR→JSON roundtrip, content must be bit-identical (modulo whitespace). This anchors the signature-stability contract.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "canon-085",
+      "category": "roundtrip-jsoncbor",
+      "description": "Float value survives JSON → CBOR(float64) → JSON roundtrip preserving bit pattern",
+      "input": {
+        "raw_intent": {
+          "verb": "patch",
+          "resource_kind": "hpa",
+          "namespace": "prod",
+          "name": "api",
+          "params": {"target_cpu": 0.75}
+        },
+        "roundtrip_via_cbor": true
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "patch",
+            "resource_kind": "hpa",
+            "namespace": "prod",
+            "name": "api",
+            "params": {"target_cpu": 0.75}
+          }
+        }
+      },
+      "rationale": "§4.2 + RFC 8949 §4.2.2: CBOR uses shortest-float representation. 0.75 round-trips losslessly (exact in binary float).",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "canon-086",
+      "category": "roundtrip-jsoncbor",
+      "description": "Unicode content survives JSON → CBOR(utf-8 tstr) → JSON roundtrip",
+      "input": {
+        "raw_intent": {
+          "verb": "get",
+          "resource_kind": "pod",
+          "namespace": "m\u00fcnchen",
+          "name": "x",
+          "params": {}
+        },
+        "roundtrip_via_cbor": true
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "get",
+            "resource_kind": "pod",
+            "namespace": "m\u00fcnchen",
+            "name": "x",
+            "params": {}
+          }
+        }
+      },
+      "rationale": "§4.2 + RFC 8949: CBOR tstr is UTF-8. Unicode content round-trips with identical byte sequence.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "canon-087",
+      "category": "roundtrip-jsoncbor",
+      "description": "Two JSON inputs with different key order produce bit-identical CBOR",
+      "input": {
+        "raw_intent_a": {
+          "verb": "get",
+          "resource_kind": "pod",
+          "namespace": "default",
+          "name": "x",
+          "params": {}
+        },
+        "raw_intent_b": {
+          "params": {},
+          "name": "x",
+          "namespace": "default",
+          "resource_kind": "pod",
+          "verb": "get"
+        },
+        "compare_cbor_bytes": true
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "get",
+            "resource_kind": "pod",
+            "namespace": "default",
+            "name": "x",
+            "params": {}
+          }
+        }
+      },
+      "rationale": "§4.2 + RFC 8949 §4.2.1: deterministic CBOR sorts map keys by encoded-length then lexicographic. Bit-identical serialization → same signature. Foundation of the V2-2 defense: classifier and signer produce the same bytes.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "canon-088",
+      "category": "attack-bypass-attempts",
+      "description": "V2-2 literal: classifier sees 'delete namespace' intent via mixed-case bypass",
+      "input": {
+        "raw_intent": {
+          "verb": "DELETE",
+          "resource_kind": "Namespace",
+          "namespace": "prod",
+          "name": "prod",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2 + V2-2 canonical attack: attacker crafts 'DELETE Namespace' hoping classifier is case-sensitive and matches only lowercase in minimum_tiers. Rejecting non-canonical input at normalize step closes this attack class at the architectural boundary.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "canon-089",
+      "category": "attack-bypass-attempts",
+      "description": "V2-2: verb synonym 'remove' (not 'delete') — normalization rejects unknown verb",
+      "input": {
+        "raw_intent": {
+          "verb": "remove",
+          "resource_kind": "namespace",
+          "namespace": "prod",
+          "name": "prod",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2 + V2-2: attacker uses synonym 'remove' (legitimate in some tools) hoping classifier matches only on 'delete'. Canonicalizer resolves via Tariff's verb_aliases. If 'remove' is not mapped, reject. Per §4.2 the verb must be canonical BEFORE classifier sees it.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "canon-090",
+      "category": "attack-bypass-attempts",
+      "description": "V2-2: Unicode escape of 'delete' — classifier must see decoded 'delete' not escape form",
+      "input": {
+        "raw_intent_raw_json": "{\"verb\":\"\\u0064\\u0065\\u006c\\u0065\\u0074\\u0065\",\"resource_kind\":\"namespace\",\"namespace\":\"prod\",\"name\":\"prod\",\"params\":{}}"
+      },
+      "expected": {
+        "outcome": "accept",
+        "output": {
+          "canonical_intent": {
+            "verb": "delete",
+            "resource_kind": "namespace",
+            "namespace": "prod",
+            "name": "prod",
+            "params": {}
+          }
+        }
+      },
+      "rationale": "§4.2 + V2-2: attacker encodes 'delete' as \\u escapes hoping regex-style classifier matches on raw characters not decoded. Canonicalizer MUST decode escapes; output is literal UTF-8 'delete'. Classifier sees 'delete' and matches minimum_tiers correctly.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "canon-091",
+      "category": "attack-bypass-attempts",
+      "description": "V2-2: appended null byte + extra content — classifier must see full name",
+      "input": {
+        "raw_intent": {
+          "verb": "delete",
+          "resource_kind": "namespace",
+          "namespace": "benign\u0000prod",
+          "name": "",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "invalid-control-char"
+      },
+      "rationale": "§4.2 + V2-2: classic C-string truncation bypass. Some components see 'benign', others see 'benign\\u0000prod'. Reject to close asymmetry.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "canon-092",
+      "category": "attack-bypass-attempts",
+      "description": "V2-2: zero-width joiner splits verb mid-word",
+      "input": {
+        "raw_intent": {
+          "verb": "del\u200dete",
+          "resource_kind": "namespace",
+          "namespace": "prod",
+          "name": "prod",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "invalid-control-char"
+      },
+      "rationale": "§4.2 + V2-2: ZWJ invisible. 'del\\u200dete' is NOT 'delete'. A substring-match classifier might still match. A whole-word match will not. Asymmetric behavior across components → V2-2 attack. Reject.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "canon-093",
+      "category": "attack-bypass-attempts",
+      "description": "V2-2: semantically-equivalent NFD payload intended to mismatch signer's NFC",
+      "input": {
+        "raw_intent": {
+          "verb": "delete",
+          "resource_kind": "namespace",
+          "namespace": "pr\u006f\u0308d",
+          "name": "pr\u006f\u0308d",
+          "params": {}
+        }
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "normalization-not-applied"
+      },
+      "rationale": "§4.2 + V2-2: attacker sends NFD 'prod' (with combining diaeresis on o decomposed). Classifier uses NFC-compare; signer encodes as-is. Signature and classifier-key mismatch. Rejection at normalize step defeats entire attack class.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "critical"
+    }
+  ]
+}

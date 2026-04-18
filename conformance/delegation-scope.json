@@ -1,0 +1,1031 @@
+{
+  "schema_version": "1.0.0",
+  "vector_suite": "delegation-scope",
+  "spec_reference": "design-final.md §7.3",
+  "spec_version": "round6-final",
+  "generated_at": "2026-04-18T12:30:00Z",
+  "coverage_summary": {
+    "valid-exact-match": 4,
+    "valid-subset": 6,
+    "valid-boundary": 4,
+    "invalid-signature-broken": 4,
+    "invalid-chain-broken": 5,
+    "invalid-integration-mismatch": 4,
+    "invalid-tier-exceeded": 4,
+    "invalid-verb-forbidden": 4,
+    "invalid-resource-kind-forbidden": 3,
+    "invalid-budget-exceeded": 4,
+    "invalid-expiry-too-long": 3,
+    "invalid-expired": 3,
+    "invalid-revoked": 3,
+    "invalid-tariff-version-skew": 2,
+    "edge-case": 5,
+    "attack-scope-drift": 6,
+    "invalid-narrowness-rule": 2,
+    "valid-narrowness-rule-boundary": 1,
+    "valid-narrowness-rule-not-triggered": 1
+  },
+  "notes": "Signatures are represented as boolean 'signature_valid' to keep vectors runnable without live Ed25519. Implementers replace with real signatures when integrating with their crypto stack. Vectors cover §7.3 scope-match table and V3-1 defense, plus §3.1 Layer-1 narrowness-rule enforcement (wildcards in cap require budget.actions ≤ narrowness_threshold, default 20). 'context' field simulates the Router's state: current Tariff version, current time, active revocation entries, narrowness_threshold. ds-021 encodes STRICT-REJECT for direct root→mandate_signer delegation (skipping ops role); spec §7.3 does not explicitly forbid but three-level hierarchy (§7.1) implies hierarchical enforcement — implementations that accept must document divergence.",
+  "vectors": [
+    {
+      "id": "ds-001",
+      "category": "valid-exact-match",
+      "description": "Single-link delegation: ops key directly signs mandate within declared integration and tier",
+      "input": {
+        "delegation_chain": [
+          {
+            "parent_key": "K_cust_root_pk_TEST",
+            "child_key": "K_cust_ops_pk_TEST",
+            "child_role": "ops",
+            "scope": {
+              "integrations": ["k8s-prod"],
+              "max_tier_signable": 3,
+              "max_budget": {"actions": 100, "tokens": 50000},
+              "max_exp_seconds": 14400,
+              "allowed_verbs": ["patch", "apply"],
+              "allowed_resource_kinds": ["deployment"]
+            },
+            "valid_from": 1700000000,
+            "valid_until": 2000000000,
+            "revocation_channel": "https://revoke.acme/ops",
+            "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true},
+            "signed_by": "K_cust_root_pk_TEST",
+            "signature_valid": true
+          }
+        ],
+        "mandate": {
+          "mandate_id": "01HTMANDATE001",
+          "integration_ref": "k8s-prod",
+          "cap": [
+            {"verb": "patch", "resource_kind": "deployment", "resource_ref": "prod/frontend", "tier": 3}
+          ],
+          "budget": {"actions": 20, "tokens": 5000},
+          "issued_at": 1712000000,
+          "exp": 1712010800,
+          "min_tariff_version": 5,
+          "purpose": "Canary rollout",
+          "operator_id": "alice@acme",
+          "revocation_channel_ref": "https://revoke.acme/mandate/01HTMANDATE001",
+          "signer_key_hint": "K_cust_ops_pk_TEST",
+          "signed_by": "K_cust_ops_pk_TEST",
+          "signature_valid": true
+        },
+        "context": {
+          "current_tariff_version": 5,
+          "current_time": 1712000000,
+          "revocation_list": []
+        }
+      },
+      "expected": {"outcome": "accept"},
+      "rationale": "Exact-match happy path. All scope fields satisfied. §7.3 table passes all rows. Establishes baseline accept behavior.",
+      "redteam_refs": [],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-002",
+      "category": "valid-exact-match",
+      "description": "Two-link chain: root → ops → mandate, all scopes match",
+      "input": {
+        "delegation_chain": [
+          {
+            "parent_key": "K_cust_root_pk_TEST",
+            "child_key": "K_cust_ops_pk_TEST",
+            "child_role": "ops",
+            "scope": {
+              "integrations": ["k8s-prod", "vault-prod"],
+              "max_tier_signable": 4,
+              "max_budget": {"actions": 1000, "tokens": 500000},
+              "max_exp_seconds": 86400,
+              "allowed_verbs": ["*"],
+              "allowed_resource_kinds": ["*"]
+            },
+            "valid_from": 1700000000,
+            "valid_until": 2000000000,
+            "revocation_channel": "https://revoke.acme/ops",
+            "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true},
+            "signed_by": "K_cust_root_pk_TEST",
+            "signature_valid": true
+          },
+          {
+            "parent_key": "K_cust_ops_pk_TEST",
+            "child_key": "K_cust_mandate_5_pk_TEST",
+            "child_role": "mandate_signer",
+            "scope": {
+              "integrations": ["k8s-prod"],
+              "max_tier_signable": 3,
+              "max_budget": {"actions": 50, "tokens": 10000},
+              "max_exp_seconds": 14400,
+              "allowed_verbs": ["patch", "apply"],
+              "allowed_resource_kinds": ["deployment", "service"]
+            },
+            "valid_from": 1711900000,
+            "valid_until": 1712500000,
+            "revocation_channel": "https://revoke.acme/mandate-signers",
+            "issuer_constraints": {"min_signers": 1, "require_hsm_evidence": false},
+            "signed_by": "K_cust_ops_pk_TEST",
+            "signature_valid": true
+          }
+        ],
+        "mandate": {
+          "mandate_id": "01HTMANDATE002",
+          "integration_ref": "k8s-prod",
+          "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "prod/api", "tier": 2}],
+          "budget": {"actions": 10, "tokens": 2000},
+          "issued_at": 1712000000,
+          "exp": 1712003600,
+          "min_tariff_version": 5,
+          "purpose": "Scale deployment",
+          "operator_id": "bob@acme",
+          "revocation_channel_ref": "https://revoke.acme/mandate/01HTMANDATE002",
+          "signer_key_hint": "K_cust_mandate_5_pk_TEST",
+          "signed_by": "K_cust_mandate_5_pk_TEST",
+          "signature_valid": true
+        },
+        "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "accept"},
+      "rationale": "Full chain walk per §7.4. Every link valid; every scope-match row passes. Tests that multi-link verification is implemented, not just last-link.",
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-003",
+      "category": "valid-exact-match",
+      "description": "Mandate uses multiple caps, all within scope",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 1000, "tokens": 500000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch", "apply", "delete"], "allowed_resource_kinds": ["deployment", "service", "configmap"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE003", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "prod/a", "tier": 2}, {"verb": "apply", "resource_kind": "configmap", "resource_ref": "prod/b", "tier": 1}, {"verb": "delete", "resource_kind": "service", "resource_ref": "prod/c", "tier": 3}], "budget": {"actions": 30, "tokens": 5000}, "issued_at": 1712000000, "exp": 1712007200, "min_tariff_version": 5, "purpose": "Multi-op rollout", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "accept"},
+      "rationale": "Multiple caps. max(tiers) rule uses highest tier (3). §7.3 requires max(mandate.cap.tiers) ≤ scope.max_tier_signable.",
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "ds-004",
+      "category": "valid-exact-match",
+      "description": "Wildcard verb and resource_kind in delegation scope; mandate uses specific verb and kind",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 5, "max_budget": {"actions": 1000, "tokens": 500000}, "max_exp_seconds": 86400, "allowed_verbs": ["*"], "allowed_resource_kinds": ["*"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE004", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "prod/x", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "Demo", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "accept"},
+      "rationale": "Wildcard allows any concrete verb/kind. Tests wildcard semantics in allowlist.",
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "ds-005",
+      "category": "valid-subset",
+      "description": "Mandate tier strictly below max_tier_signable",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 4, "max_budget": {"actions": 1000, "tokens": 500000}, "max_exp_seconds": 86400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE005", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "prod/y", "tier": 2}], "budget": {"actions": 10, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "accept"},
+      "rationale": "Strict inequality tier: 2 < 4. Accept. Differentiates from valid-boundary at-limit case.",
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "ds-006",
+      "category": "valid-subset",
+      "description": "Mandate budget strictly below max_budget",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE006", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "prod/y", "tier": 2}], "budget": {"actions": 10, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "accept"},
+      "rationale": "Budget 10/1000 < 100/50000. Both dimensions below.",
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "ds-007",
+      "category": "valid-subset",
+      "description": "Mandate exp window shorter than max_exp_seconds allows",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 86400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE007", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "prod/y", "tier": 2}], "budget": {"actions": 10, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "accept"},
+      "rationale": "exp-issued_at = 3600 < 86400. Accept.",
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "ds-008",
+      "category": "valid-subset",
+      "description": "Mandate uses subset of allowed integrations",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod", "vault-prod", "stripe-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE008", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "prod/y", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "accept"},
+      "rationale": "integration_ref ∈ {k8s-prod, vault-prod, stripe-prod}. Subset membership.",
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "ds-009",
+      "category": "valid-subset",
+      "description": "Mandate uses subset of allowed verbs",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch", "apply", "delete", "get"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE009", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "prod/y", "tier": 2}, {"verb": "get", "resource_kind": "deployment", "resource_ref": "prod/y", "tier": 0}], "budget": {"actions": 10, "tokens": 2000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "accept"},
+      "rationale": "Both patch and get ∈ {patch, apply, delete, get}. Tests multi-cap verb-by-verb membership check.",
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "ds-010",
+      "category": "valid-subset",
+      "description": "Nested delegation narrows each dimension; mandate well within innermost",
+      "input": {
+        "delegation_chain": [
+          {"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod", "vault-prod"], "max_tier_signable": 5, "max_budget": {"actions": 10000, "tokens": 1000000}, "max_exp_seconds": 86400, "allowed_verbs": ["*"], "allowed_resource_kinds": ["*"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true},
+          {"parent_key": "K_cust_ops_pk_TEST", "child_key": "K_cust_mandate_7_pk_TEST", "child_role": "mandate_signer", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch", "apply"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1711900000, "valid_until": 1712500000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 1, "require_hsm_evidence": false}, "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}
+        ],
+        "mandate": {"mandate_id": "01HTMANDATE010", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "prod/z", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_mandate_7_pk_TEST", "signed_by": "K_cust_mandate_7_pk_TEST", "signature_valid": true},
+        "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "accept"},
+      "rationale": "Both delegation links strict-narrower than parent; mandate strict-narrower than innermost. §7.4 walks chain bottom-up.",
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-011",
+      "category": "valid-boundary",
+      "description": "Mandate tier exactly equals max_tier_signable",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["delete"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE011", "integration_ref": "k8s-prod", "cap": [{"verb": "delete", "resource_kind": "deployment", "resource_ref": "prod/y", "tier": 3}], "budget": {"actions": 10, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "accept"},
+      "rationale": "Boundary test: tier 3 ≤ max_tier_signable 3 (inclusive). §7.3 uses ≤, not <.",
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "ds-012",
+      "category": "valid-boundary",
+      "description": "Mandate budget exactly equals max_budget",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE012", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "prod/y", "tier": 2}], "budget": {"actions": 100, "tokens": 50000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "accept"},
+      "rationale": "budget.actions==max.actions AND budget.tokens==max.tokens. §7.3 inequalities are inclusive.",
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "ds-013",
+      "category": "valid-boundary",
+      "description": "exp - issued_at exactly equals max_exp_seconds",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE013", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "prod/y", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712014400, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "accept"},
+      "rationale": "exp - issued_at = 14400 == max_exp_seconds 14400. §7.3 uses ≤.",
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "ds-014",
+      "category": "valid-boundary",
+      "description": "Delegation valid_until exactly equals current_time",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 1712000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE014", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "prod/y", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "expired"},
+      "rationale": "OPEN SPEC QUESTION: is valid_until inclusive or exclusive? This vector specifies EXCLUSIVE (delegation expires AT valid_until, not after). Implementations must match. If spec differs, this is a spec ambiguity to raise.",
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "ds-015",
+      "category": "invalid-signature-broken",
+      "description": "Mandate signature does not verify",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE015", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "prod/y", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": false}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "signature-invalid"},
+      "rationale": "Basic signature check. Precedes scope checks; MUST fail fast on signature.",
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-016",
+      "category": "invalid-signature-broken",
+      "description": "Root→ops delegation signature broken",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": false}],
+        "mandate": {"mandate_id": "01HTMANDATE016", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "prod/y", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "signature-invalid"},
+      "rationale": "Chain integrity. Even if mandate sig is valid, a broken upstream link must reject.",
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-017",
+      "category": "invalid-signature-broken",
+      "description": "Intermediate ops→mandate delegation signature broken, mandate sig valid",
+      "input": {
+        "delegation_chain": [
+          {"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 5, "max_budget": {"actions": 10000, "tokens": 1000000}, "max_exp_seconds": 86400, "allowed_verbs": ["*"], "allowed_resource_kinds": ["*"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true},
+          {"parent_key": "K_cust_ops_pk_TEST", "child_key": "K_cust_mandate_7_pk_TEST", "child_role": "mandate_signer", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1711900000, "valid_until": 1712500000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 1, "require_hsm_evidence": false}, "signed_by": "K_cust_ops_pk_TEST", "signature_valid": false}
+        ],
+        "mandate": {"mandate_id": "01HTMANDATE017", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "prod/y", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_mandate_7_pk_TEST", "signed_by": "K_cust_mandate_7_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "signature-invalid"},
+      "rationale": "Any link in chain broken → overall reject. Tests that multi-link verification does not stop at mandate signature.",
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-018",
+      "category": "invalid-signature-broken",
+      "description": "Delegation signed_by claims different key than parent_key",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE018", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "prod/y", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "signature-chain-broken"},
+      "rationale": "self-signing attack: delegation claims parent_key=K_cust_root but signed_by=K_cust_ops (itself, the child). Implementation MUST check signed_by matches parent_key. Defense against V3-1-adjacent chain-tampering.",
+      "redteam_refs": ["V3-1"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-019",
+      "category": "invalid-chain-broken",
+      "description": "Empty delegation chain",
+      "input": {
+        "delegation_chain": [],
+        "mandate": {"mandate_id": "01HTMANDATE019", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "prod/y", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "signature-chain-broken"},
+      "rationale": "No delegation → signer key not derivable from root. Must reject. Defense: self-signed mandate trying to pass as root-derived.",
+      "redteam_refs": ["V3-1"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-020",
+      "category": "invalid-chain-broken",
+      "description": "Chain does not terminate at K_cust_root (first link's parent_key is not trust anchor)",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_ROGUE_pk", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_ROGUE_pk", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE020", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "prod/y", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "signature-chain-broken"},
+      "rationale": "Trust anchor pinning: top of chain must be K_cust_root_pk_TEST (Router-pinned). Rogue root MUST reject even with valid self-sig.",
+      "redteam_refs": ["V3-1"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-021",
+      "category": "invalid-chain-broken",
+      "description": "Chain has gap: ops-level delegation missing, mandate-signer's delegation claims root as parent but root didn't actually delegate to mandate-signer directly",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_mandate_X_pk_TEST", "child_role": "mandate_signer", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE021", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "prod/y", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_mandate_X_pk_TEST", "signed_by": "K_cust_mandate_X_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "signature-chain-broken"},
+      "rationale": "Direct-from-root delegation of role 'mandate_signer' skips 'ops' intermediate. Suite chooses STRICT-REJECT per three-level hierarchy in §7.1 (K_cust_root → K_cust_ops → K_cust_mandate_*). OPEN SPEC QUESTION: §7.3 does not explicitly forbid direct root→mandate_signer. Strict interpretation preferred because hierarchical roles are the Round-6 defense against ops-key compromise cascading directly to mandate authority. Implementations that accept direct root→mandate_signer must document spec interpretation divergence.",
+      "redteam_refs": ["V3-1"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "ds-022",
+      "category": "invalid-chain-broken",
+      "description": "Mandate signer_key_hint does not match last delegation's child_key",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE022", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "prod/y", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_DIFFERENT_pk", "signed_by": "K_cust_DIFFERENT_pk", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "signature-chain-broken"},
+      "rationale": "Mandate signer must match last delegation's child. Any mismatch breaks chain. Defends against attacker with valid signature on one key trying to use chain of a different key.",
+      "redteam_refs": ["V3-1"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-023",
+      "category": "invalid-chain-broken",
+      "description": "Chain has duplicate link (same delegation appears twice)",
+      "input": {
+        "delegation_chain": [
+          {"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true},
+          {"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}
+        ],
+        "mandate": {"mandate_id": "01HTMANDATE023", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "prod/y", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "signature-chain-broken"},
+      "rationale": "Malformed chain (duplicate link) must reject. Prevents ambiguity in scope intersection.",
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "ds-024",
+      "category": "invalid-integration-mismatch",
+      "description": "Mandate integration_ref 'vault-prod' not in delegation's allowed integrations ['k8s-prod']",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE024", "integration_ref": "vault-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "prod/y", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "scope-integration-mismatch"},
+      "rationale": "THE V3-1 attack: mandate signer has ops-scoped-to-k8s key but tries to use for vault integration. §7.3 integration check catches this. Prototype V3-1 defense test.",
+      "redteam_refs": ["V3-1"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-025",
+      "category": "invalid-integration-mismatch",
+      "description": "Mandate integration_ref not in any link of multi-link chain",
+      "input": {
+        "delegation_chain": [
+          {"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod", "vault-prod"], "max_tier_signable": 5, "max_budget": {"actions": 1000, "tokens": 500000}, "max_exp_seconds": 86400, "allowed_verbs": ["*"], "allowed_resource_kinds": ["*"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true},
+          {"parent_key": "K_cust_ops_pk_TEST", "child_key": "K_cust_mandate_N_pk_TEST", "child_role": "mandate_signer", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1711900000, "valid_until": 1712500000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 1, "require_hsm_evidence": false}, "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}
+        ],
+        "mandate": {"mandate_id": "01HTMANDATE025", "integration_ref": "stripe-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "x", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_mandate_N_pk_TEST", "signed_by": "K_cust_mandate_N_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "scope-integration-mismatch"},
+      "rationale": "stripe-prod not in innermost scope {k8s-prod}. §7.3 applied at each link; innermost controls.",
+      "redteam_refs": ["V3-1"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-026",
+      "category": "invalid-integration-mismatch",
+      "description": "Mandate integration in outer scope but not innermost",
+      "input": {
+        "delegation_chain": [
+          {"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod", "vault-prod"], "max_tier_signable": 5, "max_budget": {"actions": 1000, "tokens": 500000}, "max_exp_seconds": 86400, "allowed_verbs": ["*"], "allowed_resource_kinds": ["*"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true},
+          {"parent_key": "K_cust_ops_pk_TEST", "child_key": "K_cust_mandate_N_pk_TEST", "child_role": "mandate_signer", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1711900000, "valid_until": 1712500000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 1, "require_hsm_evidence": false}, "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}
+        ],
+        "mandate": {"mandate_id": "01HTMANDATE026", "integration_ref": "vault-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "x", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_mandate_N_pk_TEST", "signed_by": "K_cust_mandate_N_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "scope-integration-mismatch"},
+      "rationale": "vault-prod ∈ outer but not ∈ innermost. CORE V3-1 defense: narrow key must not escape narrow delegation even if outer permits wider.",
+      "redteam_refs": ["V3-1"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-027",
+      "category": "invalid-integration-mismatch",
+      "description": "Case-sensitive integration match: 'K8S-PROD' should not match 'k8s-prod'",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE027", "integration_ref": "K8S-PROD", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "x", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "scope-integration-mismatch"},
+      "rationale": "Integration IDs are case-sensitive byte strings. 'K8S-PROD' != 'k8s-prod'. §4.2 normalization forbids case-variation. Defends against normalization-bypass scope-drift.",
+      "redteam_refs": ["V3-1", "V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "ds-028",
+      "category": "invalid-tier-exceeded",
+      "description": "Mandate tier=4 exceeds delegation max_tier_signable=3",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["delete"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE028", "integration_ref": "k8s-prod", "cap": [{"verb": "delete", "resource_kind": "deployment", "resource_ref": "prod/y", "tier": 4}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "scope-tier-exceeded"},
+      "rationale": "Tier 4 > max_tier_signable 3. §7.3 row: max(mandate.cap.tiers) ≤ scope.max_tier_signable.",
+      "redteam_refs": ["V3-1"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-029",
+      "category": "invalid-tier-exceeded",
+      "description": "One cap in multi-cap list exceeds tier; others within",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 2, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["*"], "allowed_resource_kinds": ["*"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE029", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "x", "tier": 1}, {"verb": "apply", "resource_kind": "service", "resource_ref": "y", "tier": 2}, {"verb": "delete", "resource_kind": "pod", "resource_ref": "z", "tier": 3}], "budget": {"actions": 10, "tokens": 2000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "scope-tier-exceeded"},
+      "rationale": "max(tiers) = 3 > 2. Any single cap exceeding reject entire mandate (atomic).",
+      "redteam_refs": ["V3-1"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-030",
+      "category": "invalid-tier-exceeded",
+      "description": "Innermost scope limits tier; outermost would allow",
+      "input": {
+        "delegation_chain": [
+          {"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 5, "max_budget": {"actions": 1000, "tokens": 500000}, "max_exp_seconds": 86400, "allowed_verbs": ["*"], "allowed_resource_kinds": ["*"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true},
+          {"parent_key": "K_cust_ops_pk_TEST", "child_key": "K_cust_mandate_N_pk_TEST", "child_role": "mandate_signer", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 2, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["*"], "allowed_resource_kinds": ["*"]}, "valid_from": 1711900000, "valid_until": 1712500000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 1, "require_hsm_evidence": false}, "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}
+        ],
+        "mandate": {"mandate_id": "01HTMANDATE030", "integration_ref": "k8s-prod", "cap": [{"verb": "delete", "resource_kind": "deployment", "resource_ref": "x", "tier": 4}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_mandate_N_pk_TEST", "signed_by": "K_cust_mandate_N_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "scope-tier-exceeded"},
+      "rationale": "Tier 4 ≤ outer 5 but > inner 2. Inner scope binding. CORE V3-1 test.",
+      "redteam_refs": ["V3-1"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-031",
+      "category": "invalid-tier-exceeded",
+      "description": "Mandate tier exactly one above limit (off-by-one)",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 2, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["*"], "allowed_resource_kinds": ["*"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE031", "integration_ref": "k8s-prod", "cap": [{"verb": "delete", "resource_kind": "deployment", "resource_ref": "x", "tier": 3}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "scope-tier-exceeded"},
+      "rationale": "Tier 3, max 2. Differentiates valid-boundary ds-011 from off-by-one failure.",
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-032",
+      "category": "invalid-verb-forbidden",
+      "description": "Mandate verb 'delete' not in allowed_verbs ['patch', 'apply']",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch", "apply"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE032", "integration_ref": "k8s-prod", "cap": [{"verb": "delete", "resource_kind": "deployment", "resource_ref": "prod/y", "tier": 3}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "scope-verb-forbidden"},
+      "rationale": "'delete' ∉ {patch, apply}. §7.3 scope-match.",
+      "redteam_refs": ["V3-1"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-033",
+      "category": "invalid-verb-forbidden",
+      "description": "One cap in multi-cap mandate has forbidden verb",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch", "apply"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE033", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "x", "tier": 2}, {"verb": "exec", "resource_kind": "deployment", "resource_ref": "y", "tier": 2}], "budget": {"actions": 10, "tokens": 2000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "scope-verb-forbidden"},
+      "rationale": "Any forbidden verb rejects whole mandate. No partial acceptance.",
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-034",
+      "category": "invalid-verb-forbidden",
+      "description": "Verb case-variation: 'PATCH' (upper) when allowed is 'patch' (lower)",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE034", "integration_ref": "k8s-prod", "cap": [{"verb": "PATCH", "resource_kind": "deployment", "resource_ref": "x", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "scope-verb-forbidden"},
+      "rationale": "Mandate caps MUST already be canonical. Verbs are lowercased per §4.2 normalization BEFORE classifier. Mandate-time non-canonical verb rejected at scope check. Complements canonicalization.json.",
+      "redteam_refs": ["V3-1", "V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "ds-035",
+      "category": "invalid-verb-forbidden",
+      "description": "Empty allowed_verbs → all concrete verbs rejected",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": [], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE035", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "x", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "scope-verb-forbidden"},
+      "rationale": "Empty list = no verbs allowed. Must not be interpreted as wildcard.",
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-036",
+      "category": "invalid-resource-kind-forbidden",
+      "description": "Mandate resource_kind 'pod' not in allowed_resource_kinds ['deployment', 'service']",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["*"], "allowed_resource_kinds": ["deployment", "service"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE036", "integration_ref": "k8s-prod", "cap": [{"verb": "delete", "resource_kind": "pod", "resource_ref": "prod/x", "tier": 3}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "scope-resource-kind-forbidden"},
+      "rationale": "pod ∉ {deployment, service}. §7.3 scope-match.",
+      "redteam_refs": ["V3-1"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-037",
+      "category": "invalid-resource-kind-forbidden",
+      "description": "Synonym/alias bypass attempt: 'deployments.apps' not equal canonical 'deployment'",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["*"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE037", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployments.apps", "resource_ref": "prod/x", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "scope-resource-kind-forbidden"},
+      "rationale": "Resource kinds in mandates MUST already be in canonical form (per §4.2 — normalization applies before reaching scope-check). 'deployments.apps' is a K8s discovery alias; canonical form is 'deployment'. Non-canonical form in cap rejected.",
+      "redteam_refs": ["V3-1", "V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "ds-038",
+      "category": "invalid-resource-kind-forbidden",
+      "description": "Empty allowed_resource_kinds",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["*"], "allowed_resource_kinds": []}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE038", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "x", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "scope-resource-kind-forbidden"},
+      "rationale": "Empty list ≠ wildcard. Parallel to ds-035 for verbs.",
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-039",
+      "category": "invalid-budget-exceeded",
+      "description": "Mandate budget.actions exceeds delegation max_budget.actions",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE039", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "x", "tier": 2}], "budget": {"actions": 101, "tokens": 50000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "scope-budget-exceeded"},
+      "rationale": "101 > 100. Off-by-one. Pairs with ds-012 boundary.",
+      "redteam_refs": ["V3-1"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-040",
+      "category": "invalid-budget-exceeded",
+      "description": "Mandate budget.tokens exceeds delegation max_budget.tokens (actions within)",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE040", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "x", "tier": 2}], "budget": {"actions": 50, "tokens": 100000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "scope-budget-exceeded"},
+      "rationale": "Tokens exceed even though actions within. Any dimension exceeding rejects. AND semantics.",
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-041",
+      "category": "invalid-budget-exceeded",
+      "description": "Nested: innermost budget limits 50; outermost 1000; mandate 100",
+      "input": {
+        "delegation_chain": [
+          {"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 5, "max_budget": {"actions": 1000, "tokens": 500000}, "max_exp_seconds": 86400, "allowed_verbs": ["*"], "allowed_resource_kinds": ["*"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true},
+          {"parent_key": "K_cust_ops_pk_TEST", "child_key": "K_cust_mandate_N_pk_TEST", "child_role": "mandate_signer", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 50, "tokens": 10000}, "max_exp_seconds": 14400, "allowed_verbs": ["*"], "allowed_resource_kinds": ["*"]}, "valid_from": 1711900000, "valid_until": 1712500000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 1, "require_hsm_evidence": false}, "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}
+        ],
+        "mandate": {"mandate_id": "01HTMANDATE041", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "x", "tier": 2}], "budget": {"actions": 100, "tokens": 5000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_mandate_N_pk_TEST", "signed_by": "K_cust_mandate_N_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "scope-budget-exceeded"},
+      "rationale": "100 ≤ 1000 (outer) but > 50 (inner). Innermost controls.",
+      "redteam_refs": ["V3-1"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-042",
+      "category": "invalid-budget-exceeded",
+      "description": "Budget field negative (implementation must reject as malformed)",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE042", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "x", "tier": 2}], "budget": {"actions": -1, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "scope-budget-exceeded"},
+      "rationale": "Negative actions nonsensical; must reject (CBOR 'uint' validation would catch, JSON source may not). Defense against modular-wrap interpretation.",
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "ds-043",
+      "category": "invalid-expiry-too-long",
+      "description": "exp - issued_at = 15000, max_exp_seconds = 14400",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE043", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "x", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712015000, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "scope-expiry-too-long"},
+      "rationale": "15000 > 14400. §7.3 window limit.",
+      "redteam_refs": ["V3-1"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-044",
+      "category": "invalid-expiry-too-long",
+      "description": "exp earlier than issued_at (nonsense; reject as malformed)",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE044", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "x", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1711900000, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "expired"},
+      "rationale": "Mandate already expired at issuance time (exp < issued_at). Logical impossibility. OPEN SPEC QUESTION: should reject_code be 'expired' or 'scope-expiry-malformed'? This vector picks 'expired' since effect is same.",
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "ds-045",
+      "category": "invalid-expiry-too-long",
+      "description": "max_exp_seconds = 0 should reject any mandate",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 0, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE045", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "x", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "scope-expiry-too-long"},
+      "rationale": "3600 > 0. Delegation effectively disables mandate-signing for duration > 0. Edge case for zero-duration scopes.",
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "ds-046",
+      "category": "invalid-expired",
+      "description": "current_time past delegation valid_until",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 1711000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE046", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "x", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "expired"},
+      "rationale": "Delegation expired before mandate issued. §7.4 link validity check.",
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-047",
+      "category": "invalid-expired",
+      "description": "current_time past mandate exp (mandate itself expired)",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE047", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "x", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712100000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "expired"},
+      "rationale": "current_time 1712100000 > mandate exp 1712003600. Mandate itself expired.",
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-048",
+      "category": "invalid-expired",
+      "description": "current_time before delegation valid_from (not yet active)",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1800000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE048", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "x", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "expired"},
+      "rationale": "Delegation not yet active. 'expired' reused as generic time-out-of-window code. OPEN SPEC QUESTION: separate code 'not-yet-valid' may be warranted.",
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "ds-049",
+      "category": "invalid-revoked",
+      "description": "K_cust_mandate_N in revocation list",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE049", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "x", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": ["K_cust_ops_pk_TEST"]}
+      },
+      "expected": {"outcome": "reject", "reject_code": "revoked"},
+      "rationale": "Key on revocation list → reject regardless of signature/time validity.",
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-050",
+      "category": "invalid-revoked",
+      "description": "Specific mandate revoked by mandate_id",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE050", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "x", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": ["01HTMANDATE050"]}
+      },
+      "expected": {"outcome": "reject", "reject_code": "revoked"},
+      "rationale": "Mandate-specific revocation (vs key-specific). Router checks both.",
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-051",
+      "category": "invalid-revoked",
+      "description": "Root revoked — any descendant invalidated",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE051", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "x", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": ["K_cust_root_pk_TEST"]}
+      },
+      "expected": {"outcome": "reject", "reject_code": "revoked"},
+      "rationale": "Root compromise → all descendants invalidated. §7.6 root-compromise recovery relies on this.",
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-052",
+      "category": "invalid-tariff-version-skew",
+      "description": "Mandate min_tariff_version > current",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE052", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "x", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 10, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "version-skew"},
+      "rationale": "Mandate requires Tariff v10 but Router has v5. §3.2 mandate-Tariff binding.",
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "ds-053",
+      "category": "invalid-tariff-version-skew",
+      "description": "Mandate min_tariff_version = current (boundary — accept)",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE053", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "x", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "accept"},
+      "rationale": "Boundary: min_version = current. §3.2 uses ≥. Pairs with ds-052 off-by-one test.",
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "ds-054",
+      "category": "edge-case",
+      "description": "Delegation with all wildcards — maximally permissive (still accept)",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["*"], "max_tier_signable": 5, "max_budget": {"actions": 1000000, "tokens": 1000000000}, "max_exp_seconds": 86400, "allowed_verbs": ["*"], "allowed_resource_kinds": ["*"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE054", "integration_ref": "any-integration", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "x", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "accept"},
+      "rationale": "OPEN SPEC QUESTION: is '*' in integrations allowed at delegation? §7 is silent. This vector accepts it (consistency with verbs/kinds). If spec tightens to forbid, flip this vector.",
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "ds-055",
+      "category": "edge-case",
+      "description": "Mandate with empty cap list (no capabilities at all)",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE055", "integration_ref": "k8s-prod", "cap": [], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "scope-verb-forbidden"},
+      "rationale": "OPEN SPEC QUESTION: can a mandate have zero caps? This vector interprets empty cap as malformed (no purpose). If spec explicitly permits empty-cap mandates (e.g., for placeholder), flip.",
+      "severity_if_failed": "low"
+    },
+    {
+      "id": "ds-056",
+      "category": "edge-case",
+      "description": "Delegation with max_tier_signable = 0 (only Tier 0 can be signed — useless for §2+)",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 0, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["*"], "allowed_resource_kinds": ["*"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE056", "integration_ref": "k8s-prod", "cap": [{"verb": "get", "resource_kind": "deployment", "resource_ref": "x", "tier": 0}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "accept"},
+      "rationale": "OPEN SPEC QUESTION: §2 says Tier 0-1 don't require mandates. But nothing forbids signing one. This vector accepts for consistency. A stricter interpretation might reject with 'mandate-unnecessary' or similar; flip if spec clarifies.",
+      "severity_if_failed": "low"
+    },
+    {
+      "id": "ds-057",
+      "category": "edge-case",
+      "description": "Delegation chain of length 5 (deep nesting)",
+      "input": {
+        "delegation_chain": [
+          {"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_L1_pk", "child_role": "ops", "scope": {"integrations": ["k8s-prod", "vault-prod"], "max_tier_signable": 5, "max_budget": {"actions": 10000, "tokens": 1000000}, "max_exp_seconds": 86400, "allowed_verbs": ["*"], "allowed_resource_kinds": ["*"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true},
+          {"parent_key": "K_cust_L1_pk", "child_key": "K_cust_L2_pk", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 4, "max_budget": {"actions": 5000, "tokens": 500000}, "max_exp_seconds": 43200, "allowed_verbs": ["*"], "allowed_resource_kinds": ["*"]}, "valid_from": 1711900000, "valid_until": 1712500000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 1, "require_hsm_evidence": false}, "signed_by": "K_cust_L1_pk", "signature_valid": true},
+          {"parent_key": "K_cust_L2_pk", "child_key": "K_cust_L3_pk", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 1000, "tokens": 100000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch", "apply", "delete"], "allowed_resource_kinds": ["deployment", "service"]}, "valid_from": 1711900000, "valid_until": 1712500000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 1, "require_hsm_evidence": false}, "signed_by": "K_cust_L2_pk", "signature_valid": true},
+          {"parent_key": "K_cust_L3_pk", "child_key": "K_cust_L4_pk", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["patch", "apply"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1711900000, "valid_until": 1712500000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 1, "require_hsm_evidence": false}, "signed_by": "K_cust_L3_pk", "signature_valid": true},
+          {"parent_key": "K_cust_L4_pk", "child_key": "K_cust_mandate_N_pk_TEST", "child_role": "mandate_signer", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 2, "max_budget": {"actions": 50, "tokens": 10000}, "max_exp_seconds": 7200, "allowed_verbs": ["patch"], "allowed_resource_kinds": ["deployment"]}, "valid_from": 1711900000, "valid_until": 1712500000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 1, "require_hsm_evidence": false}, "signed_by": "K_cust_L4_pk", "signature_valid": true}
+        ],
+        "mandate": {"mandate_id": "01HTMANDATE057", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "x", "tier": 2}], "budget": {"actions": 10, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_mandate_N_pk_TEST", "signed_by": "K_cust_mandate_N_pk_TEST", "signature_valid": true},
+        "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "accept"},
+      "rationale": "Deep chain stress test. OPEN SPEC QUESTION: does §7 impose a maximum chain length? Recommend ≤5 for protocol simplicity. If spec adds a max-depth rule, this may become a boundary test.",
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "ds-058",
+      "category": "edge-case",
+      "description": "Delegation scope missing fields (schema violation)",
+      "input": {
+        "delegation_chain": [{"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true}],
+        "mandate": {"mandate_id": "01HTMANDATE058", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "x", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "alice@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_ops_pk_TEST", "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "signature-chain-broken"},
+      "rationale": "Malformed DelegationDocument (missing scope fields max_budget, max_exp_seconds, allowed_verbs, allowed_resource_kinds). Router MUST reject at deserialization/validation, not default missing fields to permissive values.",
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-059",
+      "category": "attack-scope-drift",
+      "description": "V3-1 canonical attack: mandate-signer key scoped to k8s-prod, attacker tries to use for vault-prod mandate",
+      "input": {
+        "delegation_chain": [
+          {"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod", "vault-prod"], "max_tier_signable": 5, "max_budget": {"actions": 10000, "tokens": 1000000}, "max_exp_seconds": 86400, "allowed_verbs": ["*"], "allowed_resource_kinds": ["*"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true},
+          {"parent_key": "K_cust_ops_pk_TEST", "child_key": "K_cust_mandate_K8S_pk", "child_role": "mandate_signer", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["*"], "allowed_resource_kinds": ["*"]}, "valid_from": 1711900000, "valid_until": 1712500000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 1, "require_hsm_evidence": false}, "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}
+        ],
+        "mandate": {"mandate_id": "01HTMANDATE059", "integration_ref": "vault-prod", "cap": [{"verb": "read", "resource_kind": "secret", "resource_ref": "prod/db", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "Rotate DB creds", "operator_id": "attacker@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_mandate_K8S_pk", "signed_by": "K_cust_mandate_K8S_pk", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "scope-integration-mismatch"},
+      "rationale": "EXACT V3-1 attack scenario. k8s-scoped key used for vault mandate. If Router only checks signature, accepts. §7.3 scope-match MUST reject. This vector is the canonical V3-1 defense test.",
+      "redteam_refs": ["V3-1"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-060",
+      "category": "attack-scope-drift",
+      "description": "V3-1 variant: tier escalation via signer-hop — narrow tier-2 key used for tier-3 mandate",
+      "input": {
+        "delegation_chain": [
+          {"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 5, "max_budget": {"actions": 10000, "tokens": 1000000}, "max_exp_seconds": 86400, "allowed_verbs": ["*"], "allowed_resource_kinds": ["*"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true},
+          {"parent_key": "K_cust_ops_pk_TEST", "child_key": "K_cust_mandate_T2_pk", "child_role": "mandate_signer", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 2, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["*"], "allowed_resource_kinds": ["*"]}, "valid_from": 1711900000, "valid_until": 1712500000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 1, "require_hsm_evidence": false}, "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}
+        ],
+        "mandate": {"mandate_id": "01HTMANDATE060", "integration_ref": "k8s-prod", "cap": [{"verb": "delete", "resource_kind": "deployment", "resource_ref": "prod/critical", "tier": 3}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "Destructive op", "operator_id": "attacker@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_mandate_T2_pk", "signed_by": "K_cust_mandate_T2_pk", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "scope-tier-exceeded"},
+      "rationale": "Tier-2-scoped key used to sign Tier-3 mandate. §7.3 tier row. Different form of V3-1: escalation not by integration but by tier.",
+      "redteam_refs": ["V3-1"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-061",
+      "category": "attack-scope-drift",
+      "description": "V3-1 variant: budget expansion via sibling chain",
+      "input": {
+        "delegation_chain": [
+          {"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 5, "max_budget": {"actions": 10000, "tokens": 1000000}, "max_exp_seconds": 86400, "allowed_verbs": ["*"], "allowed_resource_kinds": ["*"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true},
+          {"parent_key": "K_cust_ops_pk_TEST", "child_key": "K_cust_mandate_SMALL_pk", "child_role": "mandate_signer", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 10, "tokens": 1000}, "max_exp_seconds": 14400, "allowed_verbs": ["*"], "allowed_resource_kinds": ["*"]}, "valid_from": 1711900000, "valid_until": 1712500000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 1, "require_hsm_evidence": false}, "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}
+        ],
+        "mandate": {"mandate_id": "01HTMANDATE061", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "x", "tier": 2}], "budget": {"actions": 1000, "tokens": 100000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "x", "operator_id": "attacker@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_mandate_SMALL_pk", "signed_by": "K_cust_mandate_SMALL_pk", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "scope-budget-exceeded"},
+      "rationale": "Attacker with narrow-budget key tries to sign wide-budget mandate. Both actions (1000 > 10) and tokens (100000 > 1000) exceed.",
+      "redteam_refs": ["V3-1"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-062",
+      "category": "attack-scope-drift",
+      "description": "V3-1 variant: expiry elongation attack — short-lived key signs long-lived mandate",
+      "input": {
+        "delegation_chain": [
+          {"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 5, "max_budget": {"actions": 10000, "tokens": 1000000}, "max_exp_seconds": 86400, "allowed_verbs": ["*"], "allowed_resource_kinds": ["*"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true},
+          {"parent_key": "K_cust_ops_pk_TEST", "child_key": "K_cust_mandate_SHORT_pk", "child_role": "mandate_signer", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 300, "allowed_verbs": ["*"], "allowed_resource_kinds": ["*"]}, "valid_from": 1711900000, "valid_until": 1712500000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 1, "require_hsm_evidence": false}, "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}
+        ],
+        "mandate": {"mandate_id": "01HTMANDATE062", "integration_ref": "k8s-prod", "cap": [{"verb": "patch", "resource_kind": "deployment", "resource_ref": "x", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712014400, "min_tariff_version": 5, "purpose": "x", "operator_id": "attacker@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_mandate_SHORT_pk", "signed_by": "K_cust_mandate_SHORT_pk", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "scope-expiry-too-long"},
+      "rationale": "14400 > 300. Attacker with 5-minute-scoped key tries to sign 4-hour mandate. Escalates damage-window.",
+      "redteam_refs": ["V3-1"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-063",
+      "category": "attack-scope-drift",
+      "description": "V3-1 variant: verb allowlist bypass — scope allows only read verbs, mandate requests write",
+      "input": {
+        "delegation_chain": [
+          {"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 5, "max_budget": {"actions": 10000, "tokens": 1000000}, "max_exp_seconds": 86400, "allowed_verbs": ["*"], "allowed_resource_kinds": ["*"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true},
+          {"parent_key": "K_cust_ops_pk_TEST", "child_key": "K_cust_mandate_READ_pk", "child_role": "mandate_signer", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["get", "list", "watch"], "allowed_resource_kinds": ["*"]}, "valid_from": 1711900000, "valid_until": 1712500000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 1, "require_hsm_evidence": false}, "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}
+        ],
+        "mandate": {"mandate_id": "01HTMANDATE063", "integration_ref": "k8s-prod", "cap": [{"verb": "delete", "resource_kind": "deployment", "resource_ref": "prod/critical", "tier": 3}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "Destructive op", "operator_id": "attacker@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_mandate_READ_pk", "signed_by": "K_cust_mandate_READ_pk", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "scope-verb-forbidden"},
+      "rationale": "Read-only-scoped key used for destructive delete. High-impact V3-1 variant.",
+      "redteam_refs": ["V3-1"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-064",
+      "category": "attack-scope-drift",
+      "description": "V3-1 variant: resource-kind forgery — deployment-scoped key used for secret access",
+      "input": {
+        "delegation_chain": [
+          {"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod", "vault-prod"], "max_tier_signable": 5, "max_budget": {"actions": 10000, "tokens": 1000000}, "max_exp_seconds": 86400, "allowed_verbs": ["*"], "allowed_resource_kinds": ["*"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true},
+          {"parent_key": "K_cust_ops_pk_TEST", "child_key": "K_cust_mandate_DEPLOY_pk", "child_role": "mandate_signer", "scope": {"integrations": ["k8s-prod", "vault-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["*"], "allowed_resource_kinds": ["deployment", "service"]}, "valid_from": 1711900000, "valid_until": 1712500000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 1, "require_hsm_evidence": false}, "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}
+        ],
+        "mandate": {"mandate_id": "01HTMANDATE064", "integration_ref": "vault-prod", "cap": [{"verb": "read", "resource_kind": "secret", "resource_ref": "prod/db-creds", "tier": 2}], "budget": {"actions": 5, "tokens": 1000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "Exfil", "operator_id": "attacker@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_mandate_DEPLOY_pk", "signed_by": "K_cust_mandate_DEPLOY_pk", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": []}
+      },
+      "expected": {"outcome": "reject", "reject_code": "scope-resource-kind-forbidden"},
+      "rationale": "Key scoped to {deployment, service} used for secret. Integration_ref permits both, but resource_kind doesn't. Fine-grained V3-1 defense.",
+      "redteam_refs": ["V3-1"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-065",
+      "category": "invalid-narrowness-rule",
+      "description": "§3.1 Layer 1 narrowness-rule: mandate has wildcard '*' in cap.verb but budget.actions=100 exceeds narrowness_threshold default of 20.",
+      "input": {
+        "delegation_chain": [
+          {"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 5, "max_budget": {"actions": 10000, "tokens": 1000000}, "max_exp_seconds": 86400, "allowed_verbs": ["*"], "allowed_resource_kinds": ["*"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true},
+          {"parent_key": "K_cust_ops_pk_TEST", "child_key": "K_cust_mandate_WILD_pk", "child_role": "mandate_signer", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 200, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["*"], "allowed_resource_kinds": ["*"]}, "valid_from": 1711900000, "valid_until": 1712500000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 1, "require_hsm_evidence": false}, "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}
+        ],
+        "mandate": {"mandate_id": "01HTMANDATE065", "integration_ref": "k8s-prod", "cap": [{"verb": "*", "resource_kind": "pod", "resource_ref": "ns/app/*", "tier": 2}], "budget": {"actions": 100, "tokens": 10000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "Broad cleanup", "operator_id": "ops@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_mandate_WILD_pk", "signed_by": "K_cust_mandate_WILD_pk", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": [], "narrowness_threshold": 20}
+      },
+      "expected": {"outcome": "reject", "reject_code": "narrowness-rule-violation"},
+      "rationale": "design-final.md §3.1 Layer 1: wildcard '*' in cap.verb requires budget.actions ≤ narrowness_threshold (default 20). 100 > 20 → reject. This check is at mandate acceptance, distinct from the §7.3 scope-match table (which only verifies against delegation). V3-1+R2-CROSS-TIER-AGGREGATION defense; narrow-or-broad-not-both principle.",
+      "redteam_refs": ["V3-1", "R2-CROSS-TIER-AGGREGATION"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-066",
+      "category": "invalid-narrowness-rule",
+      "description": "§3.1 narrowness-rule: cap.resource_ref is wildcard 'ns/*/*' but budget.actions=50 exceeds narrowness_threshold 20.",
+      "input": {
+        "delegation_chain": [
+          {"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 5, "max_budget": {"actions": 10000, "tokens": 1000000}, "max_exp_seconds": 86400, "allowed_verbs": ["*"], "allowed_resource_kinds": ["*"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true},
+          {"parent_key": "K_cust_ops_pk_TEST", "child_key": "K_cust_mandate_BROAD_pk", "child_role": "mandate_signer", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 500, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["delete"], "allowed_resource_kinds": ["pod"]}, "valid_from": 1711900000, "valid_until": 1712500000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 1, "require_hsm_evidence": false}, "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}
+        ],
+        "mandate": {"mandate_id": "01HTMANDATE066", "integration_ref": "k8s-prod", "cap": [{"verb": "delete", "resource_kind": "pod", "resource_ref": "ns/*/*", "tier": 2}], "budget": {"actions": 50, "tokens": 5000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "Clean all pods", "operator_id": "ops@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_mandate_BROAD_pk", "signed_by": "K_cust_mandate_BROAD_pk", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": [], "narrowness_threshold": 20}
+      },
+      "expected": {"outcome": "reject", "reject_code": "narrowness-rule-violation"},
+      "rationale": "§3.1: wildcard in any position of cap (verb, resource_kind, or resource_ref) triggers the narrowness budget cap. resource_ref='ns/*/*' matches all namespaces + all pods — broad → budget.actions must ≤ 20. 50 > 20 → reject. Defense against a single-mandate cluster-wide pod delete (aggregation to Tier 4+).",
+      "redteam_refs": ["V3-1", "R2-CROSS-TIER-AGGREGATION"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "ds-067",
+      "category": "valid-narrowness-rule-boundary",
+      "description": "§3.1 boundary: wildcard verb with budget.actions exactly at narrowness_threshold (20) — accepts.",
+      "input": {
+        "delegation_chain": [
+          {"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 5, "max_budget": {"actions": 10000, "tokens": 1000000}, "max_exp_seconds": 86400, "allowed_verbs": ["*"], "allowed_resource_kinds": ["*"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true},
+          {"parent_key": "K_cust_ops_pk_TEST", "child_key": "K_cust_mandate_BOUND_pk", "child_role": "mandate_signer", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 100, "tokens": 50000}, "max_exp_seconds": 14400, "allowed_verbs": ["*"], "allowed_resource_kinds": ["pod"]}, "valid_from": 1711900000, "valid_until": 1712500000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 1, "require_hsm_evidence": false}, "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}
+        ],
+        "mandate": {"mandate_id": "01HTMANDATE067", "integration_ref": "k8s-prod", "cap": [{"verb": "*", "resource_kind": "pod", "resource_ref": "ns/app/pod-x", "tier": 2}], "budget": {"actions": 20, "tokens": 2000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "Single-pod ops", "operator_id": "ops@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_mandate_BOUND_pk", "signed_by": "K_cust_mandate_BOUND_pk", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": [], "narrowness_threshold": 20}
+      },
+      "expected": {"outcome": "accept"},
+      "rationale": "§3.1 boundary: budget.actions=20 equals narrowness_threshold=20. Spec says ≤ threshold, so equality accepts. Pairs with ds-065 for ≤-vs-< disambiguation; drives spec precision on boundary inclusivity.",
+      "redteam_refs": ["V3-1"],
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "ds-068",
+      "category": "valid-narrowness-rule-not-triggered",
+      "description": "§3.1 narrowness: no wildcard anywhere in cap, but budget.actions is very high. Narrowness rule does NOT fire because cap is fully-qualified.",
+      "input": {
+        "delegation_chain": [
+          {"parent_key": "K_cust_root_pk_TEST", "child_key": "K_cust_ops_pk_TEST", "child_role": "ops", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 5, "max_budget": {"actions": 10000, "tokens": 1000000}, "max_exp_seconds": 86400, "allowed_verbs": ["*"], "allowed_resource_kinds": ["*"]}, "valid_from": 1700000000, "valid_until": 2000000000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 2, "require_hsm_evidence": true}, "signed_by": "K_cust_root_pk_TEST", "signature_valid": true},
+          {"parent_key": "K_cust_ops_pk_TEST", "child_key": "K_cust_mandate_NARROW_pk", "child_role": "mandate_signer", "scope": {"integrations": ["k8s-prod"], "max_tier_signable": 3, "max_budget": {"actions": 5000, "tokens": 500000}, "max_exp_seconds": 14400, "allowed_verbs": ["get", "list"], "allowed_resource_kinds": ["pod"]}, "valid_from": 1711900000, "valid_until": 1712500000, "revocation_channel": "x", "issuer_constraints": {"min_signers": 1, "require_hsm_evidence": false}, "signed_by": "K_cust_ops_pk_TEST", "signature_valid": true}
+        ],
+        "mandate": {"mandate_id": "01HTMANDATE068", "integration_ref": "k8s-prod", "cap": [{"verb": "get", "resource_kind": "pod", "resource_ref": "ns/app/pod-x", "tier": 0}], "budget": {"actions": 1000, "tokens": 100000}, "issued_at": 1712000000, "exp": 1712003600, "min_tariff_version": 5, "purpose": "Heavy polling", "operator_id": "ops@acme", "revocation_channel_ref": "x", "signer_key_hint": "K_cust_mandate_NARROW_pk", "signed_by": "K_cust_mandate_NARROW_pk", "signature_valid": true}, "context": {"current_tariff_version": 5, "current_time": 1712000000, "revocation_list": [], "narrowness_threshold": 20}
+      },
+      "expected": {"outcome": "accept"},
+      "rationale": "§3.1 applies only when cap contains wildcard. Fully-qualified cap (verb=get, resource_kind=pod, resource_ref=specific-pod) may have any budget within delegation's max_budget. 1000 ≤ 5000 delegation cap → accepts. Distinguishes §3.1 narrowness from §7.3 budget-subsumption.",
+      "redteam_refs": ["V3-1"],
+      "severity_if_failed": "high"
+    }
+  ]
+}

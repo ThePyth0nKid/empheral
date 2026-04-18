@@ -1,0 +1,1322 @@
+{
+  "schema_version": "1.0.0",
+  "vector_suite": "pcr-attestation-reject",
+  "spec_reference": "design-final.md §9.3, §9.4",
+  "spec_version": "round6-final",
+  "generated_at": "2026-04-18T12:45:00Z",
+  "coverage_summary": {
+    "quorum-short-by-one": 2,
+    "quorum-short-majority-missing": 1,
+    "quorum-all-missing": 1,
+    "quorum-wrong-count": 1,
+    "quorum-threshold-zero-in-tariff": 1,
+    "attestor-not-in-trusted-list": 2,
+    "attestor-key-revoked": 1,
+    "attestor-key-not-yet-valid": 1,
+    "attestor-signature-invalid": 1,
+    "attestor-duplicate-in-bundle": 1,
+    "pcr-mismatch-minor-single-pcr": 2,
+    "pcr-mismatch-systematic-multiple-pcrs": 1,
+    "pcr-mismatch-subset-of-attestors-agree": 1,
+    "pcr-mismatch-one-attestor-all-zeros": 1,
+    "pcr-mismatch-expected-deviation-allowed": 1,
+    "transparency-log-missing-inclusion-proof": 2,
+    "transparency-log-invalid-proof": 1,
+    "transparency-log-stale-root": 1,
+    "transparency-log-unknown-log": 1,
+    "transparency-log-not-published-yet": 1,
+    "pcr-expected-mismatch-PCR8-payload": 2,
+    "pcr-expected-mismatch-PCR0-firmware": 1,
+    "pcr-expected-mismatch-PCR4-kernel": 1,
+    "pcr-expected-match-but-stale-tariff-expected-hash": 1,
+    "pcr-expected-missing-in-tariff": 1,
+    "bundle-malformed-cbor": 1,
+    "bundle-missing-required-field": 2,
+    "bundle-unknown-additional-fields": 1,
+    "bundle-incorrect-pcr-indexing": 1,
+    "attestation-too-old": 2,
+    "attestation-in-future": 1,
+    "attestation-predates-tariff": 1,
+    "attestation-nonce-reuse": 1,
+    "adversary-replayed-old-attestation": 1,
+    "adversary-attestation-bundle-for-different-nonce": 1,
+    "adversary-pcr-rehydration-attack": 1,
+    "adversary-signed-by-stolen-attestor-key": 1,
+    "adversary-transparency-log-split-view": 1,
+    "empty-bundle": 1,
+    "enormous-bundle": 1,
+    "bundle-with-one-attestor-quorum-one": 1,
+    "bundle-attestor-list-order-matters": 1
+  },
+  "notes": "Defends V3-3 REPRODUCIBLE-BUILD VERIFICATION GAP. Cryptographic content represented as placeholders with explicit boolean 'signature_valid' / 'inclusion_proof_valid' flags to keep vectors runnable without live crypto. PCR values are SHA-256 hex digest placeholders; the SEMANTIC relationship (match/mismatch) is what matters, not the specific bytes. SPEC AMBIGUITIES FLAGGED: (1) §9.4 does not explicitly state which PCR indices are normative for the Signer image hash — this suite assumes PCR8 = enclave application hash, PCR0 = boot firmware, PCR4 = kernel, consistent with AWS Nitro and TPM 2.0 convention; reference implementation should make this explicit. (2) §9.4 does not define the maximum age of a transparency-log signed tree head (STH) — this suite assumes a 24h policy default, matching common CT/Rekor practice. (3) §9.4 mentions 'transparency-log inclusion proofs' but does not name the specific log(s) or how the 'trusted log set' is pinned — assumed to be a Tariff field `trusted_transparency_logs`. (4) §9.4 does not explicitly require nonce freshness from the Router to prevent replay of a valid-but-old attestation — this suite treats nonce binding as mandatory. (5) §9.4 does not bound bundle size; a pcr-bundle-too-large code is introduced defensively. (6) The 'split view' attack (adversary-transparency-log-split-view) is detectable only with witness cosignatures or gossip protocols; the spec should reference CT-style witnessing. NEW REJECT CODES INTRODUCED BEYOND README.md: `tariff-pcr-quorum-invalid`, `pcr-attestor-not-trusted`, `pcr-attestor-revoked`, `pcr-attestor-not-yet-valid`, `pcr-attestor-signature-invalid`, `pcr-attestor-duplicate`, `pcr-attestation-transparency-invalid`, `pcr-attestation-transparency-stale`, `pcr-attestation-transparency-log-unknown`, `pcr-attestation-transparency-not-yet-logged`, `pcr-expected-mismatch`, `pcr-bundle-malformed`, `pcr-bundle-too-large`, `pcr-attestation-expired`, `pcr-attestation-future-dated`, `pcr-attestation-predates-tariff`, `pcr-attestation-nonce-reuse`, `pcr-attestation-nonce-mismatch`. Router impl MUST emit exactly the `reject_code` in `expected.reject_code`; additional detail via a separate `reject_detail` field is acceptable but not required by the suite.",
+  "vectors": [
+    {
+      "id": "pcrrej-001",
+      "category": "quorum-short-by-one",
+      "description": "Tariff requires 3-of-5 quorum but bundle has only 2 valid attestor signatures.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3", "A4", "A5"],
+          "quorum": 3,
+          "expected_pcrs": {"PCR0": "sha256:firmware-good", "PCR4": "sha256:kernel-good", "PCR8": "sha256:app-good"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:firmware-good", "PCR4": "sha256:kernel-good", "PCR8": "sha256:app-good"}, "iat": 1714521600, "nonce": "r1", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:firmware-good", "PCR4": "sha256:kernel-good", "PCR8": "sha256:app-good"}, "iat": 1714521610, "nonce": "r1", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 300}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r1"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestation-quorum-short"},
+      "rationale": "design-final.md §9.4: quorum of attestor signatures is mandatory before Signer image is trusted. 2 signatures fall short of threshold 3 → reject.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-002",
+      "category": "quorum-short-by-one",
+      "description": "Tariff requires 2-of-3 but bundle has only 1 valid attestor signature.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521600, "nonce": "r2", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 500}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r2"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestation-quorum-short"},
+      "rationale": "2-of-3 quorum with only 1 signature present. Classic off-by-one defense. §9.4.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-003",
+      "category": "quorum-short-majority-missing",
+      "description": "Tariff requires 3-of-5 but only 1 attestor signed.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3", "A4", "A5"],
+          "quorum": 3,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521600, "nonce": "r3", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 1000}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r3"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestation-quorum-short"},
+      "rationale": "Majority missing. Single attestor cannot satisfy multi-party attestation requirement. §9.4.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-004",
+      "category": "quorum-all-missing",
+      "description": "Empty attestations array; bundle structurally present but zero signatures.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r4"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestation-quorum-short"},
+      "rationale": "Zero signatures trivially fails any positive quorum. §9.4. Edge case ensures no division-by-zero or empty-list acceptance.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-005",
+      "category": "quorum-wrong-count",
+      "description": "Bundle header claims 3 signatures (attestor_count=3) but attestations array contains only 2 entries.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 3,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "declared_attestor_count": 3,
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521600, "nonce": "r5", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521610, "nonce": "r5", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r5"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestation-quorum-short"},
+      "rationale": "Router MUST count actual valid signatures, not the declared count. Declared count is an adversary-controllable hint. §9.4.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-006",
+      "category": "quorum-threshold-zero-in-tariff",
+      "description": "Tariff declares quorum=0. Edge: no attestation required would defeat the whole mechanism.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 0,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521600, "nonce": "r6", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r6"
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-pcr-quorum-invalid"},
+      "rationale": "Harden Router against malicious or buggy Tariff with quorum=0. §9.4 implies positive quorum (minimum 1, spec recommends ≥2 per §2.2 'min 3; quorum 2-of-3'). Router must reject the Tariff state at Tariff load, surfacing the error at attestation-use time for this suite.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-007",
+      "category": "attestor-not-in-trusted-list",
+      "description": "Attestation signed by attestor 'A99' not present in Tariff's pcr_attestors list.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521600, "nonce": "r7", "signature_valid": true},
+            {"attestor_id": "A99", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521610, "nonce": "r7", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r7"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestor-not-trusted"},
+      "rationale": "§9.4: only Tariff-declared attestors count toward quorum. Rogue attestor cannot bootstrap trust. V3-3: prevents adversary from adding controlled attestor.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-008",
+      "category": "attestor-not-in-trusted-list",
+      "description": "All attestations from unknown attestors; none match Tariff's pcr_attestors list.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "X1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521600, "nonce": "r8", "signature_valid": true},
+            {"attestor_id": "X2", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521610, "nonce": "r8", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r8"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestor-not-trusted"},
+      "rationale": "Entire bundle from attestors not in Tariff trust list. §9.4. Quorum may superficially look met but none count.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-009",
+      "category": "attestor-key-revoked",
+      "description": "Attestor A2's key was valid at Tariff publish but has since been revoked via revocation_channel.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521600, "nonce": "r9", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521610, "nonce": "r9", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r9",
+        "revocation_list": [{"attestor_id": "A2", "revoked_at": 1714500000}]
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestor-revoked"},
+      "rationale": "§8.1 revocation push semantics extended to attestor keys. Revoked attestor must not count toward quorum. Without A2, only 1-of-3 remains → quorum short, but the PRIMARY reason is revocation and must be surfaced as such.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-010",
+      "category": "attestor-key-not-yet-valid",
+      "description": "Attestor key's not_before is in the future relative to attestation iat.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "attestor_validity": {"A2": {"not_before": 1714530000, "not_after": 1800000000}}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521600, "nonce": "r10", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521610, "nonce": "r10", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r10"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestor-not-yet-valid"},
+      "rationale": "Attestor A2 iat (1714521610) < not_before (1714530000). Attestation predates key validity. Mirrors §7.2 validity-window semantics.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "pcrrej-011",
+      "category": "attestor-signature-invalid",
+      "description": "Attestor A2's signature fails verification against its declared public key.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521600, "nonce": "r11", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521610, "nonce": "r11", "signature_valid": false}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r11"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestor-signature-invalid"},
+      "rationale": "Invalid signature must not count. Remaining 1 valid signature below quorum threshold 2. Router MUST surface the signature-invalid state (not a generic quorum-short) for forensic clarity.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-012",
+      "category": "attestor-duplicate-in-bundle",
+      "description": "Attestor A1 appears twice in the attestations array to inflate apparent quorum.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521600, "nonce": "r12", "signature_valid": true},
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521700, "nonce": "r12", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r12"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestor-duplicate"},
+      "rationale": "§9.4 quorum is set-cardinality of distinct attestors, not list length. Sybil-within-bundle must be detected explicitly. V3-3 hardening.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-013",
+      "category": "pcr-mismatch-minor-single-pcr",
+      "description": "A1 and A2 agree on PCR0 and PCR4 but disagree on PCR8 (application hash).",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app-A"}, "iat": 1714521600, "nonce": "r13", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app-B"}, "iat": 1714521610, "nonce": "r13", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r13"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestation-mismatch"},
+      "rationale": "§9.4: 'any attestor whose computed PCR differs from Tariff's claimed value invalidates the entire attestation'. Cross-attestor PCR8 divergence → reject, even though quorum count is met.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-014",
+      "category": "pcr-mismatch-minor-single-pcr",
+      "description": "Three attestors signed; A3 reports PCR4 != other two's PCR4.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 3,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521600, "nonce": "r14", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521610, "nonce": "r14", "signature_valid": true},
+            {"attestor_id": "A3", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k-different", "PCR8": "sha256:app"}, "iat": 1714521620, "nonce": "r14", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r14"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestation-mismatch"},
+      "rationale": "Mismatch on kernel PCR across attestors. Even single-attestor divergence invalidates the bundle. §9.4.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-015",
+      "category": "pcr-mismatch-systematic-multiple-pcrs",
+      "description": "Attestors A1 and A2 disagree on PCR0, PCR4, AND PCR8. Suggests one is running a different image entirely.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw-v1", "PCR4": "sha256:k-v1", "PCR8": "sha256:app-v1"}, "iat": 1714521600, "nonce": "r15", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw-v2", "PCR4": "sha256:k-v2", "PCR8": "sha256:app-v2"}, "iat": 1714521610, "nonce": "r15", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r15"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestation-mismatch"},
+      "rationale": "Systematic divergence across all PCRs → attestors are not measuring the same artifact. High-confidence indicator of compromised or misconfigured attestor pipeline. §9.4.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-016",
+      "category": "pcr-mismatch-subset-of-attestors-agree",
+      "description": "4-of-5 attestors split 2-2 on PCR8: {A1,A2} agree on one hash, {A3,A4} on another. No single value has quorum.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3", "A4", "A5"],
+          "quorum": 3,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app-X"}, "iat": 1714521600, "nonce": "r16", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app-X"}, "iat": 1714521610, "nonce": "r16", "signature_valid": true},
+            {"attestor_id": "A3", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app-Y"}, "iat": 1714521620, "nonce": "r16", "signature_valid": true},
+            {"attestor_id": "A4", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app-Y"}, "iat": 1714521630, "nonce": "r16", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r16"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestation-mismatch"},
+      "rationale": "Split PCR values, no single value backed by quorum. Split-brain attestation → reject. Router MUST NOT choose majority-of-majority; unanimous agreement across present attestors is required per §9.4.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-017",
+      "category": "pcr-mismatch-one-attestor-all-zeros",
+      "description": "A3 returns all-zero PCRs (misconfigured attestor not actually measuring).",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 3,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521600, "nonce": "r17", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521610, "nonce": "r17", "signature_valid": true},
+            {"attestor_id": "A3", "pcrs": {"PCR0": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "PCR4": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "PCR8": "sha256:0000000000000000000000000000000000000000000000000000000000000000"}, "iat": 1714521620, "nonce": "r17", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r17"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestation-mismatch"},
+      "rationale": "All-zero PCRs indicate unreset TPM or bypassed measurement — never a valid measurement for a loaded enclave. §9.4 unanimous-match invariant broken.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-018",
+      "category": "pcr-mismatch-expected-deviation-allowed",
+      "description": "PCR0 (boot firmware) differs across two Nitro instances (A1 vs A2) but PCR8 matches. Open spec question: is firmware-level difference tolerated? This suite treats any PCR divergence as reject pending spec clarification.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw-hostA", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521600, "nonce": "r18", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw-hostB", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521610, "nonce": "r18", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r18"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestation-mismatch"},
+      "rationale": "OPEN SPEC QUESTION flagged in notes: §9.4 says 'independently computed matching PCRs' without per-PCR-index tolerance. In real Nitro Enclaves, PCR0 can legitimately differ across hosts. Reference implementation must specify which PCR indices are normative. This suite errs on reject (conservative) until spec clarifies.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "pcrrej-019",
+      "category": "transparency-log-missing-inclusion-proof",
+      "description": "Attestor signatures present but transparency_log_proof field is absent.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521600, "nonce": "r19", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521610, "nonce": "r19", "signature_valid": true}
+          ]
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r19"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestation-transparency-missing"},
+      "rationale": "§9.4: 'Transparency-log inclusion proofs' is a mandatory field. Absence defeats the public-auditability property that distinguishes automated attestation from rubber-stamp attestation.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-020",
+      "category": "transparency-log-missing-inclusion-proof",
+      "description": "Transparency_log_proof object present but inclusion_proof field itself is null/empty.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521600, "nonce": "r20", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521610, "nonce": "r20", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof": null, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r20"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestation-transparency-missing"},
+      "rationale": "Empty inclusion_proof is equivalent to missing. Parser must not silently accept nulls.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-021",
+      "category": "transparency-log-invalid-proof",
+      "description": "Inclusion proof present but does not verify against declared log root.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521600, "nonce": "r21", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521610, "nonce": "r21", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": false, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r21"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestation-transparency-invalid"},
+      "rationale": "Proof fails Merkle verification. Attestation is not actually in the log; public auditability broken. §9.4.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-022",
+      "category": "transparency-log-stale-root",
+      "description": "Inclusion proof verifies, but log root is older than policy (root_age_seconds > 86400, i.e., >24h).",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "transparency_log_max_root_age_seconds": 86400
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521600, "nonce": "r22", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521610, "nonce": "r22", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 172800}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r22"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestation-transparency-stale"},
+      "rationale": "Stale root enables freeze attacks where adversary isolates Router from fresh log state. Policy default 24h chosen to match CT/Rekor defaults. Spec §9.4 should pin this explicitly.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "pcrrej-023",
+      "category": "transparency-log-unknown-log",
+      "description": "Proof references log_id 'rogue-log-v1' not in Tariff's trusted_transparency_logs set.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "trusted_transparency_logs": ["rekor-v1", "sigstore-prod"]
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521600, "nonce": "r23", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521610, "nonce": "r23", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rogue-log-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r23"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestation-transparency-log-unknown"},
+      "rationale": "Adversary stands up their own log and serves proofs against it. Tariff MUST pin trusted log set. §9.4 + trusted-log enumeration.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-024",
+      "category": "transparency-log-not-published-yet",
+      "description": "Log reports entry submitted but latest signed tree head does not yet cover it.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521600, "nonce": "r24", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521610, "nonce": "r24", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "entry_index": 98765, "sth_tree_size": 50000, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r24"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestation-transparency-not-yet-logged"},
+      "rationale": "entry_index (98765) > sth_tree_size (50000). Entry exists only in unlogged/promise state; not publicly auditable yet. Mirrors CT SCT-vs-STH distinction.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "pcrrej-025",
+      "category": "pcr-expected-mismatch-PCR8-payload",
+      "description": "Attestors unanimously agree on PCR8 value, but that value does not match Tariff's expected_pcrs.PCR8.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app-EXPECTED"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app-ACTUAL"}, "iat": 1714521600, "nonce": "r25", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app-ACTUAL"}, "iat": 1714521610, "nonce": "r25", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r25"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-expected-mismatch"},
+      "rationale": "Attestors agree but agreed-on value is NOT what Tariff declares. Reproducible build verification: the image the attestors built is not the image the Tariff authorizes. §9.3 + §9.4.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-026",
+      "category": "pcr-expected-mismatch-PCR8-payload",
+      "description": "Attestors agree on PCR8 but it differs from Tariff's expected_pcrs.PCR8 by a single byte.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:aabbccddeeff00112233445566778899aabbccddeeff0011223344556677889a"}, "iat": 1714521600, "nonce": "r26", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:aabbccddeeff00112233445566778899aabbccddeeff0011223344556677889a"}, "iat": 1714521610, "nonce": "r26", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r26"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-expected-mismatch"},
+      "rationale": "One-bit flip must reject. Cryptographic hash comparison is not fuzzy. §9.4.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-027",
+      "category": "pcr-expected-mismatch-PCR0-firmware",
+      "description": "PCR0 (boot firmware) hash not in approved set.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw-approved", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw-unapproved", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521600, "nonce": "r27", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw-unapproved", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521610, "nonce": "r27", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r27"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-expected-mismatch"},
+      "rationale": "Boot-chain divergence → host is untrusted even if application layer matches. Defense against TOCTOU between measurement layers. §9.4.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-028",
+      "category": "pcr-expected-mismatch-PCR4-kernel",
+      "description": "PCR4 (kernel measurement) deviation.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k-approved", "PCR8": "sha256:app"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k-backdoored", "PCR8": "sha256:app"}, "iat": 1714521600, "nonce": "r28", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k-backdoored", "PCR8": "sha256:app"}, "iat": 1714521610, "nonce": "r28", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r28"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-expected-mismatch"},
+      "rationale": "Kernel swap with backdoored variant. Even if application PCR8 matches, untrusted kernel voids guarantees. §9.4.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-029",
+      "category": "pcr-expected-match-but-stale-tariff-expected-hash",
+      "description": "Attestation matches old Tariff v4's expected_pcrs but a newer Tariff v5 is active with different expected_pcrs.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "version": 5,
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app-v5"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "target_tariff_version": 4,
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app-v4"}, "iat": 1714521600, "nonce": "r29", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app-v4"}, "iat": 1714521610, "nonce": "r29", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r29"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-expected-mismatch"},
+      "rationale": "§10.3: Tariff version monotonically increases; latest pinned Tariff is authoritative. Adversary cannot replay an old valid-for-old-Tariff attestation against current Tariff. V3-3 + V3-7 combined defense.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-030",
+      "category": "pcr-expected-missing-in-tariff",
+      "description": "Tariff has classifier_wasm_hash but no expected_pcrs field. Open spec question flagged.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "classifier_wasm_hash": "sha256:cccc"
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521600, "nonce": "r30", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521610, "nonce": "r30", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r30"
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-pcr-quorum-invalid"},
+      "rationale": "OPEN SPEC QUESTION: §2.2 lists `signer_image_pcr_set` as a top-level Tariff field. If absent, the Tariff is malformed and must fail-closed. Router cannot verify arbitrary PCRs against an undefined expectation. Fail closed > fail open.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-031",
+      "category": "bundle-malformed-cbor",
+      "description": "Bundle bytes do not decode as valid CBOR.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+        },
+        "attestation_bundle_raw_hex": "ff7f80deadbeefcafebabe00",
+        "current_time": 1714525200,
+        "router_nonce_issued": "r31"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-bundle-malformed"},
+      "rationale": "Decoder must fail closed on malformed CBOR. Implementers: DO NOT attempt lenient parsing. RFC 8949 §4.2 deterministic-decoding compliance.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "pcrrej-032",
+      "category": "bundle-missing-required-field",
+      "description": "Attestation entry missing attestor_id field.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521600, "nonce": "r32", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521610, "nonce": "r32", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r32"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-bundle-malformed"},
+      "rationale": "Schema requires attestor_id to bind signature to claimed identity. Missing → parse failure. §9.4.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "pcrrej-033",
+      "category": "bundle-missing-required-field",
+      "description": "Attestation entry missing iat timestamp field.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "nonce": "r33", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521610, "nonce": "r33", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r33"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-bundle-malformed"},
+      "rationale": "Without iat, freshness check is impossible. Missing required timestamp → malformed. §9.4.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "pcrrej-034",
+      "category": "bundle-unknown-additional-fields",
+      "description": "Bundle contains an unknown field 'attestor_comment' in strict-mode decoding.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "strict_mode": true
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521600, "nonce": "r34", "signature_valid": true, "attestor_comment": "ignore me"},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521610, "nonce": "r34", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r34"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-bundle-malformed"},
+      "rationale": "Strict-mode rejects unknown fields to prevent smuggling channels and ensure forward-compat requires explicit versioning. Matches schema.json additionalProperties:false practice. §9.4.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "pcrrej-035",
+      "category": "bundle-incorrect-pcr-indexing",
+      "description": "Bundle reports PCR99 (out of the TPM 2.0 index range [0,23]).",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app", "PCR99": "sha256:extra"}, "iat": 1714521600, "nonce": "r35", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521610, "nonce": "r35", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r35"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-bundle-malformed"},
+      "rationale": "TPM 2.0 PCR indices are [0,23]; Nitro exposes [0,15]. PCR99 is structurally impossible and a red flag for custom injection. §9.4.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "pcrrej-036",
+      "category": "attestation-too-old",
+      "description": "Attestation iat is 48 hours before current_time; policy default is 24h.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "attestation_max_age_seconds": 86400
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714352400, "nonce": "r36", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714352410, "nonce": "r36", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r36"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestation-expired"},
+      "rationale": "Stale attestation could predate a known compromise or revocation. Freshness window analogous to §5.1 mandate exp. Spec should formalize attestation_max_age.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "pcrrej-037",
+      "category": "attestation-too-old",
+      "description": "Attestation iat is exactly at the 24h boundary — boundary condition test.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "attestation_max_age_seconds": 86400
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714438799, "nonce": "r37", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714438700, "nonce": "r37", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r37"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestation-expired"},
+      "rationale": "1714525200 - 1714438700 = 86500 > 86400 by 100 seconds. Boundary-sensitive check. Inclusive lower bound is accept; exceeding limit by any amount rejects.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "pcrrej-038",
+      "category": "attestation-in-future",
+      "description": "Attestation iat is in the future relative to Router's current_time (clock skew or forgery).",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714611600, "nonce": "r38", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714611700, "nonce": "r38", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r38"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestation-future-dated"},
+      "rationale": "iat 24h in future of Router clock. Clock-skew tolerance typically ±60s; 24h is adversarial forgery. Reject to prevent pre-signing attacks.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "pcrrej-039",
+      "category": "attestation-predates-tariff",
+      "description": "Attestation iat is BEFORE the Tariff's issued_at; the attestation cannot have attested this Tariff's image.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "issued_at": 1714400000,
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714000000, "nonce": "r39", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714000100, "nonce": "r39", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r39"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestation-predates-tariff"},
+      "rationale": "Temporal impossibility: attestation cannot have been made for an image described by a later Tariff. Even if PCRs happen to match, the causality chain is broken.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "pcrrej-040",
+      "category": "attestation-nonce-reuse",
+      "description": "Router nonce 'r40' was issued and consumed in a prior attestation cycle; attacker replays a bundle referencing it.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521600, "nonce": "r40", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521610, "nonce": "r40", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r40",
+        "router_nonce_consumed": ["r40"]
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestation-nonce-reuse"},
+      "rationale": "Replay defense. Nonces are single-use. OPEN SPEC QUESTION: §9.4 does not mandate nonce binding; reference implementation should specify single-use router-supplied nonces.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-041",
+      "category": "adversary-replayed-old-attestation",
+      "description": "Adversary replays a valid-looking attestation from 6 months ago when Signer image was different.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "issued_at": 1714400000,
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app-current"},
+          "attestation_max_age_seconds": 86400
+        },
+        "attestation_bundle": {
+          "commit_hash": "old-abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app-stale"}, "iat": 1698681600, "nonce": "ancient-nonce", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app-stale"}, "iat": 1698681700, "nonce": "ancient-nonce", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r41"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestation-expired"},
+      "rationale": "Classical replay. Both freshness AND nonce-match would reject; expired fires first by convention. V3-3 adversary scenario.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-042",
+      "category": "adversary-attestation-bundle-for-different-nonce",
+      "description": "Attestation nonce 'other-nonce' was never issued by this Router.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521600, "nonce": "other-nonce", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521610, "nonce": "other-nonce", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r42"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestation-nonce-mismatch"},
+      "rationale": "Attestation bound to nonce never issued. Could be a captured attestation for another Router instance or a fabricated one. Nonce-match is mandatory channel binding.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-043",
+      "category": "adversary-pcr-rehydration-attack",
+      "description": "Attestor reports PCRs that match Tariff expected values perfectly, but attestors disagree — one attestor is lying (faking PCRs from a non-TPM source) while others report truthfully.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app-good"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app-good"}, "iat": 1714521600, "nonce": "r43", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app-backdoor"}, "iat": 1714521610, "nonce": "r43", "signature_valid": true},
+            {"attestor_id": "A3", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app-backdoor"}, "iat": 1714521620, "nonce": "r43", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r43"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestation-mismatch"},
+      "rationale": "A1 lying (claiming the good PCR) cannot overcome A2+A3's truthful measurement of the actual (backdoored) image. Cross-attestor mismatch catches rehydration. If attackers fake in ALL attestors, only reproducible-build gap remains — but then transparency log + attestor diversity (different infra) raises bar.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-044",
+      "category": "adversary-signed-by-stolen-attestor-key",
+      "description": "Attacker compromises attestor A1's key and signs an attestation for a malicious image. Other attestors are honest and don't sign. Quorum=3 required; only 1 signature present.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3", "A4", "A5"],
+          "quorum": 3,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app-good"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "evil-abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app-evil"}, "iat": 1714521600, "nonce": "r44", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r44"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestation-quorum-short"},
+      "rationale": "Stolen single key cannot cross quorum threshold. Attacker also needed to compromise 2 more attestors to succeed — the structural defense of multi-party attestation. V3-3 core.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-045",
+      "category": "adversary-transparency-log-split-view",
+      "description": "Adversary serves Router a log root different from what honest clients see. Without witness cosignatures, detection is hard.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "required_witness_cosignatures": 2
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521600, "nonce": "r45", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521610, "nonce": "r45", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100, "witness_cosignatures": []}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r45"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestation-transparency-invalid"},
+      "rationale": "OPEN PROBLEM: split-view attacks on transparency logs are fundamentally hard without gossip/witness protocols. Spec should reference CT-style witness cosignatures (e.g., RFC 9162 §5.3) for full defense. This vector models a Tariff requiring witnesses; absence of them triggers transparency-invalid. Without witnesses, attack remains feasible for a strong adversary — flagged as residual.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "pcrrej-046",
+      "category": "empty-bundle",
+      "description": "Bundle is zero bytes.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+        },
+        "attestation_bundle_raw_hex": "",
+        "current_time": 1714525200,
+        "router_nonce_issued": "r46"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-bundle-malformed"},
+      "rationale": "Zero bytes is not valid CBOR. Trivially reject; defends against uninitialized-buffer-reads and garbage-in conditions.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "pcrrej-047",
+      "category": "enormous-bundle",
+      "description": "Bundle is 10MB of valid CBOR — DoS via decoder resource exhaustion.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 2,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "bundle_max_size_bytes": 1048576
+        },
+        "attestation_bundle_declared_size_bytes": 10485760,
+        "attestation_bundle_summary": "10MB payload composed of padding within attestations[].padding field",
+        "current_time": 1714525200,
+        "router_nonce_issued": "r47"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-bundle-too-large"},
+      "rationale": "Size ceiling (default 1MiB) prevents decoder DoS and parser-state-exhaustion attacks. Enforce BEFORE full CBOR decode. Spec-level default TBD.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "pcrrej-048",
+      "category": "bundle-with-one-attestor-quorum-one",
+      "description": "Tariff declares quorum=1 and bundle has 1 attestor. Format is valid but this effectively eliminates multi-party attestation.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 1,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestations": [
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521600, "nonce": "r48", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r48"
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-pcr-quorum-invalid"},
+      "rationale": "OPEN SPEC QUESTION: §2.2 states 'min 3; quorum 2-of-3' as the normative baseline. A quorum=1 Tariff superficially parses but defeats V3-3 multi-party defense. This suite rejects at the Tariff-validation layer. If spec permits quorum=1 for MV-0/MV-1 deployments, change expected to accept and narrow the reject code.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "pcrrej-049",
+      "category": "bundle-attestor-list-order-matters",
+      "description": "Same bundle content submitted twice: once with attestations [A1, A2, A3] and once with [A3, A2, A1]. Both must produce identical result. This vector documents the intended invariant (order-independence) via a successful-parse case then checks an alternative ordering expects the same reject reason for an unrelated defect so that order doesn't mask behavior.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": ["A1", "A2", "A3"],
+          "quorum": 3,
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+        },
+        "attestation_bundle": {
+          "commit_hash": "abc123",
+          "attestation_order": "reversed",
+          "attestations": [
+            {"attestor_id": "A3", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app-different"}, "iat": 1714521620, "nonce": "r49", "signature_valid": true},
+            {"attestor_id": "A2", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521610, "nonce": "r49", "signature_valid": true},
+            {"attestor_id": "A1", "pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}, "iat": 1714521600, "nonce": "r49", "signature_valid": true}
+          ],
+          "transparency_log_proof": {"log_id": "rekor-v1", "inclusion_proof_valid": true, "root_age_seconds": 100}
+        },
+        "current_time": 1714525200,
+        "router_nonce_issued": "r49"
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestation-mismatch"},
+      "rationale": "Same PCR mismatch must be detected regardless of attestation order. Implementations MUST NOT depend on input order for correctness (deterministic set semantics). Contrast with pcrrej-014 which has identical content in canonical order — same reject code.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "medium"
+    }
+  ]
+}

@@ -1,0 +1,1409 @@
+{
+  "schema_version": "1.0.0",
+  "vector_suite": "tariff-reject",
+  "spec_reference": "design-final.md §2.2, §3-§7",
+  "spec_version": "round6-final",
+  "generated_at": "2026-04-18T12:40:00Z",
+  "coverage_summary": {
+    "sig-invalid-payload-mutated": 2,
+    "sig-invalid-wrong-key": 3,
+    "sig-invalid-algorithm-unsupported": 2,
+    "sig-chain-broken-unsigned-root": 3,
+    "sig-chain-revoked-signer": 1,
+    "sig-cose-header-malformed": 2,
+    "version-below-previously-seen": 2,
+    "version-not-integer": 1,
+    "version-zero-or-negative": 2,
+    "version-skew-minimum-tariff-version": 1,
+    "version-missing": 1,
+    "expired-not_before-in-future": 1,
+    "expired-not_after-past": 2,
+    "expired-not_before-after-not_after": 1,
+    "expired-iat-after-not_before-gap-too-large": 1,
+    "expired-issued-in-future": 1,
+    "missing-minimum_tiers": 1,
+    "missing-classifier_wasm_hash": 1,
+    "missing-rate_matrix": 1,
+    "missing-pcr_attestors": 1,
+    "missing-classifier_fuzz_attestation": 1,
+    "extra-unrecognized-field": 1,
+    "wrong-type-minimum_tiers-array": 1,
+    "wrong-type-version-nested": 1,
+    "tier-out-of-range": 2,
+    "tier-negative": 1,
+    "rate_matrix-missing-tier": 1,
+    "wasm-hash-not-hex": 1,
+    "wasm-hash-not-in-attestation": 1,
+    "pcr-attestor-list-empty": 1,
+    "pcr-quorum-greater-than-attestors": 1,
+    "integration-unknown": 2,
+    "action-verb-invalid": 2,
+    "resource-kind-invalid": 2,
+    "alg-mismatched-key-type": 1,
+    "payload-not-canonical-cbor": 1,
+    "payload-cbor-non-deterministic": 1,
+    "kid-unknown": 1,
+    "redteam-OPCE-stale-tariff-replay": 1,
+    "redteam-BOOT-KEY-SUB-trust-anchor-mismatch": 1,
+    "redteam-PARAM-CANON-non-canonical-payload": 1,
+    "redteam-TARIFF-SIGNING-KEY-compromised-but-not-revoked": 1,
+    "redteam-V3-8-fuzz-attestation-missing": 1,
+    "redteam-V3-3-pcr-attestors-not-trusted-list": 1,
+    "edge-zero-actions": 1,
+    "edge-single-action": 1,
+    "edge-oversize": 1,
+    "edge-duplicate-entries": 1,
+    "edge-circular-reference": 1,
+    "edge-validity-period-exceeds-policy": 1,
+    "missing-revocation_channel_ha": 1,
+    "revocation_channel_ha-insufficient-redundancy": 1,
+    "revocation_channel_ha-multi-provider-violation-tier4": 1,
+    "revocation_channel_ha-admin-bypass-missing": 1
+  },
+  "notes": "Vectors describe malformed Tariffs that MUST be rejected at Router startup or on push-update (design-final.md §2.2, §10.3). The `tariff_cbor_hex` field uses placeholder descriptions; implementers generate real bytes locally from test fixtures. Every vector specifies a signature_verification_context capturing trust-anchor state so the test is self-contained. NEW reject codes introduced by this suite (extending README taxonomy): `signature-algorithm-unsupported`, `signature-algorithm-mismatch`, `signature-chain-broken` (already in README), `cose-malformed`, `kid-unknown`, `clock-skew-exceeded`, `not-yet-valid`, `tariff-malformed`, `tariff-tier-out-of-range`, `tariff-pcr-attestors-empty`, `tariff-pcr-quorum-invalid`, `tariff-fuzz-attestation-missing`, `tariff-fuzz-attestation-mismatch`, `tariff-integration-unknown`, `tariff-verb-invalid`, `tariff-resource-kind-invalid`, `tariff-validity-period-excessive`, `tariff-duplicate-entries`, `tariff-oversize`, `tariff-circular-reference`, `rate-matrix-incomplete`, `payload-encoding-invalid`, `payload-not-deterministic-cbor`, `pcr-attestor-not-trusted`, `tariff-self-inconsistent-version` (distinct from delegation-scope's `version-skew` — fires at Tariff load time on self-inconsistency, whereas `version-skew` fires at mandate acceptance time). trej-065..068 cover V3-6 `revocation_channel_ha` enforcement (§8.4 field requirements: presence, ≥2 secondary_endpoints, multi_provider=true for Tier 4+, admin_bypass_protocol present). AMBIGUITY FLAGS: (1) Spec does not define a numeric upper bound on Tariff size — 1 MiB used as reasonable default (§2.2 silent); flagged in edge-oversize vector. (2) Spec does not define `iat`→`not_before` maximum gap — flagged in expired-iat-after-not_before vector; implementations may accept. (3) Spec does not define maximum validity period; 30-day policy-cap used as illustrative; real deployments configure. (4) Strict vs lenient on unknown top-level fields — suite chooses STRICT (reject) per COSE-over-CBOR deterministic-encoding posture; lenient implementations may warn-and-accept. (5) `integration-unknown` may be accept-but-warn for forward compatibility across integration catalog updates; suite chooses REJECT for unknown-to-spec integrations. Conventions: current_time is 2026-05-01T00:00:00Z unless noted; trust_anchors defaults to [\"K_cust_root_pk_TEST\"]; previously_seen_version defaults to 1.",
+  "vectors": [
+    {
+      "id": "trej-001",
+      "category": "sig-invalid-payload-mutated",
+      "description": "Signature valid for original payload but one byte of minimum_tiers was flipped post-signing.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: a validly-signed Tariff where byte offset 42 of the payload is XOR'd with 0x01 after COSE_Sign1 was computed>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_original_bytes": true,
+          "signature_valid_under_current_bytes": false
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "signature-invalid"},
+      "rationale": "design-final.md §2.2: Tariff is COSE_Sign1 over the CBOR payload. Any bit flip post-signing invalidates the MAC. Router MUST reject.",
+      "redteam_refs": ["R1-PARAM-CANON"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-002",
+      "category": "sig-invalid-payload-mutated",
+      "description": "Signature valid for original payload but classifier_wasm_hash was replaced with a different 32-byte value after signing.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff where the 32-byte classifier_wasm_hash is overwritten with a different hash after COSE_Sign1>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_original_bytes": true,
+          "signature_valid_under_current_bytes": false
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "signature-invalid"},
+      "rationale": "§2.2 + §4.4: classifier_wasm_hash is part of the signed payload. Substituting it is exactly the attack COSE is meant to detect. A reject is mandatory.",
+      "redteam_refs": ["V2-5"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-003",
+      "category": "sig-invalid-wrong-key",
+      "description": "Tariff signed by an Ed25519 key not present in the trust anchor store.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff signed by K_attacker_pk_TEST (a valid Ed25519 key, not in trust anchors)>",
+        "signature_verification_context": {
+          "signer_key_id": "K_attacker_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST", "K_tariff_signer_pk_TEST"],
+          "signature_valid_under_original_bytes": true,
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "signature-invalid"},
+      "rationale": "§7.1 + §2.2: only keys delegated from K_cust_root may sign Tariff (via K_cust_ops). A foreign key's signature is valid-in-the-math but NOT trusted.",
+      "redteam_refs": ["R1-BOOT-KEY-SUB"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-004",
+      "category": "sig-invalid-wrong-key",
+      "description": "Tariff kid references a key that looks similar to the authorized signer but is a fresh unauthorized key.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff with kid='K_tariff_signer' but signed by a key whose pubkey differs by one byte from the authorized K_tariff_signer>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_IMPOSTOR_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST", "K_tariff_signer_pk_TEST"],
+          "signature_valid_under_original_bytes": true,
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "signature-invalid"},
+      "rationale": "§7.1: trust anchor lookup is on FULL pubkey bytes, not kid label. Impostor key must be rejected even if kid matches.",
+      "redteam_refs": ["R1-BOOT-KEY-SUB"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-005",
+      "category": "sig-invalid-algorithm-unsupported",
+      "description": "Tariff signed with RSA-PKCS1v15 (alg=-257); spec mandates Ed25519 only.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff COSE_Sign1 with protected header alg=-257 (RS256)>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_rsa_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "cose_alg_label": -257,
+          "signature_valid_under_declared_alg": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "signature-algorithm-unsupported"},
+      "rationale": "§9.1 and §7 imply Ed25519 (EdDSA, alg=-8) across the chain. RSA is outside the approved algorithm set; allowing it opens algorithm-confusion attacks.",
+      "redteam_refs": [],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-006",
+      "category": "sig-invalid-algorithm-unsupported",
+      "description": "Tariff signed with ECDSA P-256 (alg=-7); spec mandates Ed25519.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff COSE_Sign1 with protected header alg=-7 (ES256)>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_ec_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "cose_alg_label": -7,
+          "signature_valid_under_declared_alg": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "signature-algorithm-unsupported"},
+      "rationale": "§7.1 key hierarchy declares Ed25519. ECDSA P-256 is not in the approved set. Reject prevents downgrade / algorithm confusion.",
+      "redteam_refs": [],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-007",
+      "category": "sig-chain-broken-unsigned-root",
+      "description": "K_tariff_signer public key is not delegated from K_cust_root — no DelegationDocument chain connects them.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: validly signed Tariff by K_tariff_signer>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "delegation_chain": [],
+          "signature_valid_under_declared_alg": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "signature-chain-broken"},
+      "rationale": "§7.4: verification must walk from signing key up to K_cust_root via DelegationDocuments. Empty chain means no authority.",
+      "redteam_refs": ["R1-BOOT-KEY-SUB"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-008",
+      "category": "sig-chain-broken-unsigned-root",
+      "description": "Delegation chain exists but the root link's parent_key is an unknown key (not the pinned K_cust_root).",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff signed by K_tariff_signer, with delegation chain K_tariff_signer<-K_cust_ops<-K_fake_root>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "delegation_chain_root_parent": "K_fake_root_pk_TEST",
+          "signature_valid_under_declared_alg": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "signature-chain-broken"},
+      "rationale": "§7.4 step 1: chain must terminate at a pinned trust anchor. A chain terminating at a non-anchor key is equivalent to no chain.",
+      "redteam_refs": ["R1-BOOT-KEY-SUB"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-009",
+      "category": "sig-chain-revoked-signer",
+      "description": "K_tariff_signer appears on K_cust_ops' revocation list at current_time.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff signed by K_tariff_signer while K_tariff_signer is on the active revocation list>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "revocation_list": ["K_tariff_signer_pk_TEST"],
+          "signature_valid_under_declared_alg": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "revoked"},
+      "rationale": "§7.5 + §8.1: a revoked signer cannot produce accepted artifacts. Router must check revocation at verification time.",
+      "redteam_refs": ["R2-TARIFF-SIGNING-KEY-COMPROMISE"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-010",
+      "category": "sig-cose-header-malformed",
+      "description": "COSE_Sign1 protected header is missing the mandatory alg label.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff COSE_Sign1 where protected header map has no entry for label 1 (alg)>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "protected_header_has_alg": false
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "cose-malformed"},
+      "rationale": "RFC 9052 requires alg in the protected header for COSE_Sign1. Missing alg enables algorithm confusion; Router must reject.",
+      "redteam_refs": [],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-011",
+      "category": "sig-cose-header-malformed",
+      "description": "COSE_Sign1 has an unrecognized crit parameter that the verifier does not understand.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff COSE_Sign1 whose protected header lists crit=[99] where label 99 is an unknown extension>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "crit_labels": [99],
+          "verifier_understands_crit": false
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "cose-malformed"},
+      "rationale": "RFC 9052 §3.1: a verifier MUST reject any COSE object containing a crit label it does not process. Prevents silent policy bypass.",
+      "redteam_refs": [],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "trej-012",
+      "category": "version-below-previously-seen",
+      "description": "Tariff version=42 but Router previously pinned version=50.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: valid Tariff with payload.version=42>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 50,
+        "tariff_version_in_payload": 42
+      },
+      "expected": {"outcome": "reject", "reject_code": "version-too-old"},
+      "rationale": "§10.3: monotonic Tariff version; update with version ≤ current is REJECTED. Anti-rollback.",
+      "redteam_refs": ["V2-3", "R1-OPCE"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-013",
+      "category": "version-below-previously-seen",
+      "description": "Tariff version equals previously_seen_version (not strictly greater).",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: valid Tariff with payload.version=50>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 50,
+        "tariff_version_in_payload": 50
+      },
+      "expected": {"outcome": "reject", "reject_code": "version-too-old"},
+      "rationale": "§10.3 text: update with 'version ≤ current' REJECTED. Equality also fails; only strictly greater accepted (prevents same-version replay).",
+      "redteam_refs": ["V2-3"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "trej-014",
+      "category": "version-not-integer",
+      "description": "version field is a text string 'v1.2.3' instead of a CBOR unsigned integer.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff whose payload.version is tstr 'v1.2.3'>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-malformed"},
+      "rationale": "§2.2 CDDL: 'version: uint'. String violates schema; monotonicity check cannot apply to strings.",
+      "redteam_refs": [],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "trej-015",
+      "category": "version-zero-or-negative",
+      "description": "version field is 0.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff with payload.version=0>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-malformed"},
+      "rationale": "§2.2: version is a monotonically increasing counter; zero is a sentinel / uninitialized value. Reject to prevent ambiguity with 'unset'.",
+      "redteam_refs": [],
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "trej-016",
+      "category": "version-zero-or-negative",
+      "description": "version field is encoded as negative integer -1 (CBOR major type 1).",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff with payload.version encoded as CBOR nint -1>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-malformed"},
+      "rationale": "§2.2 CDDL declares 'uint'. A negative integer is a type violation; strict CBOR decoding must reject.",
+      "redteam_refs": [],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "trej-017",
+      "category": "version-skew-minimum-tariff-version",
+      "description": "Tariff v=10 but its own minimum_tiers entry requires 'mandate.min_tariff_version≥15' — self-inconsistent.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff version=10 referencing an internal requirement that mandates must have min_tariff_version≥15>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-self-inconsistent-version"},
+      "rationale": "§5.1 min_tariff_version must be reachable; a Tariff that declares requirements it cannot satisfy is self-inconsistent and would trap all downstream mandates. NOTE: distinct reject code from delegation-scope's `version-skew` (which fires at mandate acceptance, not Tariff loading); see README table.",
+      "redteam_refs": [],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "trej-018",
+      "category": "version-missing",
+      "description": "version field is absent from payload map.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff payload missing the 'version' entry>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-malformed"},
+      "rationale": "§2.2 version is required. Its absence breaks monotonicity enforcement; Router must reject.",
+      "redteam_refs": [],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "trej-019",
+      "category": "expired-not_before-in-future",
+      "description": "issued_at sets a not_before/valid_from 30 days ahead of current_time; clock skew tolerance is 5 minutes.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff issued_at=now+30d>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "tariff_issued_at": "2026-05-31T00:00:00Z",
+        "clock_skew_tolerance_seconds": 300,
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "not-yet-valid"},
+      "rationale": "§2.2 issued_at future-dated far beyond skew tolerance suggests clock tampering or malicious pre-signing. Reject.",
+      "redteam_refs": [],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "trej-020",
+      "category": "expired-not_after-past",
+      "description": "valid_until=2025-01-01 but current_time=2026-05-01.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff valid_until=1735689600 (2025-01-01)>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "tariff_valid_until": "2025-01-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "expired"},
+      "rationale": "§2.2 valid_until is an absolute expiry. Router at startup or on push-update must not load an expired Tariff.",
+      "redteam_refs": [],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-021",
+      "category": "expired-not_after-past",
+      "description": "valid_until exactly equal to current_time (boundary).",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff valid_until=1746057600 (2026-05-01T00:00:00Z)>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "tariff_valid_until": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "expired"},
+      "rationale": "§2.2 valid_until is exclusive per convention — t ≥ valid_until is expired. Boundary test ensures implementations don't use ≥ vs > incorrectly.",
+      "redteam_refs": [],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "trej-022",
+      "category": "expired-not_before-after-not_after",
+      "description": "issued_at=2026-06-01, valid_until=2026-05-01 — valid_until precedes issuance.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff with issued_at>valid_until>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "tariff_issued_at": "2026-06-01T00:00:00Z",
+        "tariff_valid_until": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-malformed"},
+      "rationale": "§2.2: issued_at<valid_until is a basic structural invariant. A Tariff with empty or negative validity window is malformed.",
+      "redteam_refs": [],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-023",
+      "category": "expired-iat-after-not_before-gap-too-large",
+      "description": "issued_at is 2 years prior to valid_from; policy cap on issuance-to-activation gap is 30 days. AMBIGUOUS — spec does not define the cap explicitly.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff issued_at=2024-05-01, valid_from=2026-05-01>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "tariff_issued_at": "2024-05-01T00:00:00Z",
+        "tariff_valid_from": "2026-05-01T00:00:00Z",
+        "policy_max_iat_to_valid_from_gap_seconds": 2592000,
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-malformed"},
+      "rationale": "Large iat→valid_from gaps enable pre-signed-dormant-Tariff attacks by a compromised signer. Flagged ambiguity: spec §2.2 does not specify the cap. Suite recommends 30-day policy default.",
+      "redteam_refs": ["R2-TARIFF-SIGNING-KEY-COMPROMISE"],
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "trej-024",
+      "category": "expired-issued-in-future",
+      "description": "issued_at is 1 day ahead of current_time (clock skew tolerance is 5 min).",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff issued_at=now+1d>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "tariff_issued_at": "2026-05-02T00:00:00Z",
+        "clock_skew_tolerance_seconds": 300,
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "clock-skew-exceeded"},
+      "rationale": "§2.2 Tariff signed far in the future suggests clock tampering, time-travel attack, or malicious pre-signing. Reject beyond skew tolerance.",
+      "redteam_refs": [],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "trej-025",
+      "category": "missing-minimum_tiers",
+      "description": "minimum_tiers field absent from payload.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff payload missing 'minimum_tiers' entry>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-malformed"},
+      "rationale": "§2.2: minimum_tiers is required for floor-enforcement. Its absence allows any classifier output to stand, collapsing tier-floors.",
+      "redteam_refs": [],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-026",
+      "category": "missing-classifier_wasm_hash",
+      "description": "classifier_wasm_hash absent from payload.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff payload missing classifier_wasm_hash>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-malformed"},
+      "rationale": "§4.1: classifier is pinned by hash; absence allows Router to run any classifier — classification becomes unverified.",
+      "redteam_refs": [],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-027",
+      "category": "missing-rate_matrix",
+      "description": "rate_matrix absent from payload.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff payload missing rate_matrix>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-malformed"},
+      "rationale": "§3.2 Layer-2 defense requires rate_matrix. Missing it defeats aggregation-defense layer 2 entirely.",
+      "redteam_refs": ["V2-1"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-028",
+      "category": "missing-pcr_attestors",
+      "description": "pcr_attestors list absent from payload.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff payload missing pcr_attestors>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-malformed"},
+      "rationale": "§9.4 V3-3 requires pcr_attestors; absence prevents independent PCR verification, collapsing Signer-attestation integrity.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-029",
+      "category": "missing-classifier_fuzz_attestation",
+      "description": "classifier_fuzz_attestation absent from payload (required since V3-8).",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff payload missing classifier_fuzz_attestation>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-fuzz-attestation-missing"},
+      "rationale": "§4.4 V3-8 tightening: fuzz_attestation is mandatory. Absence means baseline fuzz was not run; hidden mis-classifications possible.",
+      "redteam_refs": ["V3-8"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-030",
+      "category": "extra-unrecognized-field",
+      "description": "Tariff payload contains an unknown top-level field 'magic_backdoor'. Suite chooses strict-reject; lenient implementations might ignore.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff payload with extra entry 'magic_backdoor': true>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-malformed"},
+      "rationale": "Strict-schema posture: deterministic CBOR + known-field-set prevents smuggling hidden policy. Ambiguity noted in file-level notes; strict wins here.",
+      "redteam_refs": [],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "trej-031",
+      "category": "wrong-type-minimum_tiers-array",
+      "description": "minimum_tiers encoded as an array of {key,value} pairs instead of CBOR map.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff where minimum_tiers is CBOR major type 4 (array), not major type 5 (map)>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-malformed"},
+      "rationale": "§2.2 CDDL: minimum_tiers is {action → tier} = map. Array form breaks lookup semantics.",
+      "redteam_refs": [],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "trej-032",
+      "category": "wrong-type-version-nested",
+      "description": "version is nested inside a 'meta' object: {meta: {version: 3}} instead of flat payload.version.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff payload with 'meta' map containing version>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-malformed"},
+      "rationale": "§2.2 CDDL: version is a top-level payload key. Nesting it hides the field from schema validators; reject.",
+      "redteam_refs": [],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "trej-033",
+      "category": "tier-out-of-range",
+      "description": "minimum_tiers has entry {k8s:delete:namespace: 6} — tiers are 0-5 per §2.1.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff minimum_tiers contains value 6>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-tier-out-of-range"},
+      "rationale": "§2.1 defines 0..5; §4.5 ClassifierOutput.tier: 0..5. Tier 6 is undefined.",
+      "redteam_refs": [],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-034",
+      "category": "tier-out-of-range",
+      "description": "tier_map_defaults entry has value 99.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff tier_map_defaults contains value 99>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-tier-out-of-range"},
+      "rationale": "§2.1 tier range 0-5 applies to all tier-valued fields including tier_map_defaults.",
+      "redteam_refs": [],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-035",
+      "category": "tier-negative",
+      "description": "minimum_tiers has entry with value -1.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff minimum_tiers contains negative tier>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-tier-out-of-range"},
+      "rationale": "§2.1 tiers are non-negative integers 0..5. Negative means 'below read' — not defined by the spec.",
+      "redteam_refs": [],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "trej-036",
+      "category": "rate_matrix-missing-tier",
+      "description": "rate_matrix specifies limits for tiers 0-3 but minimum_tiers references tier 4 for 'k8s:delete:deployment'.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff with rate_matrix.tiers=[0,1,2,3] and minimum_tiers entry=4>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "rate-matrix-incomplete"},
+      "rationale": "§3.2 Layer-2 rate-limiting must cover every tier referenced by minimum_tiers; gap = unlimited-rate action = aggregation vulnerability.",
+      "redteam_refs": ["V2-1"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-037",
+      "category": "wasm-hash-not-hex",
+      "description": "classifier_wasm_hash is bstr of length 20 (RIPEMD-160 size) — spec implies SHA-256 (32 bytes).",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff classifier_wasm_hash is 20-byte bstr>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-malformed"},
+      "rationale": "§4.1 + §4.4 + deterministic posture: hash is SHA-256 (32 bytes). Wrong-size value cannot match any classifier binary.",
+      "redteam_refs": [],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "trej-038",
+      "category": "wasm-hash-not-in-attestation",
+      "description": "classifier_wasm_hash=H1, but classifier_fuzz_attestation references H2 (a different binary).",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff with mismatching wasm hash vs fuzz attestation subject>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-fuzz-attestation-mismatch"},
+      "rationale": "§4.4: fuzz attestation must target the SAME classifier binary that the Tariff pins. Mismatch means the running classifier is un-fuzzed.",
+      "redteam_refs": ["V3-8"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-039",
+      "category": "pcr-attestor-list-empty",
+      "description": "pcr_attestors=[] (empty array).",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff with empty pcr_attestors array>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-pcr-attestors-empty"},
+      "rationale": "§2.2 requires min 3 attestors, quorum 2-of-3. Empty list collapses multi-party attestation.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-040",
+      "category": "pcr-quorum-greater-than-attestors",
+      "description": "pcr_attestors has 3 entries but ceremony_quorum.m=5 for pcr changes.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff with 3 attestors but required quorum=5>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-pcr-quorum-invalid"},
+      "rationale": "§2.2 + §9.4: quorum m must be ≤ n (attestor set size). Unsatisfiable quorum permanently blocks any valid attestation = unusable Tariff.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "trej-041",
+      "category": "integration-unknown",
+      "description": "minimum_tiers keys include 'mars-probe-prod:fly:rocket' — no such integration in spec's registered set.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff with integration_ref 'mars-probe-prod'>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "known_integrations": ["k8s-prod", "vault-prod", "stripe-prod"],
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-integration-unknown"},
+      "rationale": "§10.2 per-integration isolation: Router is spun up per-integration. Unknown integration = Router cannot route. Ambiguity: accept-but-warn is defensible; suite chooses REJECT for strict.",
+      "redteam_refs": [],
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "trej-042",
+      "category": "integration-unknown",
+      "description": "integration_ref present but value is empty string ''.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff integration_ref=''>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-integration-unknown"},
+      "rationale": "Empty integration_ref is not a valid reference; §2.2 CDDL has no provision for empty identifiers.",
+      "redteam_refs": [],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "trej-043",
+      "category": "action-verb-invalid",
+      "description": "minimum_tiers key 'k8s:yeet:pod' — 'yeet' is not in k8s canonical verb set.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff with verb 'yeet' for k8s integration>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "k8s_canonical_verbs": ["get","list","watch","create","update","patch","delete","apply"],
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-verb-invalid"},
+      "rationale": "§4.2 verbs are resolved via target-API schema. Unrecognized verbs cannot be classified; ambiguity-resolution-up still requires a defined verb to escalate.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "trej-044",
+      "category": "action-verb-invalid",
+      "description": "verb_aliases maps 'remove' → 'demolish'; 'demolish' is not canonical.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff verb_aliases: {'remove':'demolish'}>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "k8s_canonical_verbs": ["get","list","watch","create","update","patch","delete","apply"],
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-verb-invalid"},
+      "rationale": "§3.3 verb_aliases must map alias → CANONICAL verb. Aliasing to a non-canonical target re-introduces normalization gap that V2-2 exploits.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "trej-045",
+      "category": "resource-kind-invalid",
+      "description": "minimum_tiers key 'k8s:delete:sparklepony' — 'sparklepony' is not a k8s kind.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff with resource_kind 'sparklepony'>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "k8s_known_kinds": ["pod","deployment","service","namespace","secret","configmap","ingress"],
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-resource-kind-invalid"},
+      "rationale": "§4.2 resource kinds resolved via target-API schema. Unknown kind = Router cannot map to a real resource = action-gate non-deterministic.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "trej-046",
+      "category": "resource-kind-invalid",
+      "description": "vault integration: minimum_tiers key 'vault:write:kubernetes/pod'. Kubernetes kinds not valid for vault.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff mixing vault verb with k8s kind>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "vault_known_kinds": ["secret","policy","role","token"],
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-resource-kind-invalid"},
+      "rationale": "Kinds are integration-scoped (§10.2). Cross-integration-kind references break classification.",
+      "redteam_refs": [],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "trej-047",
+      "category": "alg-mismatched-key-type",
+      "description": "COSE header alg=-8 (EdDSA) but kid points to an ECDSA P-256 public key in trust anchors.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff COSE alg=EdDSA, kid resolves to a P-256 key>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_ec_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST", "K_tariff_signer_ec_pk_TEST"],
+          "cose_alg_label": -8,
+          "kid_key_type": "EC2"
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "signature-algorithm-mismatch"},
+      "rationale": "Algorithm/key-type confusion is a classic COSE/JWT attack (alg=ES256 + RSA pubkey etc.). Router must verify alg matches key type.",
+      "redteam_refs": ["R1-PARAM-CANON"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-048",
+      "category": "payload-not-canonical-cbor",
+      "description": "Tariff payload is JSON-encoded bytes inside the COSE payload slot instead of CBOR.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: COSE_Sign1 whose payload bstr is UTF-8 JSON text of the Tariff>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true,
+          "payload_encoding_detected": "json"
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "payload-encoding-invalid"},
+      "rationale": "§2.2 explicitly COSE_Sign1 over CBOR. JSON-in-bstr cannot be parsed as CBOR — schema validation impossible.",
+      "redteam_refs": ["R1-PARAM-CANON"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-049",
+      "category": "payload-cbor-non-deterministic",
+      "description": "CBOR encoded with indefinite-length map; map keys not canonically sorted.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: CBOR using 0xBF (indefinite-length map start) and keys 'version' after 'classifier_wasm_hash' (violates RFC 8949 §4.2 sorting)>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true,
+          "cbor_is_deterministic": false
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "payload-not-deterministic-cbor"},
+      "rationale": "README-stated posture: deterministic CBOR per RFC 8949 §4.2. Non-deterministic encoding enables PARAM-CANON-class hash mismatches between verifier implementations.",
+      "redteam_refs": ["R1-PARAM-CANON"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-050",
+      "category": "kid-unknown",
+      "description": "COSE_Sign1 unprotected header kid='K_never_delegated' — no such key in any trust anchor or delegation chain.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff kid pointing to unknown key>",
+        "signature_verification_context": {
+          "signer_key_id": "K_never_delegated_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "known_keys_in_store": ["K_cust_root_pk_TEST","K_cust_ops_pk_TEST","K_tariff_signer_pk_TEST"],
+          "signature_valid_under_declared_alg": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "kid-unknown"},
+      "rationale": "§7.4: chain verification starts from kid → key lookup. Unknown kid = unresolvable = reject; distinct from signature-chain-broken where chain exists but is wrong.",
+      "redteam_refs": [],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-051",
+      "category": "redteam-OPCE-stale-tariff-replay",
+      "description": "Attacker replays Tariff v=40 (issued by previously-authorized key K_tariff_signer_OLD) after customer rotated to K_tariff_signer_NEW at v=50.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff signed by K_tariff_signer_OLD, version=40>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_OLD_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "revocation_list": ["K_tariff_signer_OLD_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 50
+      },
+      "expected": {"outcome": "reject", "reject_code": "version-too-old"},
+      "rationale": "§10.3 monotonic version enforcement makes OPCE-style stale-Tariff replay ineffective. Version check is primary; revocation secondary.",
+      "redteam_refs": ["R1-OPCE"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-052",
+      "category": "redteam-BOOT-KEY-SUB-trust-anchor-mismatch",
+      "description": "Tariff signed by a correctly-formed Ed25519 key whose kid is 'K_cust_ops'; Router's pinned trust anchor store does not contain this specific key bytes (attacker substituted at boot).",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff signed by attacker-substituted key masquerading as K_cust_ops>",
+        "signature_verification_context": {
+          "signer_key_id": "K_attacker_impersonating_ops_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST", "K_cust_ops_pk_TEST"],
+          "kid_to_key_resolution": "mismatch",
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "signature-chain-broken"},
+      "rationale": "R1 BOOT-KEY-SUB: trust anchor identity is by key-BYTES, not kid string. Router must fail-closed when kid resolves to a non-anchor key.",
+      "redteam_refs": ["R1-BOOT-KEY-SUB"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-053",
+      "category": "redteam-PARAM-CANON-non-canonical-payload",
+      "description": "Payload uses CBOR with floating-point encoded versions (e.g., 3.0 as CBOR float) where spec requires uint; two verifiers could disagree on canonical form.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff version encoded as CBOR float 3.0 instead of uint 3>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true,
+          "cbor_type_observed": "float"
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "payload-not-deterministic-cbor"},
+      "rationale": "R1 PARAM-CANON: non-canonical numeric encodings (float-where-uint-declared) create verifier-disagreement surface; deterministic CBOR forbids floats when int suffices.",
+      "redteam_refs": ["R1-PARAM-CANON"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-054",
+      "category": "redteam-TARIFF-SIGNING-KEY-compromised-but-not-revoked",
+      "description": "Tariff technically verifies but signer appears on mandate revocation list for the window (customer discovered compromise post-signing).",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff signed by compromised-then-revoked K_tariff_signer>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "revocation_list": ["K_tariff_signer_pk_TEST"],
+          "signer_revoked_as_of": "2026-04-30T00:00:00Z",
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "revoked"},
+      "rationale": "R2 TARIFF-SIGNING-KEY-COMPROMISE: architectural defense = revocation. Router must consult revocation list even when signature math verifies.",
+      "redteam_refs": ["R2-TARIFF-SIGNING-KEY-COMPROMISE"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-055",
+      "category": "redteam-V3-8-fuzz-attestation-missing",
+      "description": "Explicit test for V3-8: classifier_fuzz_attestation is the empty bstr (present but zero-length).",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff classifier_fuzz_attestation is h''>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-fuzz-attestation-missing"},
+      "rationale": "§4.4 V3-8: empty attestation = no fuzz report referenced = same risk posture as absent field. Reject.",
+      "redteam_refs": ["V3-8"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-056",
+      "category": "redteam-V3-3-pcr-attestors-not-trusted-list",
+      "description": "pcr_attestors = [K_random_attestor_1, K_random_attestor_2, K_random_attestor_3] — attestors are not in the customer's approved attestor registry.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff whose pcr_attestors do not overlap customer's approved attestor keys>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "approved_attestor_registry": ["K_attestor_acme_1","K_attestor_auditor_A","K_attestor_auditor_B"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "pcr-attestor-not-trusted"},
+      "rationale": "§9.4 V3-3: attestor identity must be from customer-approved set. Rubber-stamp attestors from untrusted identities do not close the trust gap.",
+      "redteam_refs": ["V3-3"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-057",
+      "category": "edge-zero-actions",
+      "description": "minimum_tiers is an empty map {}. Tariff technically well-formed but classifies no action.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff with minimum_tiers={}>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-malformed"},
+      "rationale": "A Tariff that constrains nothing defeats its purpose — falls back entirely to tier_map_defaults. Per strict posture, reject; alternative (accept-with-only-defaults) flagged ambiguity but dangerous: attacker-crafted empty Tariff with publisher key compromise would collapse all minimum-tier floors.",
+      "redteam_refs": [],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "trej-058",
+      "category": "edge-single-action",
+      "description": "minimum_tiers has exactly one entry: {'vault:write:secret/prod/*': 4}. rate_matrix and tier_map_defaults inconsistent — rate_matrix has no entries for vault. Structural validation must catch this.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff with single minimum_tiers entry and empty rate_matrix for that integration>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "rate-matrix-incomplete"},
+      "rationale": "§3.2 rate_matrix coverage invariant: every action in minimum_tiers must have corresponding rate limits. Single-action Tariffs still must satisfy this.",
+      "redteam_refs": ["V2-1"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "trej-059",
+      "category": "edge-oversize",
+      "description": "Tariff encoded payload is 2 MiB — exceeds 1 MiB reasonable-size policy cap. AMBIGUITY: spec does not fix a size cap; 1 MiB used as sane default.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff payload of 2 MiB with inflated narrowness_rules list>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "policy_max_tariff_bytes": 1048576,
+        "observed_size_bytes": 2097152,
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-oversize"},
+      "rationale": "Oversized Tariffs enable DoS on Router parse/verify paths. Spec ambiguity: no cap defined. Suite adopts 1 MiB default; implementations should document their own.",
+      "redteam_refs": [],
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "trej-060",
+      "category": "edge-duplicate-entries",
+      "description": "minimum_tiers has same key 'k8s:delete:pod' appearing twice with different values (first=2, second=4). Non-deterministic CBOR also forbids duplicate keys per RFC 8949 §4.2.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: CBOR map with duplicate key 'k8s:delete:pod' -> 2 and 'k8s:delete:pod' -> 4>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true,
+          "duplicate_map_keys_present": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-duplicate-entries"},
+      "rationale": "RFC 8949 §4.2 deterministic encoding: map keys MUST be unique. Two values for same key = ambiguous lookup = exploitable inconsistency.",
+      "redteam_refs": ["R1-PARAM-CANON"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-061",
+      "category": "edge-circular-reference",
+      "description": "verb_aliases contains a cycle: 'alpha'→'beta', 'beta'→'alpha'. Canonicalization never terminates.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff verb_aliases: {'alpha':'beta','beta':'alpha'}>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-circular-reference"},
+      "rationale": "§3.3 canonicalization chain must terminate. Cycles are classifier-DoS + potentially non-deterministic across implementations that break cycles differently.",
+      "redteam_refs": ["V2-2"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "trej-062",
+      "category": "edge-validity-period-exceeds-policy",
+      "description": "issued_at=2026-05-01, valid_until=2027-05-01 (365 days). Policy maximum validity = 30 days.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff with 365-day validity window>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "tariff_issued_at": "2026-05-01T00:00:00Z",
+        "tariff_valid_until": "2027-05-01T00:00:00Z",
+        "policy_max_validity_seconds": 2592000,
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-validity-period-excessive"},
+      "rationale": "§7.5 suggests frequent rotation; long validity windows amplify key-compromise blast radius. AMBIGUITY: spec does not fix a maximum; 30-day policy cap used as illustrative default.",
+      "redteam_refs": ["R2-TARIFF-SIGNING-KEY-COMPROMISE"],
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "trej-063",
+      "category": "sig-invalid-wrong-key",
+      "description": "Extra coverage: Tariff signed by K_cust_mandate_N (mandate-signing role) when Tariff role requires K_cust_ops. Role-mismatched signer.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff signed by K_cust_mandate_42 whose delegation child_role='mandate_signer', not 'tariff_signer'>",
+        "signature_verification_context": {
+          "signer_key_id": "K_cust_mandate_42_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "delegation_child_role": "mandate_signer",
+          "required_role_for_tariff": "tariff_signer",
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "signature-chain-broken"},
+      "rationale": "§7.2 delegations carry child_role. Role-confusion (mandate_signer used as tariff_signer) violates scope. Analogous to V3-1 at delegation-role granularity.",
+      "redteam_refs": ["V3-1"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-064",
+      "category": "sig-chain-broken-unsigned-root",
+      "description": "Delegation chain contains a middle link whose signature is invalid (K_cust_mandate_X's delegation from K_cust_ops has bad signature).",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: valid Tariff, but middle delegation link signature corrupt>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "delegation_chain_link_signatures_valid": [true, false, true],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "signature-chain-broken"},
+      "rationale": "§7.4 step 2: every chain link must verify. A broken middle link = no valid path to root = reject.",
+      "redteam_refs": [],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-065",
+      "category": "missing-revocation_channel_ha",
+      "description": "Tariff omits the revocation_channel_ha field entirely (required since V3-6 tightening in §8.4).",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: validly-signed Tariff with version=2, valid signature, all other required fields present, but revocation_channel_ha field absent from the payload>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_original_bytes": true,
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-malformed"},
+      "rationale": "design-final.md §2.2 + §8.4 (V3-6 tightening): revocation_channel_ha is a REQUIRED Tariff field. Its absence means Router has no endpoint set for revocation push and is blind to mandate compromise — exactly the V3-6 DoS-on-revocation vector.",
+      "redteam_refs": ["V3-6"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-066",
+      "category": "revocation_channel_ha-insufficient-redundancy",
+      "description": "Tariff declares revocation_channel_ha with secondary_endpoints array of length 1 (minimum is 2 per §8.4).",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: validly-signed Tariff with revocation_channel_ha={primary_endpoint: 'https://revoke-a.example', secondary_endpoints: ['https://revoke-b.example'], multi_provider: true, grace_period_seconds: 300, admin_bypass_protocol: 'm-of-n-break-glass'}>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_original_bytes": true,
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-malformed"},
+      "rationale": "§8.4 requires secondary_endpoints.length ≥ 2 so loss of any single endpoint leaves at least one working path. One secondary is the same single-point-of-failure the HA requirement was added to eliminate (V3-6).",
+      "redteam_refs": ["V3-6"],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "trej-067",
+      "category": "revocation_channel_ha-multi-provider-violation-tier4",
+      "description": "Tariff declares Tier 4+ capability but revocation_channel_ha.multi_provider=false.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff with minimum_tiers containing a k8s:delete:namespace:cluster-scope entry at Tier 4, plus revocation_channel_ha={primary: https://revoke-a.aws.example, secondary_endpoints: [https://revoke-b.aws.example, https://revoke-c.aws.example], multi_provider: false, grace_period_seconds: 60, admin_bypass_protocol: 'm-of-n'}>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_original_bytes": true,
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-malformed"},
+      "rationale": "§8.4: any Tariff granting Tier 4+ MUST set multi_provider=true. All three endpoints on one cloud provider = single-provider-outage kills revocation for tier that can cause catastrophic blast radius. This is the V3-6 attack premise.",
+      "redteam_refs": ["V3-6"],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-068",
+      "category": "revocation_channel_ha-admin-bypass-missing",
+      "description": "Tariff declares revocation_channel_ha but omits admin_bypass_protocol field.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: Tariff with revocation_channel_ha={primary_endpoint, secondary_endpoints (len 2), multi_provider: true, grace_period_seconds: 300} — admin_bypass_protocol absent>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": ["K_cust_root_pk_TEST"],
+          "signature_valid_under_original_bytes": true,
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1
+      },
+      "expected": {"outcome": "reject", "reject_code": "tariff-malformed"},
+      "rationale": "§8.4 admin-bypass-protocol was added in V3-6 as the documented break-glass path when all revocation endpoints fail. Its absence creates an un-recoverable deadlock condition.",
+      "redteam_refs": ["V3-6"],
+      "severity_if_failed": "high"
+    }
+  ]
+}
