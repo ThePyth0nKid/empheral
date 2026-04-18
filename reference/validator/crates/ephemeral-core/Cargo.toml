@@ -15,6 +15,10 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 jsonschema = { workspace = true }
+unicode-normalization = { workspace = true }
+caseless = { workspace = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
+proptest = { workspace = true }
+hex = { workspace = true }

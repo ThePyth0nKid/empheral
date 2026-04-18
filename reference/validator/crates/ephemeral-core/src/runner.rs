@@ -17,6 +17,7 @@ use std::time::SystemTime;
 use crate::error::{SchemaError, ValidatorError};
 use crate::schema::CompiledSchema;
 use crate::suite_file::{load_suite_file, LoadedSuite};
+use crate::suites::{canonicalization, delegation};
 use crate::types::{
     SkipReason, SuiteReport, TestReport, ValidationOutcome, Vector, VectorFailure, VectorSuite,
 };
@@ -150,11 +151,18 @@ fn report_with_harness_error(path: &Path, err: &ValidatorError) -> SuiteReport {
 
 /// Dispatch a vector to its suite executor.
 ///
-/// Session 1: every suite returns `Skipped`. Session 2/3 replace these arms
-/// one at a time.
-fn execute_vector(_loaded: &LoadedSuite, _vector: &Vector) -> ValidationOutcome {
-    ValidationOutcome::Skipped {
-        reason: SkipReason::SuiteNotImplementedThisSession,
+/// Session 2: Canonicalization + DelegationScope are live; the remaining four
+/// suites stay skipped until Session 3.
+fn execute_vector(loaded: &LoadedSuite, vector: &Vector) -> ValidationOutcome {
+    match loaded.parsed.vector_suite {
+        VectorSuite::Canonicalization => canonicalization::execute(vector),
+        VectorSuite::DelegationScope => delegation::execute(vector),
+        VectorSuite::FuzzBaseline
+        | VectorSuite::TariffReject
+        | VectorSuite::PcrAttestationReject
+        | VectorSuite::AuditReplay => ValidationOutcome::Skipped {
+            reason: SkipReason::SuiteNotImplementedThisSession,
+        },
     }
 }
 

@@ -80,7 +80,7 @@ impl From<SuiteArg> for VectorSuite {
 /// Tag embedded in JSON reports so downstream tooling can distinguish
 /// Session-1 structural-only runs from later sessions that also execute
 /// semantic vectors.
-const RUN_SESSION_TAG: &str = "session-1-structural-only";
+const RUN_SESSION_TAG: &str = "session-2-canonicalization-delegation";
 
 fn main() -> ExitCode {
     match run() {
