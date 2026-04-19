@@ -20,6 +20,11 @@ caseless = { workspace = true }
 time = { workspace = true }
 hex = { workspace = true }
 ephemeral-crypto = { path = "../ephemeral-crypto" }
+# test-fixtures feature is required: the c2-live conformance vectors embed a
+# synthetic CA root whose fingerprint is NOT in ALLOWED_FINGERPRINTS. The
+# reference validator is itself a conformance harness; the D-2 CI guard
+# ensures this feature never reaches a production binary.
+ephemeral-attestation = { path = "../ephemeral-attestation", features = ["test-fixtures"] }
 
 [dev-dependencies]
 anyhow = { workspace = true }

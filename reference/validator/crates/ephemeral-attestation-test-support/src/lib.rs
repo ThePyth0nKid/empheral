@@ -66,7 +66,12 @@ pub struct BuildParams {
     pub use_sha1_cert: bool,
     /// Inject duplicate PCR-0 into map.
     pub duplicate_pcr: bool,
-    /// Flip `payload[0]` after signing — signature will be invalid.
+    /// Flip the low bit of `payload[len-1]` after signing — the outer COSE
+    /// stays parseable, but the embedded payload no longer matches the signed
+    /// TBS, so ECDSA verify fails with `AttestError::SignatureInvalid`.
+    /// Field name is historical ("byte_0" predates the post-sign redesign);
+    /// the actual byte tampered is the last one, chosen so CBOR parse still
+    /// succeeds. See `cose::build_cose_sign1` for the tamper implementation.
     pub tamper_payload_byte_0: bool,
     /// Re-sign intermediate cert with an unrelated (impostor) key.
     pub break_ca_chain: bool,
@@ -122,7 +127,7 @@ pub fn build_attestation_doc(params: BuildParams) -> (Vec<u8>, NitroRootSet) {
 
     // ── 2. Build CBOR payload ─────────────────────────────────────────────────
     let ca_ders = vec![chain.intermediate_der.clone(), chain.root_der.clone()];
-    let mut payload_cbor = payload::build_payload_cbor(
+    let payload_cbor = payload::build_payload_cbor(
         &chain.leaf_der,
         &ca_ders,
         &chain.leaf_vk,
@@ -132,15 +137,13 @@ pub fn build_attestation_doc(params: BuildParams) -> (Vec<u8>, NitroRootSet) {
         params.duplicate_pcr,
     );
 
-    // ── 3. (optionally) tamper payload before signing ─────────────────────────
-    if params.tamper_payload_byte_0 {
-        if let Some(b) = payload_cbor.first_mut() {
-            *b ^= 0xFF;
-        }
-    }
-
-    // ── 4. Build COSE_Sign1 ───────────────────────────────────────────────────
-    let cose_bytes = cose::build_cose_sign1(&payload_cbor, &chain.leaf_sk, use_wrong_alg);
+    // ── 3. Build COSE_Sign1 (optional post-sign payload tamper applied inside) ─
+    let cose_bytes = cose::build_cose_sign1(
+        &payload_cbor,
+        &chain.leaf_sk,
+        use_wrong_alg,
+        params.tamper_payload_byte_0,
+    );
 
     // ── 5. Build NitroRootSet ─────────────────────────────────────────────────
     let mut roots = NitroRootSet::new();

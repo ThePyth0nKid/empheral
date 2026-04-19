@@ -118,6 +118,17 @@ fn pcr_attestation_reject_structural() {
     );
 }
 
+/// Phase C.2 live-crypto vectors (pcrrej-090..097). Same `vector_suite`
+/// declaration as the mock file; dispatch to the live path happens inside
+/// the pcr executor based on the presence of `cose_sign1_bytes`.
+#[test]
+fn pcr_attestation_reject_c2_live_structural() {
+    assert_file_all_executed(
+        "pcr-attestation-reject-c2-live.json",
+        VectorSuite::PcrAttestationReject,
+    );
+}
+
 #[test]
 fn audit_replay_structural() {
     assert_file_all_executed("audit-replay.json", VectorSuite::AuditReplay);
@@ -137,6 +148,7 @@ fn run_many_aggregates_all_six() {
         "fuzz-baseline.json",
         "tariff-reject.json",
         "pcr-attestation-reject.json",
+        "pcr-attestation-reject-c2-live.json",
         "audit-replay.json",
     ]
     .iter()
@@ -163,13 +175,13 @@ fn run_many_aggregates_all_six() {
         report.per_suite
     );
     assert!(report.is_clean());
-    // Phase C.1: all six suites execute. Conformance corpus is 520 vectors
+    // Phase C.2: all six suites execute. Conformance corpus is 528 vectors
     // total: 93 canon + 70 deleg (68 mock + 2 live) + 205 fuzz + 71 tariff
-    // (68 mock + 3 live) + 49 pcr + 32 audit.
+    // (68 mock + 3 live) + 49 pcr (mock) + 8 pcr (c2-live) + 32 audit.
     assert_eq!(
         report.total_pass(),
-        520,
-        "expected 520 vectors passing, got {}",
+        528,
+        "expected 528 vectors passing, got {}",
         report.total_pass()
     );
     assert_eq!(

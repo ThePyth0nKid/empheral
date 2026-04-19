@@ -18,7 +18,7 @@ use std::process::Command;
 /// Update this constant when intentionally regenerating vectors — it is a
 /// tripwire for silent non-determinism regressions.
 const DRY_RUN_SHA256: &str =
-    "776a6eb6da964f016004db0c7cc323cb6cfafe04d8dd093061282f1e28ef5a10";
+    "87f985aa9046b008851a30f6244fa168eeb65853442ed00179d33fb43ce46869";
 
 fn vector_signer_bin() -> std::path::PathBuf {
     // `cargo test` runs from the workspace root or crate root.  The binary is

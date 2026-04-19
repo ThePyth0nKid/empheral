@@ -537,6 +537,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "caseless",
+ "ephemeral-attestation",
  "ephemeral-crypto",
  "hex",
  "jsonschema",

@@ -110,6 +110,12 @@ pub enum PcrRejectCode {
     PcrAttestationPredatesTariff,
     PcrAttestationNonceReuse,
     PcrAttestationNonceMismatch,
+    // Live-crypto (Phase C.2) cert / COSE defects — only emitted by the
+    // `execute_live_nitro` dispatch path for vectors carrying
+    // `cose_sign1_bytes`.
+    PcrAttestationCertExpired,
+    PcrAttestationCertChainInvalid,
+    PcrAttestationUnsupportedCoseAlg,
 }
 
 impl fmt::Display for PcrRejectCode {
@@ -141,6 +147,9 @@ impl fmt::Display for PcrRejectCode {
             Self::PcrAttestationPredatesTariff => "pcr-attestation-predates-tariff",
             Self::PcrAttestationNonceReuse => "pcr-attestation-nonce-reuse",
             Self::PcrAttestationNonceMismatch => "pcr-attestation-nonce-mismatch",
+            Self::PcrAttestationCertExpired => "pcr-attestation-cert-expired",
+            Self::PcrAttestationCertChainInvalid => "pcr-attestation-cert-chain-invalid",
+            Self::PcrAttestationUnsupportedCoseAlg => "pcr-attestation-unsupported-cose-alg",
         })
     }
 }
@@ -294,7 +303,16 @@ struct RevocationEntry {
 /// Execute one `pcr-attestation-reject` vector. Every PCR vector has
 /// `expected.outcome == reject`; we derive the reject code via [`classify`]
 /// and compare to `vector.expected.reject_code`.
+///
+/// Dispatch: vectors carrying a top-level `cose_sign1_bytes` field go through
+/// the Phase C.2 live-crypto path ([`classify_live_nitro`]). All other vectors
+/// use the mock-boolean classifier ([`classify`]).
 pub fn execute(vector: &Vector) -> ValidationOutcome {
+    // Phase C.2 dispatch: live COSE_Sign1 / X.509 / ES384 path.
+    if vector.input.get("cose_sign1_bytes").is_some() {
+        return execute_live_nitro(vector);
+    }
+
     let input: PcrInput = match serde_json::from_value(vector.input.clone()) {
         Ok(v) => v,
         Err(e) => {
@@ -766,6 +784,183 @@ fn category_to_code(category: &str) -> PcrRejectCode {
         "adversary-attestation-bundle-for-different-nonce" => {
             PcrRejectCode::PcrAttestationNonceMismatch
         }
+        _ => PcrRejectCode::PcrBundleMalformed,
+    }
+}
+
+// ---------------- Phase C.2: live Nitro path -------------------------------
+//
+// Vectors with top-level `cose_sign1_bytes` drive real ES384 / X.509 /
+// COSE_Sign1 verification via the `ephemeral-attestation` crate. The mock
+// classifier is bypassed entirely on this branch.
+
+use ephemeral_attestation::{
+    verify_nitro_attestation, verify_pcr_set, AttestError, NitroRootSet,
+};
+
+/// Vector input shape for Phase C.2 live-crypto vectors.
+///
+/// The fields are disjoint from [`PcrInput`] — dispatch between the two lives
+/// in [`execute`] via the presence of `cose_sign1_bytes`.
+#[derive(Debug, Deserialize)]
+struct LiveNitroInput {
+    /// Hex-encoded CBOR `d2 84 …` COSE_Sign1 attestation document.
+    cose_sign1_bytes: String,
+    /// DER-encoded trusted root certificates, hex-encoded.
+    trusted_roots_der_hex: Vec<String>,
+    /// Optional expected nonce, hex-encoded. `null` means no freshness check.
+    #[serde(default)]
+    expected_nonce_hex: Option<String>,
+    /// Expected PCR map: `"PCR<n>"` → hex-encoded hash bytes.
+    expected_pcrs: HashMap<String, String>,
+    /// Caller clock — used for cert validity (`not_before` / `not_after`).
+    current_time: i64,
+}
+
+fn execute_live_nitro(vector: &Vector) -> ValidationOutcome {
+    let input: LiveNitroInput = match serde_json::from_value(vector.input.clone()) {
+        Ok(v) => v,
+        Err(e) => {
+            return ValidationOutcome::Fail {
+                reason: format!("live-nitro input deserialization failed: {e}"),
+            };
+        }
+    };
+
+    let produced = classify_live_nitro(&input);
+
+    let expected = &vector.expected;
+    match expected.outcome {
+        Outcome::Reject => {
+            let Some(expected_code) = expected.reject_code.as_deref() else {
+                return ValidationOutcome::Fail {
+                    reason: "vector declares reject but omits reject_code".to_owned(),
+                };
+            };
+            if produced.to_string() == expected_code {
+                ValidationOutcome::Pass
+            } else {
+                ValidationOutcome::Fail {
+                    reason: format!(
+                        "reject_code mismatch: produced {produced}, expected {expected_code}"
+                    ),
+                }
+            }
+        }
+        Outcome::Accept => ValidationOutcome::Fail {
+            reason: "pcr-attestation-reject suite has no accept vectors".to_owned(),
+        },
+    }
+}
+
+fn classify_live_nitro(input: &LiveNitroInput) -> PcrRejectCode {
+    // 1. Decode hex payload.
+    let Ok(cose_bytes) = hex::decode(&input.cose_sign1_bytes) else {
+        return PcrRejectCode::PcrBundleMalformed;
+    };
+
+    // 2. Build NitroRootSet from supplied hex roots. The test-fixtures insert
+    //    path accepts roots without fingerprint pinning; production builds do
+    //    not expose this method.
+    let mut roots = NitroRootSet::new();
+    for h in &input.trusted_roots_der_hex {
+        let Ok(der) = hex::decode(h) else {
+            return PcrRejectCode::PcrBundleMalformed;
+        };
+        if roots.insert_trusted_der_for_test(&der).is_err() {
+            return PcrRejectCode::PcrBundleMalformed;
+        }
+    }
+
+    // 3. Optional nonce.
+    let nonce_bytes: Option<Vec<u8>> = match input.expected_nonce_hex.as_deref() {
+        Some(h) => match hex::decode(h) {
+            Ok(b) => Some(b),
+            Err(_) => return PcrRejectCode::PcrBundleMalformed,
+        },
+        None => None,
+    };
+
+    // 4. Run live verify.
+    let claims = match verify_nitro_attestation(
+        &cose_bytes,
+        &roots,
+        nonce_bytes.as_deref(),
+        input.current_time,
+    ) {
+        Ok(c) => c,
+        Err(e) => return map_attest_error(&e),
+    };
+
+    // 5. PCR check: decode expected_pcrs into (u8, Vec<u8>) pairs, then call
+    //    verify_pcr_set. Allocation of the owned hash buffers has to live
+    //    across the call because verify_pcr_set takes slice references.
+    let mut expected_owned: Vec<(u8, Vec<u8>)> = Vec::with_capacity(input.expected_pcrs.len());
+    for (key, value) in &input.expected_pcrs {
+        let Some(id_str) = key.strip_prefix("PCR") else {
+            return PcrRejectCode::PcrBundleMalformed;
+        };
+        let Ok(id) = id_str.parse::<u8>() else {
+            return PcrRejectCode::PcrBundleMalformed;
+        };
+        let Ok(hash) = hex::decode(value) else {
+            return PcrRejectCode::PcrBundleMalformed;
+        };
+        expected_owned.push((id, hash));
+    }
+    let expected_refs: Vec<(u8, &[u8])> =
+        expected_owned.iter().map(|(i, h)| (*i, h.as_slice())).collect();
+
+    if let Err(e) = verify_pcr_set(&claims, &expected_refs) {
+        return map_attest_error(&e);
+    }
+
+    // If we get here, everything passed — but reject-only suite has no accept
+    // vectors. Classify as malformed so the executor reports a reject-code
+    // mismatch rather than silently passing.
+    PcrRejectCode::PcrBundleMalformed
+}
+
+/// Map an `AttestError` to the corresponding PCR reject code.
+///
+/// Defensive: mappings for variants not exercised by current c2-live vectors
+/// (Rekor, PayloadTooLarge, CertNotYetValid, …) still produce a defensible
+/// code rather than panicking.
+///
+/// The explicit arms that map to the same reject code as the wildcard are
+/// kept deliberately — they document which variants have been audited and
+/// intentionally fold into `PcrBundleMalformed`, as opposed to novel
+/// `#[non_exhaustive]` variants caught by the final wildcard.
+#[allow(clippy::match_same_arms)]
+fn map_attest_error(e: &AttestError) -> PcrRejectCode {
+    match e {
+        AttestError::SignatureInvalid { .. } => PcrRejectCode::PcrAttestorSignatureInvalid,
+        AttestError::NonceMismatch => PcrRejectCode::PcrAttestationNonceMismatch,
+        AttestError::PcrMismatch { .. } => PcrRejectCode::PcrAttestationMismatch,
+        AttestError::CertExpired { .. } | AttestError::CertNotYetValid { .. } => {
+            PcrRejectCode::PcrAttestationCertExpired
+        }
+        AttestError::CaChainInvalid { .. } | AttestError::CaChainTooLong { .. } => {
+            PcrRejectCode::PcrAttestationCertChainInvalid
+        }
+        AttestError::UntrustedRoot { .. } => PcrRejectCode::PcrAttestorNotTrusted,
+        AttestError::UnsupportedAlg { .. } => PcrRejectCode::PcrAttestationUnsupportedCoseAlg,
+        AttestError::DuplicatePcrId { .. }
+        | AttestError::PcrIndexOutOfRange { .. }
+        | AttestError::WeakHashAlg { .. }
+        | AttestError::MalformedDoc { .. }
+        | AttestError::PayloadTooLarge { .. }
+        | AttestError::CborDepthExceeded { .. } => PcrRejectCode::PcrBundleMalformed,
+        // Rekor variants: mapped to the existing transparency-log codes.
+        // Not exercised by c2-live yet; kept here so map_attest_error is total.
+        AttestError::RekorProofInvalid { .. } => PcrRejectCode::PcrAttestationTransparencyInvalid,
+        AttestError::RekorSthStale { .. } => PcrRejectCode::PcrAttestationTransparencyStale,
+        AttestError::RekorLogUntrusted { .. } => {
+            PcrRejectCode::PcrAttestationTransparencyLogUnknown
+        }
+        // #[non_exhaustive] safety net — any new AttestError variant must
+        // pick an explicit code above. Falling through to malformed is the
+        // safest fail-closed default.
         _ => PcrRejectCode::PcrBundleMalformed,
     }
 }
