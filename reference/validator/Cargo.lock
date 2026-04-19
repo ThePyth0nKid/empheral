@@ -562,6 +562,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ephemeral-print-root-fingerprint"
+version = "0.1.0"
+dependencies = [
+ "ephemeral-attestation",
+ "hex",
+]
+
+[[package]]
 name = "ephemeral-prod-symbol-probe"
 version = "0.1.0"
 dependencies = [

@@ -5,6 +5,13 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Daily run at 03:00 UTC.  GitHub Actions only schedules from the
+  # default branch (main), so this catches silent AWS root rotations
+  # even during periods where no PRs are being merged.  03:00 UTC is a
+  # low-traffic window for both AWS S3 and GH Actions runners, and
+  # places the alert synchronous with European-morning check-in.
+  schedule:
+    - cron: "0 3 * * *"
 
 env:
   CARGO_TERM_COLOR: always
@@ -173,3 +180,142 @@ jobs:
             echo "::error::c2-live vector file drifted: got $actual, expected $expected"
             exit 1
           fi
+
+  # AWS Nitro Enclave Root G1 drift guard.  The DER SHA-256 fingerprint
+  # of the live AWS-published root is compared against the in-tree
+  # constant (`ephemeral-attestation::AWS_NITRO_ROOT_FINGERPRINT`).  If
+  # AWS ever rotates the root — or if the artifact served from S3 is
+  # tampered — the compare step goes red with an actionable message.
+  #
+  # Threat model (explicit assumptions; see design-final-v2.md §9.3):
+  # - DETECTIVE control: trusts the ubuntu-latest CA bundle + TLS to
+  #   AWS S3 + the GH Actions runner image itself.  A compromised
+  #   runner defeats this control entirely.
+  # - Upstream-action tag resolution (`actions/checkout@v4` etc.) is
+  #   consistent with the rest of this workflow; SHA-pinning is a
+  #   repo-wide hardening item tracked separately.
+  # - On `schedule:` triggers, ALL jobs in this file run — including
+  #   `determinism-tripwires`, which invokes `vector-signer --dry-run`
+  #   with the `test-fixtures` feature enabled.  Any `build.rs` added
+  #   to a transitive dependency of that crate would execute here;
+  #   no `build.rs` exists in the workspace today.
+  #
+  # A human must still perform out-of-band verification before
+  # touching the constant; the guard exists so silent rotation cannot
+  # slip in unnoticed.
+  nitro-root-fingerprint:
+    name: nitro-root-fingerprint drift guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: reference/validator
+      - name: Print pinned fingerprint from the in-tree constant
+        id: pinned
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Tool links the const directly; its stdout is byte-identical
+          # to what ephemeral-attestation consumes at runtime.  Parsing
+          # the Rust source in CI would be brittle against rustfmt.
+          pinned=$(cargo run --release --quiet --locked -p ephemeral-print-root-fingerprint)
+          if [[ ! "$pinned" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::print-root-fingerprint produced unexpected output: '$pinned'"
+            exit 1
+          fi
+          echo "pinned=$pinned" >> "$GITHUB_OUTPUT"
+          echo "pinned (ephemeral-attestation::AWS_NITRO_ROOT_FINGERPRINT): $pinned"
+      - name: Fetch AWS Nitro Root G1 and compute live fingerprint
+        id: live
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp -d)
+          trap 'rm -rf "$tmp"' EXIT
+          # `-f` makes curl fail on HTTP 4xx/5xx (primary HTTP-error
+          # guard — fails fast with a clear exit code rather than
+          # saving an HTML error body to disk).  `--proto '=https'`
+          # and `--tlsv1.2` prevent any protocol/version downgrade.
+          # `--retry 3 --retry-delay 5 --max-time 30` absorbs a
+          # transient S3 hiccup without masking a persistent outage.
+          # The size-sanity floor below is a second layer (defence-
+          # in-depth), not the primary HTTP-status check.
+          curl --retry 3 --retry-delay 5 --max-time 30 -fsSL \
+            --proto '=https' --tlsv1.2 \
+            -o "$tmp/root.zip" \
+            https://aws-nitro-enclaves.amazonaws.com/AWS_NitroEnclaves_Root-G1.zip
+          # `wc -c <file` is POSIX-portable (works on GNU coreutils AND
+          # BSD macOS `stat`-less environments, should the runner image
+          # ever change).  Known-good size is 749 bytes (zip of a
+          # single ~777-byte PEM).  The >500-byte floor catches most
+          # truncated or substituted payloads without over-pinning to
+          # exact bytes (which would turn a benign AWS repackage into
+          # a false positive).
+          zip_size=$(wc -c < "$tmp/root.zip")
+          if [ "$zip_size" -lt 500 ]; then
+            echo "::error::Downloaded zip is suspiciously small ($zip_size bytes)."
+            echo "::error::Expected ~749 bytes.  Treating as fetch failure, not drift."
+            exit 1
+          fi
+          # Member-count + member-name validation BEFORE streaming.
+          # Rejects: (a) zips with multiple members (unexpected shape),
+          # (b) zips missing `root.pem` — which would cause `unzip -p`
+          # to exit 0 with empty stdout on some versions, and the
+          # downstream regex guard to fire with a cryptic "unexpected
+          # shape" message instead of a clear root-cause.
+          members=$(unzip -Z1 "$tmp/root.zip")
+          member_count=$(printf '%s\n' "$members" | wc -l)
+          if [ "$member_count" -ne 1 ]; then
+            echo "::error::Zip member count unexpected: $member_count (expected 1)."
+            echo "::error::Members: $(printf '%s' "$members" | tr '\n' ',')"
+            exit 1
+          fi
+          if ! printf '%s\n' "$members" | grep -qx 'root.pem'; then
+            echo "::error::Expected member 'root.pem' not found in zip."
+            echo "::error::Actual member: '$members'"
+            exit 1
+          fi
+          # Pipeline (zip-slip-safe via `-p` + explicit member name):
+          # unzip -p root.pem
+          #   → head -c 65536   (zip-bomb ceiling; real PEM is ~777 B)
+          #   → openssl x509 -outform DER     (PEM → DER re-encoding)
+          #   → sha256sum                     (guaranteed lowercase hex)
+          #   → awk '{print $1}'              (strip filename field)
+          # `sha256sum` (GNU coreutils, always on ubuntu-latest) emits
+          # `<hash>  -` deterministically — no version-dependent format
+          # drift unlike `openssl dgst -r`.
+          live=$(unzip -p "$tmp/root.zip" root.pem \
+            | head -c 65536 \
+            | openssl x509 -outform DER \
+            | sha256sum \
+            | awk '{print $1}')
+          if [[ ! "$live" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Live fingerprint has unexpected shape: '$live'"
+            echo "::error::The PEM → DER → SHA-256 pipeline produced something other"
+            echo "::error::than 64 lowercase hex characters.  Investigate before drift-diagnosing."
+            exit 1
+          fi
+          echo "live=$live" >> "$GITHUB_OUTPUT"
+          echo "live (AWS S3):                                        $live"
+      - name: Compare pinned vs live
+        shell: bash
+        env:
+          PINNED: ${{ steps.pinned.outputs.pinned }}
+          LIVE: ${{ steps.live.outputs.live }}
+        run: |
+          set -euo pipefail
+          if [ "$PINNED" != "$LIVE" ]; then
+            echo "::error::AWS Nitro Enclave Root G1 fingerprint MISMATCH."
+            echo "::error::pinned (ephemeral-attestation::AWS_NITRO_ROOT_FINGERPRINT): $PINNED"
+            echo "::error::live   (https://aws-nitro-enclaves.amazonaws.com/AWS_NitroEnclaves_Root-G1.zip): $LIVE"
+            echo "::error::This means AWS has rotated the Nitro root, OR the fetched artifact is tampered."
+            echo "::error::DO NOT auto-update the constant.  Manual out-of-band verification is required:"
+            echo "::error::  1) cross-check the new root via AWS docs + a second, independent network path"
+            echo "::error::  2) confirm via AWS support channel that a rotation occurred"
+            echo "::error::  3) only then update AWS_NITRO_ROOT_FINGERPRINT in crates/ephemeral-attestation/src/lib.rs"
+            exit 1
+          fi
+          echo "nitro-root-fingerprint: OK ($PINNED)"
+          echo "AWS Nitro Root G1 has a ~30-year lifetime; a mismatch here is a real signal, not flake."

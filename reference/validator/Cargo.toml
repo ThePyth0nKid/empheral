@@ -6,6 +6,7 @@ members = [
     "crates/ephemeral-cli",
     "crates/ephemeral-core",
     "crates/ephemeral-crypto",
+    "tools/print-root-fingerprint",
     "tools/prod-symbol-probe",
     "tools/vector-signer",
 ]

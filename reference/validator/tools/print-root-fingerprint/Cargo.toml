@@ -1,0 +1,24 @@
+[package]
+name = "ephemeral-print-root-fingerprint"
+description = "CI helper binary that prints the pinned AWS Nitro Enclave Root G1 SHA-256 fingerprint from `ephemeral-attestation::AWS_NITRO_ROOT_FINGERPRINT` as lowercase hex on stdout. Consumed by the `nitro-root-fingerprint` CI job to detect silent drift if AWS ever rotates the root. Not a production binary."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "ephemeral-print-root-fingerprint"
+path = "src/main.rs"
+
+[dependencies]
+# Links the constant directly — the binary's output is therefore
+# byte-identical to what the library consumes at runtime. Parsing the
+# Rust source file in CI would be brittle against rustfmt, comment
+# churn, or any future relocation of the constant.
+ephemeral-attestation = { path = "../../crates/ephemeral-attestation" }
+hex = { workspace = true }
