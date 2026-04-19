@@ -129,10 +129,11 @@ fn run() -> Result<bool> {
 
     let report = run_many(&inputs, &config);
     let crypto = summarize_crypto(&inputs);
-    print_report(&report, &crypto, cli.verbose);
+    let attestation = summarize_attestation(&inputs);
+    print_report(&report, &crypto, &attestation, cli.verbose);
 
     if let Some(out) = &cli.json_report {
-        write_json_report(out, &report, &crypto, &inputs)
+        write_json_report(out, &report, &crypto, &attestation, &inputs)
             .with_context(|| format!("writing JSON report to {}", out.display()))?;
     }
 
@@ -192,6 +193,60 @@ fn summarize_crypto(inputs: &[PathBuf]) -> CryptoSummary {
     CryptoSummary { mode, live, mocked }
 }
 
+/// Phase-C.2 attestation-mode breakdown scoped to the
+/// `pcr-attestation-reject` suite alone. Unlike [`CryptoSummary`] (which
+/// mixes delegation, tariff and PCR signature dimensions into a single
+/// aggregate), this summary answers: which attestation paths were
+/// exercised by the loaded PCR-suite files — the bool-based mock path,
+/// the live Nitro verify path, or both?
+#[derive(Debug, Clone)]
+struct AttestationSummary {
+    mode: &'static str,
+    live: u32,
+    mock: u32,
+}
+
+/// Walks every input file, keeps only those whose top-level
+/// `vector_suite` is `pcr-attestation-reject`, and classifies each of
+/// its vectors by presence of `cose_sign1_bytes` anywhere under
+/// `input`. Non-PCR files are skipped, so callers can pass the full
+/// default input set without polluting the count.
+fn summarize_attestation(inputs: &[PathBuf]) -> AttestationSummary {
+    let mut live: u32 = 0;
+    let mut mock: u32 = 0;
+    for path in inputs {
+        let Ok(bytes) = std::fs::read(path) else {
+            continue;
+        };
+        let Ok(v) = serde_json::from_slice::<Value>(&bytes) else {
+            continue;
+        };
+        if v.get("vector_suite").and_then(Value::as_str) != Some("pcr-attestation-reject") {
+            continue;
+        }
+        let Some(vectors) = v.get("vectors").and_then(Value::as_array) else {
+            continue;
+        };
+        for vec in vectors {
+            let Some(input) = vec.get("input") else {
+                continue;
+            };
+            if contains_cose_sign1(input) {
+                live += 1;
+            } else {
+                mock += 1;
+            }
+        }
+    }
+    let mode = match (live, mock) {
+        (0, 0) => "none",
+        (_, 0) => "live",
+        (0, _) => "mock",
+        _ => "mixed",
+    };
+    AttestationSummary { mode, live, mock }
+}
+
 /// Recursively scans a JSON value for a `cose_sign1_bytes` string field.
 /// Used to detect live-crypto vectors without coupling the CLI to every
 /// suite's concrete input schema.
@@ -245,7 +300,12 @@ fn default_inputs(dir: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-fn print_report(report: &TestReport, crypto: &CryptoSummary, verbose: bool) {
+fn print_report(
+    report: &TestReport,
+    crypto: &CryptoSummary,
+    attestation: &AttestationSummary,
+    verbose: bool,
+) {
     let mut stdout = std::io::stdout().lock();
     let _ = writeln!(stdout, "EPHEMERAL reference validator — conformance report");
     let _ = writeln!(stdout, "{:=<56}", "");
@@ -290,12 +350,18 @@ fn print_report(report: &TestReport, crypto: &CryptoSummary, verbose: bool) {
         "  crypto: mode={} live={} mocked={}",
         crypto.mode, crypto.live, crypto.mocked
     );
+    let _ = writeln!(
+        stdout,
+        "  attestation: mode={} live={} mock={}",
+        attestation.mode, attestation.live, attestation.mock
+    );
 }
 
 fn write_json_report(
     out: &Path,
     report: &TestReport,
     crypto: &CryptoSummary,
+    attestation: &AttestationSummary,
     inputs: &[PathBuf],
 ) -> Result<()> {
     let report_json = JsonReport {
@@ -310,6 +376,11 @@ fn write_json_report(
             mode: crypto.mode,
             live: crypto.live,
             mocked: crypto.mocked,
+        },
+        attestation: JsonAttestation {
+            mode: attestation.mode,
+            live: attestation.live,
+            mock: attestation.mock,
         },
         inputs: inputs.iter().map(|p| p.display().to_string()).collect(),
         suites: report
@@ -347,6 +418,7 @@ struct JsonReport {
     clean: bool,
     totals: JsonTotals,
     crypto: JsonCrypto,
+    attestation: JsonAttestation,
     inputs: Vec<String>,
     suites: Vec<JsonSuiteEntry>,
 }
@@ -363,6 +435,13 @@ struct JsonCrypto {
     mode: &'static str,
     live: u32,
     mocked: u32,
+}
+
+#[derive(Serialize)]
+struct JsonAttestation {
+    mode: &'static str,
+    live: u32,
+    mock: u32,
 }
 
 #[derive(Serialize)]
