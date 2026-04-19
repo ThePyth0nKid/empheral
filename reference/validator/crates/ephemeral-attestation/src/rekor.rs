@@ -439,7 +439,7 @@ impl RekorKeySet {
     /// Insert a trusted Rekor log key (production path).
     ///
     /// Rejects if:
-    /// - `log_id` is not in [`ALLOWED_LOG_IDS`], OR
+    /// - `log_id` is not in the crate-private `ALLOWED_LOG_IDS` slice, OR
     /// - the validity window is inverted (`valid_from > valid_until`).
     ///
     /// A `(log_id, key_bytes)` duplicate is idempotent success

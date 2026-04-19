@@ -127,8 +127,10 @@ jobs:
           echo "Scanning $core_rlib and $att_rlib"
           for rlib in "$core_rlib" "$att_rlib"; do
             # Negative: forbidden symbols MUST NOT be present.
+            # Covers Phase C.2 (insert_trusted_der_for_test, classify_live_nitro)
+            # and Phase C.2.5 (insert_trusted_key_for_test, classify_live_rekor).
             if nm --defined-only "$rlib" 2>/dev/null \
-                | grep -E "insert_trusted_der_for_test|classify_live_nitro"; then
+                | grep -E "insert_trusted_der_for_test|classify_live_nitro|insert_trusted_key_for_test|classify_live_rekor"; then
               echo "::error::LEAK: test-fixtures symbol found in $rlib"
               exit 1
             fi
@@ -159,7 +161,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: reference/validator
-      - name: vector-signer dry-run SHA256
+      - name: vector-signer dry-run SHA256 (phase C.2)
         shell: bash
         run: |
           set -euo pipefail
@@ -180,6 +182,35 @@ jobs:
             echo "::error::c2-live vector file drifted: got $actual, expected $expected"
             exit 1
           fi
+      # Phase C.2.5 (live Rekor) determinism tripwires. Mirrors the C.2
+      # structure above. The Rust-side golden-file guard in
+      # tools/vector-signer/tests/determinism_c2_5.rs independently pins
+      # the same dry-run SHA; if either diverges, investigate before
+      # updating either pin.
+      - name: vector-signer dry-run SHA256 (phase C.2.5)
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual=$(cargo run -p vector-signer --release --quiet --locked -- gen-phase-c2-5 --dry-run | sha256sum | awk '{print $1}')
+          expected="65f0ef5dc819e025267d14a76857ca2e61761a90c995878941053c643b6d102f"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::gen-phase-c2-5 dry-run SHA drifted: got $actual, expected $expected"
+            exit 1
+          fi
+      - name: pcr-attestation-reject-c2-5-rekor.json SHA256
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual=$(sha256sum conformance/pcr-attestation-reject-c2-5-rekor.json | awk '{print $1}')
+          expected="c37f4ac5564d5832dced760f07adc78ca93f5db9c3faf4e8754fcd35d9f8fb95"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::c2-5-rekor vector file drifted: got $actual, expected $expected"
+            exit 1
+          fi
+      - name: vector-signer determinism_c2_5 integration test
+        shell: bash
+        run: cargo test -p vector-signer --test determinism_c2_5 --locked
 
   # AWS Nitro Enclave Root G1 drift guard.  The DER SHA-256 fingerprint
   # of the live AWS-published root is compared against the in-tree

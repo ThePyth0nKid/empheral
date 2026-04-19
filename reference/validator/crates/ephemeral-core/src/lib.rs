@@ -55,7 +55,7 @@ pub use suites::audit::AuditRejectCode;
 pub use suites::canonicalization::CanonRejectCode;
 pub use suites::delegation::DelegationRejectCode;
 pub use suites::fuzz::FuzzRejectCode;
-pub use suites::pcr::PcrRejectCode;
+pub use suites::pcr::{is_live_rekor_proof, PcrRejectCode};
 pub use suites::tariff::TariffRejectCode;
 pub use types::{
     ExpectedOutcome, Outcome, Severity, SkipReason, SuiteFile, SuiteReport, TestReport,

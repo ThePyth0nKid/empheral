@@ -60,6 +60,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 
 use serde::Deserialize;
+use serde_json::Value;
 
 use crate::types::{Outcome, ValidationOutcome, Vector};
 
@@ -346,13 +347,14 @@ struct RevocationEntry {
 // ---------------- public entry point ---------------------------------------
 
 /// Execute one `pcr-attestation-reject` vector. Every PCR vector has
-/// `expected.outcome == reject`; we derive the reject code via [`classify`]
-/// and compare to `vector.expected.reject_code`.
+/// `expected.outcome == reject`; we derive the reject code via the
+/// crate-private `classify` function and compare to
+/// `vector.expected.reject_code`.
 ///
 /// Dispatch: vectors carrying a top-level `cose_sign1_bytes` field go through
-/// the Phase C.2 live-crypto path ([`classify_live_nitro`], gated behind the
+/// the Phase C.2 live-crypto path (`classify_live_nitro`, gated behind the
 /// `test-fixtures` feature). All other vectors use the mock-boolean
-/// classifier ([`classify`]).
+/// `classify` path.
 pub fn execute(vector: &Vector) -> ValidationOutcome {
     // Phase C.2 dispatch: live COSE_Sign1 / X.509 / ES384 path.
     if vector.input.get("cose_sign1_bytes").is_some() {
@@ -768,12 +770,53 @@ enum LiveRekorPresence {
     Full,
 }
 
+/// Names of the seven JSON fields on a `TransparencyLogProof` whose *joint*
+/// presence routes a vector to the live-Rekor classifier. Kept as a single
+/// source of truth so external tooling (e.g. the CLI transparency summary)
+/// can classify raw-JSON proofs without re-declaring the field list.
+///
+/// Changing this list is a semver-equivalent event for the live-dispatch
+/// boundary: add a field here and the validator starts refusing to run the
+/// live path for vectors that were previously `Full`. Keep in lock-step with
+/// the typed [`live_rekor_presence`] flag array.
+const LIVE_REKOR_PROOF_FIELDS: [&str; 7] = [
+    "proof_path_hex",
+    "sth_signature_hex",
+    "sth_timestamp",
+    "sth_tree_root_hex",
+    "log_pubkey_hex",
+    "entry_leaf_hash_hex",
+    "current_time",
+];
+
+/// Returns `true` iff `proof` (a JSON node matching the
+/// `TransparencyLogProof` shape) carries every one of the seven live-Rekor
+/// fields with a non-null value — i.e. would classify as `Full` under the
+/// crate-private typed classifier `live_rekor_presence`.
+///
+/// Intended for external harnesses that only have the raw JSON (the CLI
+/// transparency summary, for example). Partial or absent presence returns
+/// `false`; callers that need to distinguish the three states must use
+/// the typed classifier inside this crate.
+///
+/// Non-object inputs return `false` — a consistent safe default for any
+/// walker that can't guarantee it hands us a proof object.
+#[must_use]
+pub fn is_live_rekor_proof(proof: &Value) -> bool {
+    LIVE_REKOR_PROOF_FIELDS
+        .iter()
+        .all(|field| proof.get(*field).is_some_and(|v| !v.is_null()))
+}
+
 fn live_rekor_presence(proof: &TransparencyLogProof) -> LiveRekorPresence {
     // Only live-exclusive fields participate in presence detection. Legacy
     // mock-bool vectors set `entry_index` / `sth_tree_size` / `log_id`
     // without implying a live proof — those flow through the mock-bool path
     // (pcrrej-024 is the canonical example: entry_index > sth_tree_size →
     // NotYetLogged).
+    //
+    // The flag array order mirrors `LIVE_REKOR_PROOF_FIELDS` so the typed
+    // classifier and the JSON-side [`is_live_rekor_proof`] stay in lock-step.
     let flags = [
         proof.proof_path_hex.is_some(),
         proof.sth_signature_hex.is_some(),
@@ -1852,6 +1895,85 @@ mod tests {
             max_root_age_seconds_override: None,
         };
         assert_eq!(live_rekor_presence(&proof), LiveRekorPresence::Full);
+    }
+
+    /// The JSON-side [`is_live_rekor_proof`] returns `true` exactly when
+    /// every live-exclusive field is present and non-null — the same
+    /// condition under which the typed [`live_rekor_presence`] classifier
+    /// returns [`LiveRekorPresence::Full`]. This guards the invariant that
+    /// `LIVE_REKOR_PROOF_FIELDS` and the typed flag array stay in lock-step.
+    #[test]
+    fn is_live_rekor_proof_full_when_every_field_present() {
+        let full = serde_json::json!({
+            "proof_path_hex": ["aa"],
+            "sth_signature_hex": "bb",
+            "sth_timestamp": 1_714_500_000_i64,
+            "sth_tree_root_hex": "cc",
+            "log_pubkey_hex": "dd",
+            "entry_leaf_hash_hex": "ee",
+            "current_time": 1_714_500_000_i64,
+        });
+        assert!(is_live_rekor_proof(&full));
+    }
+
+    /// `is_live_rekor_proof` must return `false` for non-object inputs
+    /// (safe default for walkers that may traverse arbitrary JSON).
+    #[test]
+    fn is_live_rekor_proof_rejects_non_objects() {
+        assert!(!is_live_rekor_proof(&Value::Null));
+        assert!(!is_live_rekor_proof(&Value::Bool(true)));
+        assert!(!is_live_rekor_proof(&serde_json::json!("string")));
+        assert!(!is_live_rekor_proof(&serde_json::json!([1, 2, 3])));
+        assert!(!is_live_rekor_proof(&serde_json::json!({})));
+    }
+
+    /// A JSON proof with any live field explicitly set to `null` must not
+    /// count as present — closes the split-view hazard where `"x": null`
+    /// and missing-key versions of the same vector classify differently.
+    #[test]
+    fn is_live_rekor_proof_treats_null_as_absent() {
+        let base = serde_json::json!({
+            "proof_path_hex": ["aa"],
+            "sth_signature_hex": "bb",
+            "sth_timestamp": 1_714_500_000_i64,
+            "sth_tree_root_hex": "cc",
+            "log_pubkey_hex": "dd",
+            "entry_leaf_hash_hex": "ee",
+            "current_time": 1_714_500_000_i64,
+        });
+        assert!(is_live_rekor_proof(&base));
+        for field in &LIVE_REKOR_PROOF_FIELDS {
+            let mut damaged = base.clone();
+            damaged[*field] = Value::Null;
+            assert!(
+                !is_live_rekor_proof(&damaged),
+                "null value for `{field}` must not count as present"
+            );
+        }
+    }
+
+    /// A JSON proof with any live field missing entirely must not count as
+    /// present — partial framing (the V4 Block E adversarial case) stays in
+    /// the mock-bool dispatch.
+    #[test]
+    fn is_live_rekor_proof_treats_missing_as_absent() {
+        let base = serde_json::json!({
+            "proof_path_hex": ["aa"],
+            "sth_signature_hex": "bb",
+            "sth_timestamp": 1_714_500_000_i64,
+            "sth_tree_root_hex": "cc",
+            "log_pubkey_hex": "dd",
+            "entry_leaf_hash_hex": "ee",
+            "current_time": 1_714_500_000_i64,
+        });
+        for field in &LIVE_REKOR_PROOF_FIELDS {
+            let mut damaged = base.clone();
+            damaged.as_object_mut().unwrap().remove(*field);
+            assert!(
+                !is_live_rekor_proof(&damaged),
+                "missing `{field}` must not count as present"
+            );
+        }
     }
 
     /// End-to-end: a proof with partial live evidence dispatched through

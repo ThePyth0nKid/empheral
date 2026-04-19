@@ -191,7 +191,7 @@ fn tally(outcome: ValidationOutcome, report: &mut SuiteReport, vector: &Vector) 
 /// Run every supplied file, producing an aggregate report.
 ///
 /// Files whose suite cannot be determined (because load or parse failed)
-/// bucket under [`UnresolvedSuiteBucket::key`]. The stem-based fallback used
+/// bucket under a deterministic orphan key. The stem-based fallback used
 /// by earlier iterations silently misrouted orphan files into `audit-replay`;
 /// this version surfaces them with an explicit `load-error` failure.
 pub fn run_many(paths: &[impl AsRef<Path>], config: &RunConfig<'_>) -> TestReport {

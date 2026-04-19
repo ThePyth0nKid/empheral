@@ -22,7 +22,7 @@
 //! RFC 9162 §2.1 is *left-deep*: for `D[n]` with `n > 1`, split at
 //! `k = largest power of 2 strictly less than n`, recurse on `D[0..k]`
 //! and `D[k..n]`, and combine their roots. That is the shape both
-//! [`build_tree`] and [`generate_proof`] reproduce.
+//! `build_tree` and `generate_proof` reproduce.
 
 use sha2::{Digest, Sha256};
 
@@ -88,8 +88,8 @@ fn split_point(n: usize) -> usize {
     1usize << (n - 1).ilog2()
 }
 
-/// Generate an RFC 9162 §2.1.3 PATH(index, D[n]) inclusion proof for the
-/// leaf at `index`, plus the tree's root (for convenience).
+/// Generate an RFC 9162 §2.1.3 `PATH(index, D\[n\])` inclusion proof for
+/// the leaf at `index`, plus the tree's root (for convenience).
 ///
 /// Returns `(audit_path, root)` where `audit_path` is ordered from
 /// leaf-level to root-level (deepest sibling first), matching the order
@@ -116,7 +116,7 @@ pub fn generate_proof(leaves: &[Vec<u8>], index: u64) -> (Vec<[u8; 32]>, [u8; 32
     (path, root)
 }
 
-/// Recursive PATH(m, D[n]) builder. Mirrors RFC 9162 §2.1.3:
+/// Recursive `PATH(m, D\[n\])` builder. Mirrors RFC 9162 §2.1.3:
 ///
 /// - If `leaves.len() == 1`: proof is empty.
 /// - Else split at `k = split_point(n)`. If `m < k`, descend left and

@@ -1,7 +1,13 @@
-//! Task D-2 local guard — assert that `ephemeral-core` built without
-//! the `test-fixtures` feature does NOT leak the synthetic-root bypass
-//! (`insert_trusted_der_for_test`) or the live-Nitro classifier
-//! (`classify_live_nitro`) into the compiled library.
+//! Task D-2 local guard — assert that `ephemeral-core` and
+//! `ephemeral-attestation` built without the `test-fixtures` feature do
+//! NOT leak any of the four test-only surfaces into the compiled library:
+//!
+//! | Surface                         | Crate                 | Phase |
+//! |---------------------------------|-----------------------|-------|
+//! | `insert_trusted_der_for_test`   | ephemeral-attestation | C.2   |
+//! | `classify_live_nitro`           | ephemeral-core        | C.2   |
+//! | `insert_trusted_key_for_test`   | ephemeral-attestation | C.2.5 |
+//! | `classify_live_rekor`           | ephemeral-core        | C.2.5 |
 //!
 //! Why a rlib, not a final binary:
 //!
@@ -169,10 +175,23 @@ fn test_fixtures_symbols_do_not_leak_into_prod_rlibs() {
     let rlibs = build_and_locate_relevant_rlibs();
 
     // Negative: these must NEVER appear in either production rlib.
-    // Both are gated behind the `test-fixtures` feature, one in
-    // ephemeral-core (classify_live_nitro), one in ephemeral-attestation
-    // (insert_trusted_der_for_test).
-    let forbidden = ["insert_trusted_der_for_test", "classify_live_nitro"];
+    // All four are gated behind the `test-fixtures` feature.
+    //
+    // Phase C.2 surface:
+    // - `insert_trusted_der_for_test` (ephemeral-attestation) — synthetic
+    //   Nitro root anchor installation.
+    // - `classify_live_nitro` (ephemeral-core) — live-Nitro classifier.
+    //
+    // Phase C.2.5 surface:
+    // - `insert_trusted_key_for_test` (ephemeral-attestation) — Rekor log
+    //   Ed25519 public-key anchor installation.
+    // - `classify_live_rekor` (ephemeral-core) — live-Rekor classifier.
+    let forbidden = [
+        "insert_trusted_der_for_test",
+        "classify_live_nitro",
+        "insert_trusted_key_for_test",
+        "classify_live_rekor",
+    ];
     // Positive control per rlib: at least one unconditionally public,
     // non-generic symbol that MUST be monomorphized into the rlib. If
     // absent, the linker stripped too much and the negative checks are
@@ -206,8 +225,10 @@ fn test_fixtures_symbols_do_not_leak_into_prod_rlibs() {
                 "LEAK DETECTED: {} symbol(s) containing `{f}` found in \
                  {}. The feature-gate around this item is broken — check \
                  #[cfg(feature = \"test-fixtures\")] blocks in \
-                 ephemeral-core/src/suites/pcr.rs and in \
-                 ephemeral-attestation/src/anchors.rs. First 5 hits:\n  {}",
+                 ephemeral-core/src/suites/pcr.rs (classify_live_nitro, \
+                 classify_live_rekor) and in ephemeral-attestation \
+                 (insert_trusted_der_for_test in anchors.rs, \
+                 insert_trusted_key_for_test in rekor.rs). First 5 hits:\n  {}",
                 hits.len(),
                 rlib.display(),
                 hits.iter().take(5).map(|s| s.as_str()).collect::<Vec<_>>().join("\n  "),

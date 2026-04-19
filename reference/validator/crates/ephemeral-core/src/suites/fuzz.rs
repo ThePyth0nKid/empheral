@@ -61,8 +61,8 @@ impl fmt::Display for FuzzRejectCode {
 
 // ---------------- classifier output ----------------------------------------
 
-/// Structured classifier output per §4.5. Derived by [`classify`] and compared
-/// against the vector's `expected.output`.
+/// Structured classifier output per §4.5. Derived by the crate-private
+/// `classify` function and compared against the vector's `expected.output`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FuzzOutcome {
     pub tier: u32,

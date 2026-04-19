@@ -12,7 +12,7 @@ use std::process::ExitCode;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use ephemeral_core::{run_many, RunConfig, TestReport, VectorSuite};
+use ephemeral_core::{is_live_rekor_proof, run_many, RunConfig, TestReport, VectorSuite};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -130,10 +130,11 @@ fn run() -> Result<bool> {
     let report = run_many(&inputs, &config);
     let crypto = summarize_crypto(&inputs);
     let attestation = summarize_attestation(&inputs);
-    print_report(&report, &crypto, &attestation, cli.verbose);
+    let transparency = summarize_transparency(&inputs);
+    print_report(&report, &crypto, &attestation, &transparency, cli.verbose);
 
     if let Some(out) = &cli.json_report {
-        write_json_report(out, &report, &crypto, &attestation, &inputs)
+        write_json_report(out, &report, &crypto, &attestation, &transparency, &inputs)
             .with_context(|| format!("writing JSON report to {}", out.display()))?;
     }
 
@@ -247,6 +248,68 @@ fn summarize_attestation(inputs: &[PathBuf]) -> AttestationSummary {
     AttestationSummary { mode, live, mock }
 }
 
+/// Phase-C.2.5 transparency-log breakdown scoped to the
+/// `pcr-attestation-reject` suite. Answers a dimension
+/// [`AttestationSummary`] does not: which vectors exercise the live-Rekor
+/// verifier (all seven proof fields present, routed through
+/// `classify_live_rekor`) versus the mock-bool fallback
+/// (`inclusion_proof_valid` booleans).
+///
+/// Orthogonal to attestation mode: a vector can be `cose_sign1_bytes`-live
+/// and mock-bool transparency at the same time (Phase C.2 live-Nitro
+/// vectors), or no-COSE and live-Rekor (Phase C.2.5 vectors).
+#[derive(Debug, Clone)]
+struct TransparencySummary {
+    mode: &'static str,
+    live: u32,
+    mock: u32,
+}
+
+/// Walks every input file, keeps only those whose top-level `vector_suite`
+/// is `pcr-attestation-reject`, and classifies each vector by applying
+/// [`is_live_rekor_proof`] to its
+/// `input.attestation_bundle.transparency_log_proof` JSON node. Vectors
+/// without such a node (no transparency dimension at all) are skipped so
+/// `mock` does not inflate with unrelated entries. Non-PCR files are
+/// skipped for the same reason as [`summarize_attestation`].
+fn summarize_transparency(inputs: &[PathBuf]) -> TransparencySummary {
+    let mut live: u32 = 0;
+    let mut mock: u32 = 0;
+    for path in inputs {
+        let Ok(bytes) = std::fs::read(path) else {
+            continue;
+        };
+        let Ok(v) = serde_json::from_slice::<Value>(&bytes) else {
+            continue;
+        };
+        if v.get("vector_suite").and_then(Value::as_str) != Some("pcr-attestation-reject") {
+            continue;
+        }
+        let Some(vectors) = v.get("vectors").and_then(Value::as_array) else {
+            continue;
+        };
+        for vec in vectors {
+            let Some(proof) = vec
+                .pointer("/input/attestation_bundle/transparency_log_proof")
+            else {
+                continue;
+            };
+            if is_live_rekor_proof(proof) {
+                live += 1;
+            } else {
+                mock += 1;
+            }
+        }
+    }
+    let mode = match (live, mock) {
+        (0, 0) => "none",
+        (_, 0) => "live",
+        (0, _) => "mock",
+        _ => "mixed",
+    };
+    TransparencySummary { mode, live, mock }
+}
+
 /// Recursively scans a JSON value for a `cose_sign1_bytes` string field.
 /// Used to detect live-crypto vectors without coupling the CLI to every
 /// suite's concrete input schema.
@@ -305,6 +368,7 @@ fn print_report(
     report: &TestReport,
     crypto: &CryptoSummary,
     attestation: &AttestationSummary,
+    transparency: &TransparencySummary,
     verbose: bool,
 ) {
     let mut stdout = std::io::stdout().lock();
@@ -356,6 +420,11 @@ fn print_report(
         "  attestation: mode={} live={} mock={}",
         attestation.mode, attestation.live, attestation.mock
     );
+    let _ = writeln!(
+        stdout,
+        "  transparency: mode={} live={} mock={}",
+        transparency.mode, transparency.live, transparency.mock
+    );
 }
 
 fn write_json_report(
@@ -363,6 +432,7 @@ fn write_json_report(
     report: &TestReport,
     crypto: &CryptoSummary,
     attestation: &AttestationSummary,
+    transparency: &TransparencySummary,
     inputs: &[PathBuf],
 ) -> Result<()> {
     let report_json = JsonReport {
@@ -382,6 +452,11 @@ fn write_json_report(
             mode: attestation.mode,
             live: attestation.live,
             mock: attestation.mock,
+        },
+        transparency: JsonTransparency {
+            mode: transparency.mode,
+            live: transparency.live,
+            mock: transparency.mock,
         },
         inputs: inputs.iter().map(|p| p.display().to_string()).collect(),
         suites: report
@@ -420,6 +495,7 @@ struct JsonReport {
     totals: JsonTotals,
     crypto: JsonCrypto,
     attestation: JsonAttestation,
+    transparency: JsonTransparency,
     inputs: Vec<String>,
     suites: Vec<JsonSuiteEntry>,
 }
@@ -440,6 +516,13 @@ struct JsonCrypto {
 
 #[derive(Serialize)]
 struct JsonAttestation {
+    mode: &'static str,
+    live: u32,
+    mock: u32,
+}
+
+#[derive(Serialize)]
+struct JsonTransparency {
     mode: &'static str,
     live: u32,
     mock: u32,

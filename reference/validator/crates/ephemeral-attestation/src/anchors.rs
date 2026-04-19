@@ -67,8 +67,8 @@ impl NitroRootSet {
     /// Insert a DER-encoded root certificate.
     ///
     /// Rejects if:
-    /// - the fingerprint is not in [`ALLOWED_FINGERPRINTS`] (production
-    ///   allowlist — only the real AWS G1 root passes), OR
+    /// - the fingerprint is not in the crate-private `ALLOWED_FINGERPRINTS`
+    ///   slice (production allowlist — only the real AWS G1 root passes), OR
     /// - a certificate with the same fingerprint is already registered.
     pub fn insert_trusted_der(&mut self, root_der: &[u8]) -> Result<(), AttestError> {
         let fingerprint = sha256_fingerprint(root_der);
@@ -96,7 +96,7 @@ impl NitroRootSet {
     /// bypass at compile time.
     ///
     /// Use this in test fixtures that generate a local CA root whose fingerprint
-    /// is not in [`ALLOWED_FINGERPRINTS`].
+    /// is not in the production `ALLOWED_FINGERPRINTS` allowlist.
     #[cfg(feature = "test-fixtures")]
     pub fn insert_trusted_der_for_test(&mut self, root_der: &[u8]) -> Result<(), AttestError> {
         let fingerprint = sha256_fingerprint(root_der);
