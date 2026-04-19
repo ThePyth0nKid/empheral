@@ -30,7 +30,14 @@ ephemeral-attestation = { path = "../ephemeral-attestation" }
 # The reference CLI (ephemeral-cli) enables it explicitly; production
 # consumers of ephemeral-core do not, so the live-path code is absent
 # from their build entirely. Do not move this into `default`.
-test-fixtures = ["ephemeral-attestation/test-fixtures"]
+test-fixtures = ["ephemeral-attestation/test-fixtures", "ephemeral-attestation/rekor"]
+# Phase C.2.5 live-Rekor dispatch path (classify_live_rekor + STH signature
+# verification + Merkle inclusion-proof replay). Forwards the `rekor` feature
+# into ephemeral-attestation which in turn pulls ed25519-dalek in as a hard
+# dependency of the rekor module. Tied to `test-fixtures` only at the point
+# of use (classify_live_rekor calls RekorKeySet::insert_trusted_key_for_test),
+# so default production builds compile neither path.
+rekor = ["ephemeral-attestation/rekor"]
 
 [dev-dependencies]
 anyhow = { workspace = true }

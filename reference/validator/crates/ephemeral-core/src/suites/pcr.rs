@@ -288,6 +288,51 @@ struct TransparencyLogProof {
     sth_tree_size: Option<u64>,
     #[serde(default)]
     witness_cosignatures: Option<Vec<serde_json::Value>>,
+
+    // ── Phase C.2.5 live-Rekor dispatch inputs ──────────────────────────────
+    //
+    // When ALL of `proof_path_hex`, `sth_signature_hex`, `sth_tree_root_hex`,
+    // `log_pubkey_hex`, `entry_leaf_hash_hex`, `sth_timestamp`, and
+    // `current_time` are present, `classify_transparency_log` dispatches to
+    // the live verifier (`classify_live_rekor`) which performs real Ed25519
+    // STH verification + RFC 9162 §2.1.1 Merkle-proof replay. The bool hint
+    // `inclusion_proof_valid` is ignored on the live path except as a
+    // contradiction signal (Some(false) + full evidence → Invalid, never Pass).
+    //
+    // Partial presence — some live fields supplied, others missing — is a
+    // presence-level contradiction and classifies as TransparencyInvalid.
+    // This prevents vector authors from accidentally leaving a verifier in
+    // the weaker mock path while appearing to supply real evidence.
+    #[serde(default)]
+    proof_path_hex: Option<Vec<String>>,
+    #[serde(default)]
+    sth_signature_hex: Option<String>,
+    #[serde(default)]
+    sth_timestamp: Option<i64>,
+    #[serde(default)]
+    sth_tree_root_hex: Option<String>,
+    #[serde(default)]
+    log_pubkey_hex: Option<String>,
+    #[serde(default)]
+    entry_leaf_hash_hex: Option<String>,
+    #[serde(default)]
+    current_time: Option<i64>,
+    // These four are consumed only on the live-Rekor path
+    // (`classify_live_rekor`, gated behind `test-fixtures`). Under default
+    // builds they round-trip through serde without ever being read — the
+    // dead-code lint would otherwise fire.
+    #[serde(default)]
+    #[cfg_attr(not(feature = "test-fixtures"), allow(dead_code))]
+    log_id_hex: Option<String>,
+    #[serde(default)]
+    #[cfg_attr(not(feature = "test-fixtures"), allow(dead_code))]
+    log_key_valid_from: Option<i64>,
+    #[serde(default)]
+    #[cfg_attr(not(feature = "test-fixtures"), allow(dead_code))]
+    log_key_valid_until: Option<i64>,
+    #[serde(default)]
+    #[cfg_attr(not(feature = "test-fixtures"), allow(dead_code))]
+    max_root_age_seconds_override: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -611,6 +656,54 @@ fn classify_transparency_log(
     if matches!(&proof.inclusion_proof, Some(serde_json::Value::Null)) {
         return Some(PcrRejectCode::PcrAttestationTransparencyMissing);
     }
+
+    // ── Phase C.2.5 presence-based dispatch ─────────────────────────────────
+    //
+    // When the vector supplies any live-Rekor field, the verifier runs the
+    // real Ed25519 + Merkle path. Partial presence (some fields set, others
+    // missing) is itself a reject — it signals a vector authored to exercise
+    // live verification that arrives with insufficient evidence. We use
+    // TransparencyInvalid for this case rather than BundleMalformed because
+    // the structure IS well-formed JSON; what's wrong is the cryptographic
+    // claim, and an adversary presenting partial evidence is attempting to
+    // bypass the log.
+    let live_presence = live_rekor_presence(proof);
+    match live_presence {
+        LiveRekorPresence::None => {
+            // Fall through to the mock-bool classifier below.
+        }
+        LiveRekorPresence::Partial => {
+            return Some(PcrRejectCode::PcrAttestationTransparencyInvalid);
+        }
+        LiveRekorPresence::Full => {
+            // If the vector additionally stamps `inclusion_proof_valid: false`
+            // it is declaring the proof adversarial — do not spend CPU cycles
+            // attempting to verify, and never let a Pass-producing verifier
+            // accept a proof the vector author flagged as invalid.
+            if matches!(proof.inclusion_proof_valid, Some(false)) {
+                return Some(PcrRejectCode::PcrAttestationTransparencyInvalid);
+            }
+            #[cfg(feature = "test-fixtures")]
+            {
+                // `Ok(())` → `None` → outer pipeline proceeds past
+                // transparency into quorum / cross-attestor / expected-value.
+                // `Err(code)` → `Some(code)` → that precise reject fires.
+                return classify_live_rekor(proof, req).err();
+            }
+            #[cfg(not(feature = "test-fixtures"))]
+            {
+                // Vector carries live-Rekor evidence but the crate was built
+                // without the `test-fixtures` feature. Mirror execute()'s
+                // cose_sign1 handling: emit a Pass-blocker rather than silently
+                // falling into the mock-bool classifier, which would produce a
+                // misleadingly green result.
+                return Some(PcrRejectCode::PcrAttestationTransparencyInvalid);
+            }
+        }
+    }
+
+    // ── Mock-bool path (legacy pcrrej-020..024 + 045) ──────────────────────
+    //
     // pcrrej-021: proof declared invalid.
     if matches!(proof.inclusion_proof_valid, Some(false)) {
         return Some(PcrRejectCode::PcrAttestationTransparencyInvalid);
@@ -649,6 +742,43 @@ fn classify_transparency_log(
         }
     }
     None
+}
+
+/// Classification of the live-Rekor evidence fields supplied by a vector.
+///
+/// - `None`   → no live fields present; legacy mock-bool classifier applies.
+/// - `Partial`→ some live fields but not the minimum set; treat as adversarial.
+/// - `Full`   → every field needed to run real verification is present.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LiveRekorPresence {
+    None,
+    Partial,
+    Full,
+}
+
+fn live_rekor_presence(proof: &TransparencyLogProof) -> LiveRekorPresence {
+    // Only live-exclusive fields participate in presence detection. Legacy
+    // mock-bool vectors set `entry_index` / `sth_tree_size` / `log_id`
+    // without implying a live proof — those flow through the mock-bool path
+    // (pcrrej-024 is the canonical example: entry_index > sth_tree_size →
+    // NotYetLogged).
+    let flags = [
+        proof.proof_path_hex.is_some(),
+        proof.sth_signature_hex.is_some(),
+        proof.sth_timestamp.is_some(),
+        proof.sth_tree_root_hex.is_some(),
+        proof.log_pubkey_hex.is_some(),
+        proof.entry_leaf_hash_hex.is_some(),
+        proof.current_time.is_some(),
+    ];
+    let set = flags.iter().filter(|b| **b).count();
+    if set == 0 {
+        LiveRekorPresence::None
+    } else if set == flags.len() {
+        LiveRekorPresence::Full
+    } else {
+        LiveRekorPresence::Partial
+    }
 }
 
 fn classify_trust_filter(
@@ -809,6 +939,10 @@ fn category_to_code(category: &str) -> PcrRejectCode {
 
 #[cfg(feature = "test-fixtures")]
 use ephemeral_attestation::{
+    rekor::{
+        verify_rekor_inclusion, verify_rekor_sth, RekorEntry, RekorKeySet, RekorSignedTreeHead,
+        VerifyingKey as RekorVerifyingKey, MAX_INCLUSION_DEPTH, MAX_STH_AGE_SECONDS,
+    },
     verify_nitro_attestation, verify_pcr_set, AttestError, NitroRootSet,
 };
 
@@ -989,6 +1123,246 @@ fn map_attest_error(e: &AttestError) -> PcrRejectCode {
         // safest fail-closed default.
         _ => PcrRejectCode::PcrBundleMalformed,
     }
+}
+
+// ---------------- Phase C.2.5: live Rekor path -----------------------------
+//
+// A `TransparencyLogProof` with every `*_hex` field populated drives real
+// Ed25519 STH verification + RFC 9162 §2.1.1 Merkle-proof replay. The
+// presence-based dispatch in `classify_transparency_log` is the gatekeeper;
+// this function assumes it was called with full evidence.
+
+/// Hex-decode helper. Returns `PcrAttestationTransparencyInvalid` on error
+/// — malformed hex inside live-Rekor fields is adversarial, not a generic
+/// bundle-structure bug. The field layout itself is well-formed JSON.
+#[cfg(feature = "test-fixtures")]
+fn decode_hex_fixed<const N: usize>(s: &str) -> Result<[u8; N], PcrRejectCode> {
+    let bytes = hex::decode(s).map_err(|_| PcrRejectCode::PcrAttestationTransparencyInvalid)?;
+    bytes
+        .try_into()
+        .map_err(|_: Vec<u8>| PcrRejectCode::PcrAttestationTransparencyInvalid)
+}
+
+#[cfg(feature = "test-fixtures")]
+fn decode_hex_var(s: &str) -> Result<Vec<u8>, PcrRejectCode> {
+    hex::decode(s).map_err(|_| PcrRejectCode::PcrAttestationTransparencyInvalid)
+}
+
+/// Run the live-Rekor verification pipeline for one transparency-log proof.
+///
+/// Returns `Ok(())` when the proof is cryptographically valid and every
+/// Tariff policy check passes. Returns `Err(code)` with the precise reject
+/// code on first failure — these are the codes the conformance vectors
+/// pcrrej-110..117 target.
+///
+/// The dispatch site (`classify_transparency_log`) collapses `Ok(())` into
+/// `None` so the outer `execute()` pipeline proceeds to quorum,
+/// cross-attestor, and expected-value checks. A vector authored as a
+/// reject on some *other* basis (e.g., a bad quorum) still rejects at the
+/// correct downstream step. A vector where every verifier check passes
+/// will produce a Pass; the harness flags a `reject_code mismatch:
+/// produced pass, expected ...`, which is the correct signal for a
+/// vector-authorship error rather than a verifier bug.
+///
+/// Checks in order:
+///
+/// 1. Decode the fixed-width hex fields (log_id, keys, roots, leaf hash).
+///    Malformed hex → `TransparencyInvalid` (adversarial framing).
+/// 2. Ed25519 `VerifyingKey::from_bytes` on `log_pubkey_hex`.
+/// 3. Policy: `log_id_bytes` must match a 32-byte-hex entry in Tariff's
+///    `trusted_transparency_logs` (canonical identity: 32-byte STH-bound
+///    form, closing the string-vs-bytes split-view hazard).
+/// 4. Policy: STH timestamp age must be ≤ effective max-root-age
+///    (`max_root_age_seconds_override` on the proof precedes the Tariff
+///    value) → `PcrAttestationTransparencyStale`.
+/// 5. Build a `RekorKeySet` via `insert_trusted_key_for_test`.
+/// 6. `verify_rekor_sth` — Ed25519 strict signature + caller-clock freshness.
+/// 7. `verify_rekor_inclusion` — RFC 9162 Merkle proof replay.
+/// 8. Policy: witness cosignatures (`required_witness_cosignatures`).
+#[cfg(feature = "test-fixtures")]
+#[allow(clippy::too_many_lines)]
+fn classify_live_rekor(
+    proof: &TransparencyLogProof,
+    req: &TariffPcrRequirement,
+) -> Result<(), PcrRejectCode> {
+    // ── 1. Decode hex fields ────────────────────────────────────────────────
+    //
+    // `let Some` destructuring is guarded-redundant: the dispatch gate
+    // (`live_rekor_presence == Full`) already verified every field is
+    // `Some`. Kept as belt-and-braces against future refactors of the gate.
+    let Some(proof_path_hex) = proof.proof_path_hex.as_ref() else {
+        return Err(PcrRejectCode::PcrAttestationTransparencyInvalid);
+    };
+    let Some(sth_sig_hex) = proof.sth_signature_hex.as_deref() else {
+        return Err(PcrRejectCode::PcrAttestationTransparencyInvalid);
+    };
+    let Some(sth_timestamp) = proof.sth_timestamp else {
+        return Err(PcrRejectCode::PcrAttestationTransparencyInvalid);
+    };
+    let Some(sth_tree_root_hex) = proof.sth_tree_root_hex.as_deref() else {
+        return Err(PcrRejectCode::PcrAttestationTransparencyInvalid);
+    };
+    let Some(log_pubkey_hex) = proof.log_pubkey_hex.as_deref() else {
+        return Err(PcrRejectCode::PcrAttestationTransparencyInvalid);
+    };
+    let Some(leaf_hash_hex) = proof.entry_leaf_hash_hex.as_deref() else {
+        return Err(PcrRejectCode::PcrAttestationTransparencyInvalid);
+    };
+    let Some(current_time) = proof.current_time else {
+        return Err(PcrRejectCode::PcrAttestationTransparencyInvalid);
+    };
+    let Some(tree_size) = proof.sth_tree_size else {
+        return Err(PcrRejectCode::PcrAttestationTransparencyInvalid);
+    };
+    let Some(entry_index) = proof.entry_index else {
+        return Err(PcrRejectCode::PcrAttestationTransparencyInvalid);
+    };
+
+    // DoS cap: bound proof-path decoding before we touch a single hex byte.
+    // Mirrors MAX_INCLUSION_DEPTH in verify_rekor_inclusion; duplicated here
+    // so we never allocate up to a million [u8;32]s for an adversarial vector
+    // before the crate-level check gets to reject them.
+    if proof_path_hex.len() > MAX_INCLUSION_DEPTH {
+        return Err(PcrRejectCode::PcrAttestationTransparencyInvalid);
+    }
+
+    let tree_root: [u8; 32] = decode_hex_fixed(sth_tree_root_hex)?;
+    let leaf_hash: [u8; 32] = decode_hex_fixed(leaf_hash_hex)?;
+    let pubkey_bytes: [u8; 32] = decode_hex_fixed(log_pubkey_hex)?;
+    let sig_bytes = decode_hex_var(sth_sig_hex)?;
+
+    // log_id may be supplied either as 32-byte hex (preferred, binds into
+    // the STH signing payload) or as the string `log_id` field repurposed
+    // as hex. Prefer the explicit hex form; fall back to parsing `log_id`.
+    // The fallback's map_err converts hex-decode failure into the
+    // adversarial-framing reject code: the live path requires a 32-byte
+    // log_id because it is bound into the STH signature.
+    let log_id_bytes: [u8; 32] = if let Some(h) = proof.log_id_hex.as_deref() {
+        decode_hex_fixed(h)?
+    } else {
+        decode_hex_fixed::<32>(&proof.log_id)
+            .map_err(|_| PcrRejectCode::PcrAttestationTransparencyInvalid)?
+    };
+
+    // Proof path: decode each sibling as a 32-byte fixed-width hash.
+    let mut proof_path: Vec<[u8; 32]> = Vec::with_capacity(proof_path_hex.len());
+    for p in proof_path_hex {
+        proof_path.push(decode_hex_fixed(p)?);
+    }
+
+    // ── 2. Parse Ed25519 VerifyingKey ───────────────────────────────────────
+    let verifying_key = RekorVerifyingKey::from_bytes(&pubkey_bytes)
+        .map_err(|_| PcrRejectCode::PcrAttestationTransparencyInvalid)?;
+
+    // ── 3. Policy: log_id must be in Tariff's trusted set ───────────────────
+    //
+    // Checked BEFORE cryptographic verification so an unknown-log attack
+    // (spending verifier CPU on a key the Tariff does not even trust) is
+    // rejected before we touch Ed25519.
+    //
+    // Canonical identity on the live path is the 32-byte STH-bound
+    // `log_id_bytes` (already decoded above), NOT the free-form
+    // `proof.log_id` string. Comparing the string form would expose a
+    // split-view hazard: an adversary could set `proof.log_id = "rekor-v1"`
+    // to satisfy a Tariff trust-entry that still carries the legacy
+    // human-readable identifier while supplying a `log_id_hex` that signs
+    // a completely different STH. Instead, every Tariff trust entry is
+    // decoded as 32-byte hex and byte-compared against `log_id_bytes`.
+    // Trust entries that cannot be decoded as 32-byte hex are treated as
+    // non-live-log entries and contribute no trust (fail-closed).
+    if let Some(trusted) = req.trusted_transparency_logs.as_deref() {
+        let trust_hit = trusted
+            .iter()
+            .any(|t| decode_hex_fixed::<32>(&t.log_id).is_ok_and(|b| b == log_id_bytes));
+        if !trust_hit {
+            return Err(PcrRejectCode::PcrAttestationTransparencyLogUnknown);
+        }
+    }
+
+    // ── 4. Policy: Tariff freshness window ──────────────────────────────────
+    //
+    // Two freshness boundaries apply:
+    //   (a) Tariff's `transparency_log_max_root_age_seconds` — policy-level,
+    //       this is the "how fresh must this STH be for this Tariff" window.
+    //   (b) MAX_STH_AGE_SECONDS — crate-level hard cap inside verify_rekor_sth,
+    //       preventing any verifier from accepting a week-old STH even if
+    //       the Tariff were reckless enough to ask for it.
+    //
+    // We enforce (a) here explicitly so the reject code is
+    // TransparencyStale (not TransparencyInvalid that would come out of
+    // verify_rekor_sth's crate-level cap).
+    //
+    // `max_root_age_seconds_override` on the proof, when present, takes
+    // precedence over the Tariff value — the field name names the behavior.
+    // This is used by test vectors that want to drive the Stale path with
+    // a tighter window than the live Tariff would normally permit, and by
+    // any caller that needs to override the Tariff default for a single
+    // verification. Production callers do not populate the override; the
+    // Tariff value wins by default.
+    let tariff_max_age = proof
+        .max_root_age_seconds_override
+        .or(req.transparency_log_max_root_age_seconds)
+        .unwrap_or(DEFAULT_MAX_ROOT_AGE_SECONDS);
+    let age_secs = current_time.saturating_sub(sth_timestamp);
+    if age_secs < 0 {
+        // STH from the future — cryptographic gate would catch this too,
+        // but classifying as Invalid here produces a better vector mapping.
+        return Err(PcrRejectCode::PcrAttestationTransparencyInvalid);
+    }
+    let age_u = u64::try_from(age_secs).unwrap_or(u64::MAX);
+    if age_u > tariff_max_age {
+        return Err(PcrRejectCode::PcrAttestationTransparencyStale);
+    }
+
+    // ── 5. Build a RekorKeySet covering (log_id, timestamp) ─────────────────
+    let (key_valid_from, key_valid_until) = (
+        proof.log_key_valid_from.unwrap_or(sth_timestamp),
+        proof.log_key_valid_until.unwrap_or(sth_timestamp),
+    );
+    let mut keys = RekorKeySet::new();
+    keys.insert_trusted_key_for_test(
+        log_id_bytes,
+        verifying_key,
+        key_valid_from,
+        key_valid_until,
+    )
+    .map_err(|_| PcrRejectCode::PcrAttestationTransparencyInvalid)?;
+
+    // ── 6. Verify STH signature + crate-level freshness ─────────────────────
+    let sth = RekorSignedTreeHead {
+        tree_root,
+        tree_size,
+        timestamp: sth_timestamp,
+        log_id: log_id_bytes,
+        signature: sig_bytes,
+    };
+    verify_rekor_sth(&sth, &keys, current_time, MAX_STH_AGE_SECONDS)
+        .map_err(|e| map_attest_error(&e))?;
+
+    // ── 7. Verify Merkle inclusion proof ────────────────────────────────────
+    let entry = RekorEntry {
+        leaf_hash,
+        proof_path,
+        index: entry_index,
+        tree_size,
+    };
+    verify_rekor_inclusion(&entry, &leaf_hash, &tree_root)
+        .map_err(|e| map_attest_error(&e))?;
+
+    // ── 8. Policy: witness cosignatures ─────────────────────────────────────
+    if let Some(required) = req.required_witness_cosignatures {
+        if required > 0 {
+            let present = proof.witness_cosignatures.as_ref().map_or(0, Vec::len);
+            if u32::try_from(present).unwrap_or(u32::MAX) < required {
+                return Err(PcrRejectCode::PcrAttestationWitnessCosignatureMissing);
+            }
+        }
+    }
+
+    // All verifier policy checks passed. The dispatch site collapses
+    // `Ok(())` into `None`, letting `execute()` proceed through the rest
+    // of the pipeline.
+    Ok(())
 }
 
 // ---------------- unit tests -----------------------------------------------
@@ -1355,6 +1729,167 @@ mod tests {
         assert_eq!(
             PcrRejectCode::TariffPcrQuorumInvalid.to_string(),
             "tariff-pcr-quorum-invalid"
+        );
+    }
+
+    // ── Phase C.2.5 Block C — live-Rekor dispatch tests ────────────────────
+
+    /// A proof with zero live fields is classified `None`.
+    #[test]
+    fn live_presence_none_for_mock_bool_proof() {
+        let proof = TransparencyLogProof {
+            log_id: "rekor-v1".into(),
+            inclusion_proof_valid: Some(true),
+            inclusion_proof: None,
+            root_age_seconds: Some(100),
+            entry_index: Some(1),
+            sth_tree_size: Some(2),
+            witness_cosignatures: None,
+            proof_path_hex: None,
+            sth_signature_hex: None,
+            sth_timestamp: None,
+            sth_tree_root_hex: None,
+            log_pubkey_hex: None,
+            entry_leaf_hash_hex: None,
+            current_time: None,
+            log_id_hex: None,
+            log_key_valid_from: None,
+            log_key_valid_until: None,
+            max_root_age_seconds_override: None,
+        };
+        assert_eq!(live_rekor_presence(&proof), LiveRekorPresence::None);
+    }
+
+    /// `entry_index` + `sth_tree_size` alone must NOT trigger live dispatch;
+    /// they are shared fields used by the mock-bool NotYetLogged check
+    /// (pcrrej-024).
+    #[test]
+    fn live_presence_ignores_shared_entry_index_and_tree_size() {
+        let proof = TransparencyLogProof {
+            log_id: "rekor-v1".into(),
+            inclusion_proof_valid: Some(true),
+            inclusion_proof: None,
+            root_age_seconds: None,
+            entry_index: Some(98_765),
+            sth_tree_size: Some(50_000),
+            witness_cosignatures: None,
+            proof_path_hex: None,
+            sth_signature_hex: None,
+            sth_timestamp: None,
+            sth_tree_root_hex: None,
+            log_pubkey_hex: None,
+            entry_leaf_hash_hex: None,
+            current_time: None,
+            log_id_hex: None,
+            log_key_valid_from: None,
+            log_key_valid_until: None,
+            max_root_age_seconds_override: None,
+        };
+        assert_eq!(live_rekor_presence(&proof), LiveRekorPresence::None);
+    }
+
+    /// A proof with some (but not all) live fields is `Partial` — adversarial
+    /// framing that attempts to evade the live verifier with incomplete
+    /// evidence.
+    #[test]
+    fn live_presence_partial_triggers_invalid() {
+        let proof = TransparencyLogProof {
+            log_id: "rekor-v1".into(),
+            inclusion_proof_valid: None,
+            inclusion_proof: None,
+            root_age_seconds: None,
+            entry_index: None,
+            sth_tree_size: None,
+            witness_cosignatures: None,
+            proof_path_hex: Some(vec![]),
+            sth_signature_hex: Some("00".into()),
+            sth_timestamp: Some(1_000_000),
+            sth_tree_root_hex: None,
+            log_pubkey_hex: None,
+            entry_leaf_hash_hex: None,
+            current_time: None,
+            log_id_hex: None,
+            log_key_valid_from: None,
+            log_key_valid_until: None,
+            max_root_age_seconds_override: None,
+        };
+        assert_eq!(live_rekor_presence(&proof), LiveRekorPresence::Partial);
+    }
+
+    /// All seven live-exclusive fields set → `Full`.
+    #[test]
+    fn live_presence_full_when_all_live_fields_set() {
+        let proof = TransparencyLogProof {
+            log_id: "rekor-v1".into(),
+            inclusion_proof_valid: None,
+            inclusion_proof: None,
+            root_age_seconds: None,
+            entry_index: Some(0),
+            sth_tree_size: Some(1),
+            witness_cosignatures: None,
+            proof_path_hex: Some(vec![]),
+            sth_signature_hex: Some("aa".into()),
+            sth_timestamp: Some(1_714_500_000),
+            sth_tree_root_hex: Some("bb".into()),
+            log_pubkey_hex: Some("cc".into()),
+            entry_leaf_hash_hex: Some("dd".into()),
+            current_time: Some(1_714_500_000),
+            log_id_hex: None,
+            log_key_valid_from: None,
+            log_key_valid_until: None,
+            max_root_age_seconds_override: None,
+        };
+        assert_eq!(live_rekor_presence(&proof), LiveRekorPresence::Full);
+    }
+
+    /// End-to-end: a proof with partial live evidence dispatched through
+    /// `classify_transparency_log` → `TransparencyInvalid`.
+    #[test]
+    fn classify_transparency_log_dispatches_partial_to_invalid() {
+        let mut v = base_input();
+        v["attestation_bundle"]["transparency_log_proof"]["proof_path_hex"] = json!([]);
+        v["attestation_bundle"]["transparency_log_proof"]["sth_signature_hex"] = json!("00");
+        // Missing: the other 5 live-exclusive hex fields.
+        assert_eq!(
+            classify_from(v, "transparency-log-live-partial-evidence"),
+            PcrRejectCode::PcrAttestationTransparencyInvalid
+        );
+    }
+
+    /// End-to-end: `inclusion_proof_valid == false` combined with a Full live
+    /// proof short-circuits to `TransparencyInvalid` without spending
+    /// verifier cycles. The vector author is asserting adversarial intent;
+    /// the verifier MUST NOT accept it.
+    #[test]
+    fn classify_transparency_log_false_bool_with_full_live_returns_invalid() {
+        let mut v = base_input();
+        let proof = &mut v["attestation_bundle"]["transparency_log_proof"];
+        proof["inclusion_proof_valid"] = json!(false);
+        proof["proof_path_hex"] = json!([]);
+        proof["sth_signature_hex"] = json!("00");
+        proof["sth_timestamp"] = json!(1_714_500_000_i64);
+        proof["sth_tree_root_hex"] = json!("00");
+        proof["log_pubkey_hex"] = json!("00");
+        proof["entry_leaf_hash_hex"] = json!("00");
+        proof["current_time"] = json!(1_714_500_000_i64);
+        proof["entry_index"] = json!(0);
+        proof["sth_tree_size"] = json!(1);
+        assert_eq!(
+            classify_from(v, "transparency-log-live-adversarial-flagged"),
+            PcrRejectCode::PcrAttestationTransparencyInvalid
+        );
+    }
+
+    /// pcrrej-024 regression: legacy mock-bool NotYetLogged path must survive
+    /// the addition of the live-dispatch branch.
+    #[test]
+    fn legacy_not_yet_logged_still_fires_under_new_dispatch() {
+        let mut v = base_input();
+        v["attestation_bundle"]["transparency_log_proof"]["entry_index"] = json!(98_765_u64);
+        v["attestation_bundle"]["transparency_log_proof"]["sth_tree_size"] = json!(50_000_u64);
+        assert_eq!(
+            classify_from(v, "transparency-log-not-published-yet"),
+            PcrRejectCode::PcrAttestationTransparencyNotYetLogged
         );
     }
 }

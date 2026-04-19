@@ -11,7 +11,10 @@ rust-version.workspace = true
 workspace = true
 
 [features]
-rekor = []
+# Enabling `rekor` pulls ed25519-dalek in as a hard dependency of the
+# rekor module (STH signature verification).  Production builds without
+# this feature never compile the ed25519 code path.
+rekor = ["dep:ed25519-dalek"]
 test-fixtures = []
 
 [dependencies]
@@ -21,6 +24,7 @@ thiserror = { workspace = true }
 hex = { workspace = true }
 p384 = { version = "0.13", features = ["ecdsa"] }
 ecdsa = "0.16"
+ed25519-dalek = { workspace = true, optional = true }
 signature = "2"
 sha2 = "0.10"
 subtle = "2"
@@ -28,6 +32,5 @@ x509-parser = "0.16"
 
 [dev-dependencies]
 proptest = { workspace = true }
-ed25519-dalek = { workspace = true }
 p384 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
 ephemeral-attestation-test-support = { path = "../ephemeral-attestation-test-support" }
