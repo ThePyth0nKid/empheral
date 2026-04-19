@@ -1,0 +1,33 @@
+[package]
+name = "ephemeral-attestation"
+description = "EPHEMERAL AWS Nitro Enclave attestation verification primitives"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+rekor = []
+test-fixtures = []
+
+[dependencies]
+coset = { workspace = true }
+ciborium = { workspace = true }
+thiserror = { workspace = true }
+hex = { workspace = true }
+p384 = { version = "0.13", features = ["ecdsa"] }
+ecdsa = "0.16"
+signature = "2"
+sha2 = "0.10"
+subtle = "2"
+x509-parser = "0.16"
+
+[dev-dependencies]
+proptest = { workspace = true }
+ed25519-dalek = { workspace = true }
+p384 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
+ephemeral-attestation-test-support = { path = "../ephemeral-attestation-test-support" }

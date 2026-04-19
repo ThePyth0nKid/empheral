@@ -1,0 +1,19 @@
+[package]
+name = "ephemeral-attestation-test-support"
+description = "Deterministic Nitro attestation fixtures for EPHEMERAL tests + vector-signer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# The test-fixtures feature is REQUIRED — this crate only makes sense with it.
+ephemeral-attestation = { path = "../ephemeral-attestation", features = ["test-fixtures"] }
+p384 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
+ciborium = { workspace = true }
+hex = { workspace = true }

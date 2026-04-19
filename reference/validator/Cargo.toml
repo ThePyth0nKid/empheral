@@ -1,8 +1,10 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/ephemeral-core",
+    "crates/ephemeral-attestation",
+    "crates/ephemeral-attestation-test-support",
     "crates/ephemeral-cli",
+    "crates/ephemeral-core",
     "crates/ephemeral-crypto",
     "tools/vector-signer",
 ]
@@ -10,9 +12,10 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-license = "Apache-2.0"
+license = "MIT OR Apache-2.0"
 repository = "https://github.com/ThePyth0nKid/empheral"
 rust-version = "1.75"
+authors = ["Nelson Mehlis <nelson.mehlis@igoultra.de>"]
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

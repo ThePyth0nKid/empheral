@@ -17,4 +17,7 @@ coset = { workspace = true }
 ed25519-dalek = { workspace = true }
 hex = { workspace = true }
 serde_json = { workspace = true }
+sha2 = "0.10"
 ephemeral-crypto = { path = "../../crates/ephemeral-crypto" }
+ephemeral-attestation = { path = "../../crates/ephemeral-attestation", features = ["test-fixtures"] }
+ephemeral-attestation-test-support = { path = "../../crates/ephemeral-attestation-test-support" }

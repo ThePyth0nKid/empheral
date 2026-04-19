@@ -1,4 +1,4 @@
-//! EPHEMERAL conformance-vector signer (Phase C.1).
+//! EPHEMERAL conformance-vector signer (Phase C.1 + C.2).
 //!
 //! Deterministic: a given (seed, kid, payload, aad) quadruple always
 //! produces byte-identical COSE_Sign1 output. That matters because the
@@ -20,6 +20,22 @@
 //! vector as a ready-to-paste JSON snippet grouped by the target file.
 //! Seeds are hard-coded and deliberately fixed so the generated output
 //! is stable across machines.
+//!
+//! ### `gen-phase-c2`
+//! Generator for the eight Phase C.2 Nitro-attestation live-crypto vectors
+//! (pcrrej-090..pcrrej-097). Appends them atomically to the target
+//! conformance JSON file. Each vector exercises a single failure mode using
+//! real ES384 COSE signatures produced by `ephemeral-attestation-test-support`.
+
+// NOTE: This binary unconditionally activates `test-fixtures` on
+// `ephemeral-attestation`, so `insert_trusted_der_for_test` is reachable at
+// runtime inside the vector-signer executable. Do NOT publish or ship the
+// `vector-signer` binary from a workspace release build. Production
+// artifacts go through `cargo build -p ephemeral-cli --release` (or similar
+// per-package builds), neither of which depends on `ephemeral-attestation`
+// today — `ephemeral-core` has no direct dep on `ephemeral-attestation`, so
+// workspace-wide feature unification cannot leak `test-fixtures` into it.
+// The remaining concern is shipping THIS binary, not polluting others.
 
 // Internal helper CLI — normative COSE / RFC identifiers in docs, many
 // ready-made JSON Value shapes, and deliberately long literal epoch
@@ -32,7 +48,11 @@
     clippy::unreadable_literal
 )]
 
+use std::collections::HashSet;
+use std::fs;
 use std::io::Write;
+use std::path::Path;
+use std::path::PathBuf;
 
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
@@ -53,6 +73,23 @@ enum Cmd {
     Sign(SignArgs),
     /// Regenerate the five Phase C.1 signed conformance vectors.
     GenPhaseC1,
+    /// Regenerate + append the eight Phase C.2 Nitro-attestation vectors.
+    GenPhaseC2(GenPhaseC2Args),
+}
+
+#[derive(clap::Args, Debug)]
+struct GenPhaseC2Args {
+    /// Target JSON.  Created with a fresh Phase-C.2 envelope if missing;
+    /// otherwise appended to (duplicate IDs are rejected).
+    ///
+    /// The default points at a dedicated file so the mock-era
+    /// `pcr-attestation-reject.json` stays schema-compatible until T15 wires
+    /// the live-dispatch path.
+    #[arg(long, default_value = r"..\..\..\conformance\pcr-attestation-reject-c2-live.json")]
+    target: PathBuf,
+    /// Dry-run: print the 8 JSON values to stdout; do not touch the file.
+    #[arg(long)]
+    dry_run: bool,
 }
 
 #[derive(clap::Args, Debug)]
@@ -76,6 +113,7 @@ fn main() -> Result<()> {
     match cli.cmd {
         Cmd::Sign(a) => run_sign(&a),
         Cmd::GenPhaseC1 => run_gen_phase_c1(),
+        Cmd::GenPhaseC2(a) => run_gen_phase_c2(&a),
     }
 }
 
@@ -479,4 +517,498 @@ fn build_delegation_two_link_vector(
         "redteam_refs": ["PHASE-C1-LIVE"],
         "severity_if_failed": "high"
     })
+}
+
+// ============================================================================
+// Phase C.2: Nitro live-crypto attestation vectors (pcrrej-090..pcrrej-097)
+// ============================================================================
+//
+// All 8 vectors use deterministic `build_attestation_doc` fixtures.
+// No thread_rng(), no SystemTime::now() — timestamps are constants.
+// Seeds are fixed CaSeeds defaults unless otherwise noted.
+
+use ephemeral_attestation_test_support::{build_attestation_doc, BuildParams, CaSeeds};
+
+/// Unix timestamp that matches BuildParams::default().now.
+const C2_CURRENT_TIME: i64 = 1_700_000_000;
+
+/// Nonce embedded in the doc for pcrrej-091 (freshness-binding test).
+const C2_VALID_NONCE: &[u8] = b"c2-nonce-1700000000";
+
+/// Expected nonce the suite presents — deliberately NOT C2_VALID_NONCE.
+const C2_ALT_NONCE: &[u8] = b"c2-nonce-other";
+
+/// Default PCR hash in BuildParams::default() — all 0xAA bytes, 48 bytes.
+const PCR_AA: [u8; 48] = [0xAAu8; 48];
+
+/// Mismatch hash used in pcrrej-092 expected_pcrs.PCR0 — all 0xBB bytes.
+const PCR_BB: [u8; 48] = [0xBBu8; 48];
+
+fn run_gen_phase_c2(args: &GenPhaseC2Args) -> Result<()> {
+    let vectors = build_phase_c2_vectors();
+
+    if args.dry_run {
+        let mut stdout = std::io::stdout().lock();
+        for v in &vectors {
+            writeln!(stdout, "{}", serde_json::to_string_pretty(v)?)?;
+        }
+        return Ok(());
+    }
+
+    append_vectors(&args.target, vectors)
+}
+
+/// Build all 8 Phase C.2 vectors. Public so tests can call it directly.
+pub fn build_phase_c2_vectors() -> Vec<Value> {
+    vec![
+        build_pcrrej_090(),
+        build_pcrrej_091(),
+        build_pcrrej_092(),
+        build_pcrrej_093(),
+        build_pcrrej_094(),
+        build_pcrrej_095(),
+        build_pcrrej_096(),
+        build_pcrrej_097(),
+    ]
+}
+
+// ---- pcrrej-090 : tampered payload → signature-invalid ----------------------
+
+fn build_pcrrej_090() -> Value {
+    let params = BuildParams {
+        tamper_payload_byte_0: true,
+        ..BuildParams::default()
+    };
+    let (cose_bytes, _roots) = build_attestation_doc(params);
+    let root_ders = default_root_ders();
+
+    build_c2_vector(
+        "pcrrej-090",
+        "live-sig-payload-mutated",
+        "Phase C.2 live-crypto vector: a valid Nitro attestation doc with payload[0] \
+         flipped after signing. Live ES384 verify MUST fail with signature-invalid.",
+        &hex::encode(&cose_bytes),
+        &root_ders,
+        None,
+        &hex::encode(PCR_AA),
+        &hex::encode(PCR_AA),
+        C2_CURRENT_TIME,
+        "reject",
+        "pcr-attestor-signature-invalid",
+        "design-final.md §9.3 + RFC 9052 §4.4: any post-signing mutation of the \
+         signed payload breaks ES384. Live verify is expected to detect what the \
+         mock-bool path only asserts.",
+    )
+}
+
+// ---- pcrrej-091 : nonce in doc ≠ expected nonce → nonce-mismatch ------------
+
+fn build_pcrrej_091() -> Value {
+    // Doc embeds C2_VALID_NONCE; vector's expected_nonce_hex is C2_ALT_NONCE.
+    let params = BuildParams {
+        nonce: Some(C2_VALID_NONCE.to_vec()),
+        ..BuildParams::default()
+    };
+    let (cose_bytes, _roots) = build_attestation_doc(params);
+    let root_ders = default_root_ders();
+
+    build_c2_vector_nonce(
+        "pcrrej-091",
+        "live-sig-nonce-mismatch",
+        "Phase C.2 live-crypto vector: attestation doc embeds nonce \
+         c2-nonce-1700000000 but the suite presents c2-nonce-other as \
+         expected_nonce_hex. Nonce binding enforces freshness — mismatch MUST reject.",
+        &hex::encode(&cose_bytes),
+        &root_ders,
+        Some(&hex::encode(C2_ALT_NONCE)),
+        &hex::encode(PCR_AA),
+        &hex::encode(PCR_AA),
+        C2_CURRENT_TIME,
+        "reject",
+        "pcr-attestation-nonce-mismatch",
+        "design-final.md §9.3 + RFC 9052 §4.4: nonce binding prevents replay of \
+         stale attestation docs. The suite-supplied expected nonce must match the \
+         doc's embedded nonce exactly.",
+    )
+}
+
+// ---- pcrrej-092 : expected PCR0 = 0xBB, doc PCR0 = 0xAA → mismatch ---------
+
+fn build_pcrrej_092() -> Value {
+    // Default params: PCR-0 = 0xAA×48.  Vector expected_pcrs.PCR0 = 0xBB×48.
+    let params = BuildParams::default();
+    let (cose_bytes, _roots) = build_attestation_doc(params);
+    let root_ders = default_root_ders();
+
+    build_c2_vector(
+        "pcrrej-092",
+        "live-sig-pcr-value-mismatch",
+        "Phase C.2 live-crypto vector: doc has PCR-0 = 0xAA×48 but the vector's \
+         expected_pcrs.PCR0 is 0xBB×48. PCR-0 divergence flags firmware/boot \
+         rehash — MUST reject with pcr-attestation-mismatch.",
+        &hex::encode(&cose_bytes),
+        &root_ders,
+        None,
+        &hex::encode(PCR_BB), // deliberately wrong expected value
+        &hex::encode(PCR_AA),
+        C2_CURRENT_TIME,
+        "reject",
+        "pcr-attestation-mismatch",
+        "design-final.md §9.3: PCR-0 covers firmware and bootloader; any deviation \
+         between the attested value and the Tariff-pinned expected value is a hard \
+         reject. No majority-selection is permitted.",
+    )
+}
+
+// ---- pcrrej-093 : leaf cert expired → cert-expired --------------------------
+
+fn build_pcrrej_093() -> Value {
+    // leaf_not_after = C2_CURRENT_TIME - 1 → expired at the attestation time.
+    let params = BuildParams {
+        leaf_not_after: C2_CURRENT_TIME - 1,
+        ..BuildParams::default()
+    };
+    let (cose_bytes, _roots) = build_attestation_doc(params);
+    let root_ders = default_root_ders();
+
+    build_c2_vector(
+        "pcrrej-093",
+        "live-sig-cert-expired",
+        "Phase C.2 live-crypto vector: leaf certificate not_after is \
+         C2_CURRENT_TIME - 1 so the cert is expired at the attestation timestamp. \
+         Chain walk MUST fail with pcr-attestation-cert-expired.",
+        &hex::encode(&cose_bytes),
+        &root_ders,
+        None,
+        &hex::encode(PCR_AA),
+        &hex::encode(PCR_AA),
+        C2_CURRENT_TIME,
+        "reject",
+        "pcr-attestation-cert-expired",
+        "design-final.md §9.3 + RFC 5280 §6.1.3: certificate validity window is \
+         checked at the attestation timestamp. An expired leaf cert breaks the \
+         chain regardless of signature correctness.",
+    )
+}
+
+// ---- pcrrej-094 : broken CA chain → cert-chain-invalid ----------------------
+
+fn build_pcrrej_094() -> Value {
+    let params = BuildParams {
+        break_ca_chain: true,
+        ..BuildParams::default()
+    };
+    let (cose_bytes, _roots) = build_attestation_doc(params);
+    let root_ders = default_root_ders();
+
+    build_c2_vector(
+        "pcrrej-094",
+        "live-sig-ca-chain-broken",
+        "Phase C.2 live-crypto vector: intermediate certificate re-signed by an \
+         impostor key so the chain root→intermediate→leaf walk fails. MUST reject \
+         with pcr-attestation-cert-chain-invalid.",
+        &hex::encode(&cose_bytes),
+        &root_ders,
+        None,
+        &hex::encode(PCR_AA),
+        &hex::encode(PCR_AA),
+        C2_CURRENT_TIME,
+        "reject",
+        "pcr-attestation-cert-chain-invalid",
+        "design-final.md §9.3 + RFC 5280 §6.1: intermediate signed by a key not \
+         belonging to the trusted root — chain verification fails at the root→ \
+         intermediate link.",
+    )
+}
+
+// ---- pcrrej-095 : doc CA root ∉ trusted set → attestor-not-trusted ----------
+
+fn build_pcrrej_095() -> Value {
+    // Build doc_A with default seeds (root_A).
+    let params_a = BuildParams::default();
+    let (cose_bytes_a, _roots_a) = build_attestation_doc(params_a);
+
+    // Build root_B DER from a different seed — NOT the default root.
+    // We derive the DER directly from seeds_b rather than building a full doc,
+    // because `default_root_ders()` uses the default CaSeeds (the common case
+    // for all other vectors).  Here we need root_B explicitly.
+    let seeds_b = CaSeeds {
+        root: [0x09; 48],
+        ..CaSeeds::default()
+    };
+    let root_ders_b = root_ders_from_seeds(&seeds_b);
+
+    // Vector: cose = doc_A (default root), trusted_roots = root_B.
+    // Verifier can't chain doc_A to root_B → untrusted root.
+    build_c2_vector(
+        "pcrrej-095",
+        "live-sig-root-untrusted",
+        "Phase C.2 live-crypto vector: attestation doc uses CA chain rooted at \
+         default seed root_A, but the vector's trusted_roots_der_hex contains \
+         root_B (seed 0x09×48). Fingerprint ∉ pinned set → MUST reject with \
+         pcr-attestor-not-trusted.",
+        &hex::encode(&cose_bytes_a),
+        &root_ders_b,
+        None,
+        &hex::encode(PCR_AA),
+        &hex::encode(PCR_AA),
+        C2_CURRENT_TIME,
+        "reject",
+        "pcr-attestor-not-trusted",
+        "design-final.md §9.3: attestor CA root fingerprint must be in the pinned \
+         NitroRootSet. Substituting a different root cert — even one with valid \
+         internal structure — is rejected at the trust anchor step.",
+    )
+}
+
+// ---- pcrrej-096 : wrong COSE alg (-7 ES256) → unsupported-cose-alg ---------
+
+fn build_pcrrej_096() -> Value {
+    let params = BuildParams {
+        use_wrong_cose_alg: true,
+        ..BuildParams::default()
+    };
+    let (cose_bytes, _roots) = build_attestation_doc(params);
+    let root_ders = default_root_ders();
+
+    build_c2_vector(
+        "pcrrej-096",
+        "live-sig-wrong-cose-alg",
+        "Phase C.2 live-crypto vector: COSE_Sign1 protected header carries alg=-7 \
+         (ES256) instead of -35 (ES384). Nitro only accepts ES384 — MUST reject \
+         with pcr-attestation-unsupported-cose-alg.",
+        &hex::encode(&cose_bytes),
+        &root_ders,
+        None,
+        &hex::encode(PCR_AA),
+        &hex::encode(PCR_AA),
+        C2_CURRENT_TIME,
+        "reject",
+        "pcr-attestation-unsupported-cose-alg",
+        "design-final.md §9.3 + RFC 9052 §4.4: ES384 (alg=-35) is the only \
+         algorithm accepted for AWS Nitro attestation. alg=-7 (ES256) is rejected \
+         before signature verification.",
+    )
+}
+
+// ---- pcrrej-097 : duplicate PCR index → bundle-malformed --------------------
+
+fn build_pcrrej_097() -> Value {
+    let params = BuildParams {
+        duplicate_pcr: true,
+        ..BuildParams::default()
+    };
+    let (cose_bytes, _roots) = build_attestation_doc(params);
+    let root_ders = default_root_ders();
+
+    build_c2_vector(
+        "pcrrej-097",
+        "live-sig-duplicate-pcr",
+        "Phase C.2 live-crypto vector: attestation CBOR contains two entries for \
+         PCR index 0 — a malformed PCR map. MUST reject with pcr-bundle-malformed \
+         before reaching signature or PCR-value checks.",
+        &hex::encode(&cose_bytes),
+        &root_ders,
+        None,
+        &hex::encode(PCR_AA),
+        &hex::encode(PCR_AA),
+        C2_CURRENT_TIME,
+        "reject",
+        "pcr-bundle-malformed",
+        "design-final.md §9.3: a PCR map with duplicate indices is structurally \
+         invalid. Parsers MUST reject it to prevent index-collision ambiguity \
+         attacks.",
+    )
+}
+
+// ---- vector JSON builder ----------------------------------------------------
+
+/// Build a C.2 vector JSON object without nonce-specific fields.
+#[allow(clippy::too_many_arguments)]
+fn build_c2_vector(
+    id: &str,
+    category: &str,
+    description: &str,
+    cose_sign1_hex: &str,
+    trusted_roots_der_hex: &[String],
+    expected_nonce_hex: Option<&str>,
+    pcr0_expected_hex: &str,
+    pcr1_expected_hex: &str,
+    current_time: i64,
+    outcome: &str,
+    reject_code: &str,
+    rationale: &str,
+) -> Value {
+    build_c2_vector_nonce(
+        id,
+        category,
+        description,
+        cose_sign1_hex,
+        trusted_roots_der_hex,
+        expected_nonce_hex,
+        pcr0_expected_hex,
+        pcr1_expected_hex,
+        current_time,
+        outcome,
+        reject_code,
+        rationale,
+    )
+}
+
+/// Build a C.2 vector JSON object (the actual implementation).
+#[allow(clippy::too_many_arguments)]
+fn build_c2_vector_nonce(
+    id: &str,
+    category: &str,
+    description: &str,
+    cose_sign1_hex: &str,
+    trusted_roots_der_hex: &[String],
+    expected_nonce_hex: Option<&str>,
+    pcr0_expected_hex: &str,
+    pcr1_expected_hex: &str,
+    current_time: i64,
+    outcome: &str,
+    reject_code: &str,
+    rationale: &str,
+) -> Value {
+    let nonce_value: Value = match expected_nonce_hex {
+        Some(h) => Value::String(h.to_owned()),
+        None => Value::Null,
+    };
+
+    let expected_obj = if outcome == "reject" {
+        json!({ "outcome": "reject", "reject_code": reject_code })
+    } else {
+        json!({ "outcome": "accept" })
+    };
+
+    json!({
+        "id": id,
+        "category": category,
+        "description": description,
+        "input": {
+            "cose_sign1_bytes": cose_sign1_hex,
+            "trusted_roots_der_hex": trusted_roots_der_hex,
+            "expected_nonce_hex": nonce_value,
+            "expected_pcrs": {
+                "PCR0": pcr0_expected_hex,
+                "PCR1": pcr1_expected_hex
+            },
+            "current_time": current_time
+        },
+        "expected": expected_obj,
+        "rationale": rationale,
+        "redteam_refs": ["PHASE-C2-LIVE"],
+        "severity_if_failed": "critical"
+    })
+}
+
+// ---- helpers ----------------------------------------------------------------
+
+/// Build the root DER hex(es) for a CA chain derived from `seeds`.
+///
+/// `NitroRootSet` does not expose its internal DER bytes, so we rebuild the
+/// chain from the same seeds — cheap (one P-384 keygen + cert build) and
+/// deterministic. Callers must pass exactly the seeds that were used to
+/// build the attestation doc; mismatched seeds produce root DERs that
+/// cannot chain-verify the doc.
+fn root_ders_from_seeds(seeds: &CaSeeds) -> Vec<String> {
+    use ephemeral_attestation_test_support::ca;
+    let now = C2_CURRENT_TIME;
+    let chain = ca::build_chain(
+        seeds,
+        now,
+        now - 3600,
+        now + 86400 * 365,
+        false,
+        false,
+    );
+    vec![hex::encode(&chain.root_der)]
+}
+
+/// Shorthand for the default-seed case (used by 7 of the 8 C.2 vectors).
+fn default_root_ders() -> Vec<String> {
+    root_ders_from_seeds(&CaSeeds::default())
+}
+
+// ---- atomic JSON append -----------------------------------------------------
+
+/// Build the envelope for a fresh C.2 suite file.
+///
+/// `vector_suite` stays at `"pcr-attestation-reject"` because the
+/// conformance/schema.json enum is pinned to the six canonical suite names
+/// (design-final.md §15).  The filename (`*-c2-live.json`) is the disambiguator
+/// — one suite, split across a mock-era file and a live-crypto file.
+///
+/// # T15 constraint
+///
+/// Both `pcr-attestation-reject.json` (mock-era) and
+/// `pcr-attestation-reject-c2-live.json` (this file) carry the same
+/// `vector_suite` value.  Any T15 router that keys on `vector_suite` must
+/// load BOTH filenames for the `"pcr-attestation-reject"` suite — grep for
+/// "pcr-attestation-reject-c2-live" when wiring the live-dispatch path.
+fn build_c2_envelope() -> Value {
+    json!({
+        "schema_version": "1.0.0",
+        "vector_suite": "pcr-attestation-reject",
+        "spec_reference": "design-final.md §9.3 (Phase C.2 live crypto)",
+        "spec_version": "round8-delta-applied + phase-c2-live",
+        "generated_at": "2026-04-19T00:00:00Z",
+        "coverage_summary": {
+            "live-sig-payload-mutated": 1,
+            "live-sig-nonce-mismatch": 1,
+            "live-sig-pcr-value-mismatch": 1,
+            "live-sig-cert-expired": 1,
+            "live-sig-ca-chain-broken": 1,
+            "live-sig-root-untrusted": 1,
+            "live-sig-wrong-cose-alg": 1,
+            "live-sig-duplicate-pcr": 1
+        },
+        "vectors": []
+    })
+}
+
+fn append_vectors(target: &Path, new_vecs: Vec<Value>) -> Result<()> {
+    // Defense-in-depth: reject paths that don't look like a conformance file.
+    // `vector-signer` is a developer tool, but `--target` accepts any path —
+    // guard against a typo or CI misconfiguration clobbering an unrelated file.
+    if target.extension().and_then(|s| s.to_str()) != Some("json") {
+        anyhow::bail!(
+            "--target must have a .json extension, got: {}",
+            target.display()
+        );
+    }
+
+    let mut doc: Value = if target.exists() {
+        let raw = fs::read_to_string(target)
+            .with_context(|| format!("read {}", target.display()))?;
+        serde_json::from_str(&raw)
+            .with_context(|| format!("parse {} as JSON", target.display()))?
+    } else {
+        build_c2_envelope()
+    };
+    let vectors = doc
+        .get_mut("vectors")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| anyhow!("target JSON missing top-level `vectors` array"))?;
+
+    // Idempotence: refuse to append duplicate IDs.
+    let existing_ids: HashSet<String> = vectors
+        .iter()
+        .filter_map(|v| v.get("id").and_then(Value::as_str).map(String::from))
+        .collect();
+    for v in &new_vecs {
+        let id = v.get("id").and_then(Value::as_str).unwrap_or("<missing>");
+        if existing_ids.contains(id) {
+            anyhow::bail!("vector id `{id}` already exists in target; refusing to duplicate");
+        }
+    }
+
+    vectors.extend(new_vecs);
+
+    // 2-space indent matches existing file style.
+    let mut out = serde_json::to_string_pretty(&doc)?;
+    out.push('\n');
+    fs::write(target, out)?;
+    Ok(())
 }

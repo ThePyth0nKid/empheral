@@ -83,3 +83,20 @@ See `../../design-final-v2.md` §15 (conformance suites) and the per-session
 scope documented at the top of this README. The architectural decisions for
 this crate live in the companion design report; crate choices were vetted in
 the Phase B research pass (2026-04-18).
+
+## License
+
+Licensed under either of
+
+ * Apache License, Version 2.0
+   ([../../LICENSE-APACHE](../../LICENSE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0>)
+ * MIT license
+   ([../../LICENSE-MIT](../../LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
+
+at your option.
+
+### Contribution
+
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in EPHEMERAL by you, as defined in the Apache-2.0 license, shall
+be dual licensed as above, without any additional terms or conditions.
