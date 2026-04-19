@@ -110,3 +110,67 @@ fn tampered_leaf_rejected() {
         "expected RekorProofInvalid, got {err:?}"
     );
 }
+
+// ── 3. unbalanced trees verify (RFC 9162 §2.1.3.2 cross-check) ───────────────
+//
+// Independently reconstructs the RFC-left-deep tree layout for every
+// tree_size in {3, 5, 6, 7} and every leaf index, then hands the proof
+// to [`verify_rekor_inclusion`]. The pre-fix naive parity walk failed on
+// every right-edge orphan case (index 2 for n=3, index 4 for n=5, index
+// 6 for n=7, etc.); this test is the integration-level regression guard.
+
+/// Build the full leaf-hash list for `n` leaves with the helper above.
+fn leaves_for(n: usize) -> Vec<[u8; 32]> {
+    (0..n).map(|i| leaf_hash(format!("leaf-{i}").as_bytes())).collect()
+}
+
+/// Recursive RFC 9162 §2.1.1 subtree root over `leaves[start..start+len]`.
+fn subtree_root(leaves: &[[u8; 32]], start: usize, len: usize) -> [u8; 32] {
+    if len == 1 {
+        return leaves[start];
+    }
+    // k = largest power of 2 strictly less than len.
+    let k = 1usize << (len - 1).ilog2();
+    let left = subtree_root(leaves, start, k);
+    let right = subtree_root(leaves, start + k, len - k);
+    inner_hash(&left, &right)
+}
+
+/// Recursive RFC 9162 §2.1.1 PATH(m, D[n]) proof builder.
+fn build_proof(leaves: &[[u8; 32]], start: usize, len: usize, m: usize) -> Vec<[u8; 32]> {
+    if len <= 1 {
+        return Vec::new();
+    }
+    let k = 1usize << (len - 1).ilog2();
+    if m < k {
+        // Descend left; sibling is the right subtree root.
+        let mut inner = build_proof(leaves, start, k, m);
+        inner.push(subtree_root(leaves, start + k, len - k));
+        inner
+    } else {
+        // Descend right; sibling is the left subtree root.
+        let mut inner = build_proof(leaves, start + k, len - k, m - k);
+        inner.push(subtree_root(leaves, start, k));
+        inner
+    }
+}
+
+#[test]
+fn unbalanced_trees_verify() {
+    for &n in &[3usize, 5, 6, 7] {
+        let leaves = leaves_for(n);
+        let root = subtree_root(&leaves, 0, n);
+
+        for m in 0..n {
+            let proof = build_proof(&leaves, 0, n, m);
+            let entry = RekorEntry {
+                leaf_hash: leaves[m],
+                proof_path: proof,
+                index: m as u64,
+                tree_size: n as u64,
+            };
+            verify_rekor_inclusion(&entry, &leaves[m], &root)
+                .unwrap_or_else(|e| panic!("n={n}, m={m} must verify: {e:?}"));
+        }
+    }
+}

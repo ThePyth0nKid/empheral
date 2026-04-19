@@ -1695,8 +1695,10 @@ dependencies = [
  "ed25519-dalek",
  "ephemeral-attestation",
  "ephemeral-attestation-test-support",
+ "ephemeral-core",
  "ephemeral-crypto",
  "hex",
+ "proptest",
  "serde_json",
  "sha2",
 ]

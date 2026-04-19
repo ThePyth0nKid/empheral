@@ -164,19 +164,50 @@ pub fn verify_rekor_inclusion(
         });
     }
 
-    // ── 6. Walk the proof path ───────────────────────────────────────────────
+    // ── 6. Walk the proof path (RFC 9162 §2.1.3.2) ───────────────────────────
+    //
+    // A naive `index & 1` parity walk is correct for balanced (power-of-two)
+    // trees but silently wrong for tree sizes whose right edge contains an
+    // orphan subtree at a non-leaf level. For instance, for `tree_size = 3`
+    // and `index = 2` the RFC's left-deep layout places the sole L2 leaf
+    // as the *right* child directly under the root, combined with the
+    // `inner(L0, L1)` subtree on the left. A parity walk sees `index = 2`
+    // (even) and would erroneously produce `inner(L2, inner(L0, L1))`
+    // instead of the RFC-required `inner(inner(L0, L1), L2)`.
+    //
+    // RFC 9162 §2.1.3.2 solves this by tracking both the leaf position
+    // (`fn`) and the tree-size upper bound (`sn`, initialised to
+    // `tree_size - 1`) as the walk ascends. Whenever the current node sits
+    // on the right edge (`fn == sn`), or the current node is a right child
+    // (`LSB(fn) == 1`), the sibling is a left sibling; otherwise it is a
+    // right sibling. The extra "orphan skip" inner loop advances past
+    // levels where `fn` has carried through to an even value collinear
+    // with `sn`, matching the tree's left-deep shape.
+    //
+    // `entry.tree_size > 0` is enforced by check 1 above, so
+    // `tree_size - 1` cannot underflow here.
     let mut current = entry.leaf_hash;
-    let mut index = entry.index;
+    let mut fn_ = entry.index;
+    let mut sn = entry.tree_size - 1;
 
     for sibling in &entry.proof_path {
-        if index & 1 == 0 {
-            // current is a left child — sibling is on the right
-            current = inner_hash(&current, sibling);
-        } else {
-            // current is a right child — sibling is on the left
+        if fn_ & 1 == 1 || fn_ == sn {
+            // current is a right child, or lives on the tree's right edge
+            // with a left-sibling subtree sitting underneath it.
             current = inner_hash(sibling, &current);
+            // Skip "orphan" levels: while the position is even but still
+            // collinear with the right edge, shift both trackers together
+            // so the next proof element lands at the correct height.
+            while fn_ & 1 == 0 && fn_ != 0 {
+                fn_ >>= 1;
+                sn >>= 1;
+            }
+        } else {
+            // current is a left child in a fully populated sibling pair.
+            current = inner_hash(&current, sibling);
         }
-        index >>= 1;
+        fn_ >>= 1;
+        sn >>= 1;
     }
 
     // ── 7. Compare reconstructed root (constant-time) ────────────────────────
@@ -721,6 +752,132 @@ mod tests {
             tree_size: 2,
         };
         verify_rekor_inclusion(&e1, &lh1, &root).expect("two-leaf index 1");
+    }
+
+    // ─── Unbalanced-tree regression tests (RFC 9162 §2.1.3.2 walk) ───────────
+    //
+    // These cases exercise the `fn == sn` branch of the walk, which the
+    // pre-fix naive parity implementation handled incorrectly for every
+    // leaf living on the "orphan" right edge of a non-power-of-two tree.
+
+    #[test]
+    fn three_leaf_tree_right_edge_verifies() {
+        // n = 3, left-deep layout per RFC 9162 §2.1:
+        //        root = inner(H01, L2)
+        //        /           \
+        //    H01=(L0,L1)      L2
+        let l0 = leaf_hash_for(b"leaf-0");
+        let l1 = leaf_hash_for(b"leaf-1");
+        let l2 = leaf_hash_for(b"leaf-2");
+        let h01 = inner_hash(&l0, &l1);
+        let root = inner_hash(&h01, &l2);
+
+        // Index 2 sits on the right edge. Proof is [H01] at depth 1.
+        let e2 = RekorEntry {
+            leaf_hash: l2,
+            proof_path: vec![h01],
+            index: 2,
+            tree_size: 3,
+        };
+        verify_rekor_inclusion(&e2, &l2, &root).expect("three-leaf index 2");
+
+        // Sanity: indices 0 and 1 still verify through the regular parity
+        // branches (proof length 2 because they descend the left subtree).
+        let e0 = RekorEntry {
+            leaf_hash: l0,
+            proof_path: vec![l1, l2],
+            index: 0,
+            tree_size: 3,
+        };
+        verify_rekor_inclusion(&e0, &l0, &root).expect("three-leaf index 0");
+        let e1 = RekorEntry {
+            leaf_hash: l1,
+            proof_path: vec![l0, l2],
+            index: 1,
+            tree_size: 3,
+        };
+        verify_rekor_inclusion(&e1, &l1, &root).expect("three-leaf index 1");
+    }
+
+    #[test]
+    fn five_leaf_tree_right_edge_verifies() {
+        // n = 5, left-deep layout:
+        //           root = inner(H0_3, L4)
+        //           /                 \
+        //       H0_3 = (H01, H23)      L4
+        //      /        \
+        //    H01=(L0,L1) H23=(L2,L3)
+        let l: Vec<[u8; 32]> = (0..5)
+            .map(|i| leaf_hash_for(format!("leaf-{i}").as_bytes()))
+            .collect();
+        let h01 = inner_hash(&l[0], &l[1]);
+        let h23 = inner_hash(&l[2], &l[3]);
+        let h0_3 = inner_hash(&h01, &h23);
+        let root = inner_hash(&h0_3, &l[4]);
+
+        // Index 4 sits on the right edge as a solo right child at depth 0
+        // under the root. RFC proof path: [H0_3] (length 1).
+        let e4 = RekorEntry {
+            leaf_hash: l[4],
+            proof_path: vec![h0_3],
+            index: 4,
+            tree_size: 5,
+        };
+        verify_rekor_inclusion(&e4, &l[4], &root).expect("five-leaf index 4");
+
+        // Spot-check a parity-only index inside the left subtree.
+        let e3 = RekorEntry {
+            leaf_hash: l[3],
+            proof_path: vec![l[2], h01, l[4]],
+            index: 3,
+            tree_size: 5,
+        };
+        verify_rekor_inclusion(&e3, &l[3], &root).expect("five-leaf index 3");
+    }
+
+    #[test]
+    fn seven_leaf_tree_all_indices_verify() {
+        // n = 7, left-deep layout:
+        //           root = inner(H0_3, H4_6)
+        //           /                  \
+        //       H0_3                H4_6 = inner(H45, L6)
+        //      /    \              /         \
+        //    H01   H23           H45          L6
+        //   / \   / \           / \
+        //  L0 L1 L2 L3         L4 L5
+        let l: Vec<[u8; 32]> = (0..7)
+            .map(|i| leaf_hash_for(format!("leaf-{i}").as_bytes()))
+            .collect();
+        let h01 = inner_hash(&l[0], &l[1]);
+        let h23 = inner_hash(&l[2], &l[3]);
+        let h45 = inner_hash(&l[4], &l[5]);
+        let h0_3 = inner_hash(&h01, &h23);
+        let h4_6 = inner_hash(&h45, &l[6]);
+        let root = inner_hash(&h0_3, &h4_6);
+
+        let proofs: [(usize, Vec<[u8; 32]>); 7] = [
+            (0, vec![l[1], h23, h4_6]),
+            (1, vec![l[0], h23, h4_6]),
+            (2, vec![l[3], h01, h4_6]),
+            (3, vec![l[2], h01, h4_6]),
+            // Index 4: under H45 (left child), proof [L5, L6, H0_3].
+            (4, vec![l[5], l[6], h0_3]),
+            // Index 5: under H45 (right child), proof [L4, L6, H0_3].
+            (5, vec![l[4], l[6], h0_3]),
+            // Index 6: right-edge orphan, shortened proof [H45, H0_3].
+            (6, vec![h45, h0_3]),
+        ];
+
+        for (idx, path) in &proofs {
+            let e = RekorEntry {
+                leaf_hash: l[*idx],
+                proof_path: path.clone(),
+                index: *idx as u64,
+                tree_size: 7,
+            };
+            verify_rekor_inclusion(&e, &l[*idx], &root)
+                .unwrap_or_else(|_| panic!("seven-leaf index {idx}"));
+        }
     }
 
     // ─── expected_proof_depth reference values per RFC 9162 ──────────────────

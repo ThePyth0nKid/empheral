@@ -60,6 +60,9 @@ use coset::{iana, CborSerializable, CoseSign1Builder, HeaderBuilder};
 use ed25519_dalek::{Signer, SigningKey};
 use serde_json::{json, Value};
 
+mod merkle;
+mod phase_c2_5;
+
 #[derive(Parser, Debug)]
 #[command(author, version, about = "EPHEMERAL COSE_Sign1 vector signer")]
 struct Cli {
@@ -75,6 +78,8 @@ enum Cmd {
     GenPhaseC1,
     /// Regenerate + append the eight Phase C.2 Nitro-attestation vectors.
     GenPhaseC2(GenPhaseC2Args),
+    /// Regenerate + append the eight Phase C.2.5 live-Rekor vectors.
+    GenPhaseC2_5(GenPhaseC2_5Args),
 }
 
 #[derive(clap::Args, Debug)]
@@ -86,6 +91,22 @@ struct GenPhaseC2Args {
     /// `pcr-attestation-reject.json` stays schema-compatible until T15 wires
     /// the live-dispatch path.
     #[arg(long, default_value = r"..\..\..\conformance\pcr-attestation-reject-c2-live.json")]
+    target: PathBuf,
+    /// Dry-run: print the 8 JSON values to stdout; do not touch the file.
+    #[arg(long)]
+    dry_run: bool,
+}
+
+#[derive(clap::Args, Debug)]
+struct GenPhaseC2_5Args {
+    /// Target JSON.  Created with a fresh Phase-C.2.5 envelope if missing;
+    /// otherwise appended to (duplicate IDs are rejected).
+    ///
+    /// The live-Rekor vectors live in a dedicated file — the T15 live-dispatch
+    /// router must load `pcr-attestation-reject-c2-5-rekor.json` alongside
+    /// `pcr-attestation-reject.json` and `pcr-attestation-reject-c2-live.json`
+    /// when selecting for the `pcr-attestation-reject` suite.
+    #[arg(long, default_value = r"..\..\..\conformance\pcr-attestation-reject-c2-5-rekor.json")]
     target: PathBuf,
     /// Dry-run: print the 8 JSON values to stdout; do not touch the file.
     #[arg(long)]
@@ -114,6 +135,7 @@ fn main() -> Result<()> {
         Cmd::Sign(a) => run_sign(&a),
         Cmd::GenPhaseC1 => run_gen_phase_c1(),
         Cmd::GenPhaseC2(a) => run_gen_phase_c2(&a),
+        Cmd::GenPhaseC2_5(a) => run_gen_phase_c2_5(&a),
     }
 }
 
@@ -1007,6 +1029,104 @@ fn append_vectors(target: &Path, new_vecs: Vec<Value>) -> Result<()> {
     vectors.extend(new_vecs);
 
     // 2-space indent matches existing file style.
+    let mut out = serde_json::to_string_pretty(&doc)?;
+    out.push('\n');
+    fs::write(target, out)?;
+    Ok(())
+}
+
+// ============================================================================
+// Phase C.2.5: Rekor live transparency-log vectors (pcrrej-110..pcrrej-117)
+// ============================================================================
+//
+// Delegated to `phase_c2_5::build_all()` — every seed, timestamp, and
+// tree-layout choice is pinned in that module so regenerations are
+// byte-deterministic. The determinism tripwire in
+// `tests/determinism_c2_5.rs` catches any drift.
+
+fn run_gen_phase_c2_5(args: &GenPhaseC2_5Args) -> Result<()> {
+    let vectors = phase_c2_5::build_all();
+
+    if args.dry_run {
+        let mut stdout = std::io::stdout().lock();
+        for v in &vectors {
+            writeln!(stdout, "{}", serde_json::to_string_pretty(v)?)?;
+        }
+        return Ok(());
+    }
+
+    append_vectors_with_envelope(&args.target, vectors, build_c2_5_envelope)
+}
+
+/// Build the envelope for a fresh C.2.5 suite file.
+///
+/// `vector_suite` stays at `"pcr-attestation-reject"` — same suite, third
+/// file (mock-era `pcr-attestation-reject.json`, Phase C.2 live-Nitro
+/// `pcr-attestation-reject-c2-live.json`, Phase C.2.5 live-Rekor
+/// `pcr-attestation-reject-c2-5-rekor.json`). Any T15 router that keys on
+/// `vector_suite` must load all three filenames.
+fn build_c2_5_envelope() -> Value {
+    json!({
+        "schema_version": "1.0.0",
+        "vector_suite": "pcr-attestation-reject",
+        "spec_reference": "design-final.md §9.4.2 (Phase C.2.5 live Rekor)",
+        "spec_version": "round8-delta-applied + phase-c2-5-live-rekor",
+        "generated_at": "2026-04-19T00:00:00Z",
+        "coverage_summary": {
+            "rekor-inclusion-proof-malformed-hex": 1,
+            "rekor-inclusion-proof-siblings-tampered": 1,
+            "rekor-inclusion-proof-depth-wrong": 1,
+            "rekor-sth-signature-malformed-length": 1,
+            "rekor-sth-signature-wrong-key": 1,
+            "rekor-sth-timestamp-future": 1,
+            "rekor-sth-stale": 1,
+            "rekor-log-id-not-trusted": 1
+        },
+        "vectors": []
+    })
+}
+
+/// Generic append that accepts an envelope factory so a single appender can
+/// back both Phase C.2 and Phase C.2.5 generators. Keeps the idempotence +
+/// .json guard in one place so future phases cannot diverge.
+fn append_vectors_with_envelope(
+    target: &Path,
+    new_vecs: Vec<Value>,
+    envelope: fn() -> Value,
+) -> Result<()> {
+    if target.extension().and_then(|s| s.to_str()) != Some("json") {
+        anyhow::bail!(
+            "--target must have a .json extension, got: {}",
+            target.display()
+        );
+    }
+
+    let mut doc: Value = if target.exists() {
+        let raw = fs::read_to_string(target)
+            .with_context(|| format!("read {}", target.display()))?;
+        serde_json::from_str(&raw)
+            .with_context(|| format!("parse {} as JSON", target.display()))?
+    } else {
+        envelope()
+    };
+    let vectors = doc
+        .get_mut("vectors")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| anyhow!("target JSON missing top-level `vectors` array"))?;
+
+    let existing_ids: HashSet<String> = vectors
+        .iter()
+        .filter_map(|v| v.get("id").and_then(Value::as_str).map(String::from))
+        .collect();
+    for v in &new_vecs {
+        let id = v.get("id").and_then(Value::as_str).unwrap_or("<missing>");
+        if existing_ids.contains(id) {
+            anyhow::bail!("vector id `{id}` already exists in target; refusing to duplicate");
+        }
+    }
+
+    vectors.extend(new_vecs);
+
     let mut out = serde_json::to_string_pretty(&doc)?;
     out.push('\n');
     fs::write(target, out)?;
