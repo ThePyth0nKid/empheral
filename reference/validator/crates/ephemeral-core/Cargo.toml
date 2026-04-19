@@ -20,11 +20,17 @@ caseless = { workspace = true }
 time = { workspace = true }
 hex = { workspace = true }
 ephemeral-crypto = { path = "../ephemeral-crypto" }
-# test-fixtures feature is required: the c2-live conformance vectors embed a
-# synthetic CA root whose fingerprint is NOT in ALLOWED_FINGERPRINTS. The
-# reference validator is itself a conformance harness; the D-2 CI guard
-# ensures this feature never reaches a production binary.
-ephemeral-attestation = { path = "../ephemeral-attestation", features = ["test-fixtures"] }
+ephemeral-attestation = { path = "../ephemeral-attestation" }
+
+[features]
+# Enables the Phase C.2 live-Nitro dispatch path (classify_live_nitro + the
+# synthetic-root bypass in ephemeral-attestation's test-fixtures feature).
+# This MUST remain opt-in: the bypass allows inserting CA roots without
+# fingerprint pinning, which is only safe inside the conformance harness.
+# The reference CLI (ephemeral-cli) enables it explicitly; production
+# consumers of ephemeral-core do not, so the live-path code is absent
+# from their build entirely. Do not move this into `default`.
+test-fixtures = ["ephemeral-attestation/test-fixtures"]
 
 [dev-dependencies]
 anyhow = { workspace = true }

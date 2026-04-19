@@ -120,7 +120,9 @@ fn pcr_attestation_reject_structural() {
 
 /// Phase C.2 live-crypto vectors (pcrrej-090..097). Same `vector_suite`
 /// declaration as the mock file; dispatch to the live path happens inside
-/// the pcr executor based on the presence of `cose_sign1_bytes`.
+/// the pcr executor based on the presence of `cose_sign1_bytes`. Requires
+/// the `test-fixtures` feature so the live-Nitro code path is compiled in.
+#[cfg(feature = "test-fixtures")]
 #[test]
 fn pcr_attestation_reject_c2_live_structural() {
     assert_file_all_executed(
@@ -142,18 +144,23 @@ fn run_many_aggregates_all_six() {
         suite_filter: &[],
         verbose: false,
     };
-    let inputs: Vec<PathBuf> = [
+    // The c2-live file only makes sense when the live-Nitro dispatch path
+    // is compiled in; without `test-fixtures` the dispatch short-circuits
+    // to Fail and the 8 vectors would be reported as failures. Build the
+    // input list conditionally so both feature states compile warning-free.
+    #[allow(unused_mut)]
+    let mut input_names: Vec<&str> = vec![
         "canonicalization.json",
         "delegation-scope.json",
         "fuzz-baseline.json",
         "tariff-reject.json",
         "pcr-attestation-reject.json",
-        "pcr-attestation-reject-c2-live.json",
         "audit-replay.json",
-    ]
-    .iter()
-    .map(|n| suite_file_path(n))
-    .collect();
+    ];
+    #[cfg(feature = "test-fixtures")]
+    input_names.push("pcr-attestation-reject-c2-live.json");
+
+    let inputs: Vec<PathBuf> = input_names.iter().map(|n| suite_file_path(n)).collect();
 
     let report = ephemeral_core::run_many(&inputs, &cfg);
     assert_eq!(
@@ -175,13 +182,18 @@ fn run_many_aggregates_all_six() {
         report.per_suite
     );
     assert!(report.is_clean());
-    // Phase C.2: all six suites execute. Conformance corpus is 528 vectors
-    // total: 93 canon + 70 deleg (68 mock + 2 live) + 205 fuzz + 71 tariff
-    // (68 mock + 3 live) + 49 pcr (mock) + 8 pcr (c2-live) + 32 audit.
+    // Phase C.2: all six suites execute. With `test-fixtures` enabled the
+    // corpus is 528 vectors (93 canon + 70 deleg + 205 fuzz + 71 tariff +
+    // 49 pcr mock + 8 pcr c2-live + 32 audit); without the feature the
+    // c2-live file is excluded, leaving 520.
+    #[cfg(feature = "test-fixtures")]
+    let expected_pass = 528;
+    #[cfg(not(feature = "test-fixtures"))]
+    let expected_pass = 520;
     assert_eq!(
         report.total_pass(),
-        528,
-        "expected 528 vectors passing, got {}",
+        expected_pass,
+        "expected {expected_pass} vectors passing, got {}",
         report.total_pass()
     );
     assert_eq!(

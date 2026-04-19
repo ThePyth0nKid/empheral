@@ -15,7 +15,12 @@ name = "ephemeral-validator"
 path = "src/main.rs"
 
 [dependencies]
-ephemeral-core = { path = "../ephemeral-core" }
+# The CLI is the conformance harness and needs the Phase C.2 live-Nitro
+# dispatch path; that lives behind the `test-fixtures` feature on
+# ephemeral-core and exposes the synthetic-root bypass. This is the
+# one legitimate enable of that feature — production consumers of
+# ephemeral-core must never opt in.
+ephemeral-core = { path = "../ephemeral-core", features = ["test-fixtures"] }
 clap = { workspace = true }
 anyhow = { workspace = true }
 serde = { workspace = true }

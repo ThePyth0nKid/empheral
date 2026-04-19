@@ -235,6 +235,7 @@ fn default_inputs(dir: &Path) -> Vec<PathBuf> {
         "fuzz-baseline.json",
         "tariff-reject.json",
         "pcr-attestation-reject.json",
+        "pcr-attestation-reject-c2-live.json",
         "audit-replay.json",
     ];
     NAMES
