@@ -48,7 +48,7 @@ fn anchor_set() -> TrustAnchorSet {
     let anchor = TrustAnchor::new_ed25519(KID.to_string(), pk.as_bytes())
         .expect("fixed seed yields non-weak pk");
     let mut set = TrustAnchorSet::new();
-    set.insert(anchor);
+    set.insert(anchor).expect("fresh set has no dup kid");
     set
 }
 

@@ -28,7 +28,7 @@ pub fn verify_chain_link(
     aad: &[u8],
 ) -> Result<VerifiedPayload, CoseError> {
     let mut set = TrustAnchorSet::new();
-    set.insert(parent_anchor.clone());
+    set.insert(parent_anchor.clone())?;
     verify_cose_sign1(cose_bytes, &set, aad)
 }
 

@@ -79,8 +79,19 @@ impl TrustAnchorSet {
         }
     }
 
-    pub fn insert(&mut self, anchor: TrustAnchor) {
+    /// Register a trust anchor. Rejects duplicate `kid` at insertion time
+    /// so that [`TrustAnchorSet::lookup`] has exactly one answer per kid.
+    ///
+    /// Rationale: without this check a vector author (or an attacker who
+    /// controls anchor-list assembly upstream) could prepend a fraudulent
+    /// anchor under an authorized kid and have the `iter().find()` lookup
+    /// return the attacker's public key before the legitimate one.
+    pub fn insert(&mut self, anchor: TrustAnchor) -> Result<(), CoseError> {
+        if self.anchors.iter().any(|a| a.kid == anchor.kid) {
+            return Err(CoseError::DuplicateKid { kid: anchor.kid });
+        }
         self.anchors.push(anchor);
+        Ok(())
     }
 
     #[must_use]
@@ -99,13 +110,10 @@ impl TrustAnchorSet {
     }
 }
 
-impl FromIterator<TrustAnchor> for TrustAnchorSet {
-    fn from_iter<I: IntoIterator<Item = TrustAnchor>>(iter: I) -> Self {
-        Self {
-            anchors: iter.into_iter().collect(),
-        }
-    }
-}
+// Note: no `FromIterator` impl — collecting bypasses the duplicate-kid
+// check in `insert`, re-opening the shadow-key bypass that the check
+// exists to close. Callers must build via `insert()?` so the error is
+// propagated rather than silently swallowed.
 
 #[cfg(test)]
 mod tests {
@@ -139,10 +147,28 @@ mod tests {
     fn anchor_set_lookup() {
         let a = TrustAnchor::from_hex("K_test", Alg::Ed25519, TEST_PK_HEX).unwrap();
         let mut set = TrustAnchorSet::new();
-        set.insert(a);
+        set.insert(a).unwrap();
         assert_eq!(set.len(), 1);
         assert!(set.lookup("K_test").is_some());
         assert!(set.lookup("K_absent").is_none());
+    }
+
+    /// A different but well-formed Ed25519 public key — derived from a
+    /// second canonical test vector so the duplicate-kid test compares
+    /// against non-trivial bytes (not just the same key twice).
+    const OTHER_PK_HEX: &str =
+        "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c";
+
+    #[test]
+    fn insert_rejects_duplicate_kid() {
+        let first = TrustAnchor::from_hex("K_dup", Alg::Ed25519, TEST_PK_HEX).unwrap();
+        let second = TrustAnchor::from_hex("K_dup", Alg::Ed25519, OTHER_PK_HEX).unwrap();
+        let mut set = TrustAnchorSet::new();
+        set.insert(first).unwrap();
+        let err = set.insert(second).unwrap_err();
+        assert!(matches!(err, CoseError::DuplicateKid { kid } if kid == "K_dup"));
+        // Original anchor is still the only one — shadowing prevented.
+        assert_eq!(set.len(), 1);
     }
 
     #[test]

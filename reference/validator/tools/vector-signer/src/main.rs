@@ -148,10 +148,10 @@ const KID_TARIFF: &str = "K_tariff_signer_pk_TEST";
 fn run_gen_phase_c1() -> Result<()> {
     let mut stdout = std::io::stdout().lock();
 
-    // ----- tariff-reject vectors (trej-070 / 071 / 072) ------------------
+    // ----- tariff-reject vectors (trej-069 / 070 / 071) ------------------
     let tariff_payload = b"tariff-body-v1";
 
-    // trej-070: sign a payload, then flip a byte inside it.
+    // trej-069: sign a payload, then flip a byte inside it.
     let (mut cose_hex, tariff_pk) =
         sign_blob(SEED_TARIFF, KID_TARIFF, tariff_payload, b"tariff")?;
     cose_hex = tamper_payload_byte(&cose_hex)?;
@@ -162,9 +162,10 @@ fn run_gen_phase_c1() -> Result<()> {
         "design-final.md §2.2 / RFC 9052 §4.4: any post-signing mutation of the signed payload breaks the MAC. Live verify is expected to detect what the mock path only asserts.",
         &cose_hex,
         &tariff_pk,
+        true, // sig was valid over unmutated payload at signing time
     );
 
-    // trej-071: sign with the wrong AAD so verify (using b"tariff") fails.
+    // trej-070: sign with the wrong AAD so verify (using b"tariff") fails.
     let (cose_hex, _) =
         sign_blob(SEED_TARIFF, KID_TARIFF, tariff_payload, b"delegation-link")?;
     let trej070 = build_tariff_reject_vector(
@@ -174,9 +175,10 @@ fn run_gen_phase_c1() -> Result<()> {
         "design-final.md §2.2 + RFC 9052 §4.4: external AAD is part of Sig_structure_1. Reusing a delegation-link blob as a tariff blob is exactly the cross-suite replay the AAD is meant to block.",
         &cose_hex,
         &tariff_pk,
+        false, // sig never valid under the tariff AAD
     );
 
-    // trej-072: sign with an impostor key but keep the authorized kid.
+    // trej-071: sign with an impostor key but keep the authorized kid.
     let (cose_hex, _) = sign_blob(SEED_ATTACKER, KID_TARIFF, tariff_payload, b"tariff")?;
     let trej071 = build_tariff_reject_vector(
         "trej-071",
@@ -185,9 +187,10 @@ fn run_gen_phase_c1() -> Result<()> {
         "design-final.md §7.1: trust-anchor resolution is keyed on pubkey bytes, not on the attacker-supplied kid. Live verify catches the mismatch where the mock path would have needed a mock bool to flag it.",
         &cose_hex,
         &tariff_pk,
+        false, // sig never valid under the authorized anchor's public key
     );
 
-    // ----- delegation-scope vectors (ds-067 / 068) -----------------------
+    // ----- delegation-scope vectors (ds-069 / 070) -----------------------
     // Both vectors use the canonical 2-link chain (root → ops → mandate-signer)
     // because role_hierarchy_check mandates the first link's child_role ==
     // Ops and the terminal link's child_role is mandate-signer. A single-link
@@ -215,7 +218,7 @@ fn run_gen_phase_c1() -> Result<()> {
         &mandate_pk,
     );
 
-    // ds-068: same chain, but the mandate payload is flipped after signing
+    // ds-070: same chain, but the mandate payload is flipped after signing
     // so live verify MUST catch the tamper on the mandate envelope. Links
     // remain valid so the failure is attributable exclusively to the
     // mandate's MAC.
@@ -231,6 +234,9 @@ fn run_gen_phase_c1() -> Result<()> {
         &root_pk,
         &ops_pk,
         &mandate_pk,
+        true,  // link0 intact
+        true,  // link1 intact
+        false, // mandate payload flipped → sig invalid
     );
 
     // ----- emit -----------------------------------------------------------
@@ -282,7 +288,18 @@ fn build_tariff_reject_vector(
     rationale: &str,
     cose_hex: &str,
     signer_pk_hex: &str,
+    sig_valid_under_original_bytes: bool,
 ) -> Value {
+    // These flags are the mock-era ground-truth; live verify drives the
+    // actual outcome via `cose_sign1_bytes` + `trust_anchor_keys`. We set
+    // them consistent with reality so a human auditor or a mock-only reader
+    // sees the same reject reason the live path produces.
+    // `current_bytes` is always false for these reject vectors — the whole
+    // point is that the signature does NOT verify over the envelope as it
+    // stands when the suite runs. `original_bytes` differs per scenario:
+    //   payload-mutated → true  (sig was valid over unmutated payload)
+    //   AAD mismatch    → false (sig never valid under the tariff AAD)
+    //   impostor key    → false (sig never valid under the authorized pk)
     json!({
         "id": id,
         "category": category,
@@ -292,8 +309,8 @@ fn build_tariff_reject_vector(
             "signature_verification_context": {
                 "signer_key_id": KID_TARIFF,
                 "trust_anchors": [KID_ROOT],
-                "signature_valid_under_original_bytes": true,
-                "signature_valid_under_current_bytes": true
+                "signature_valid_under_original_bytes": sig_valid_under_original_bytes,
+                "signature_valid_under_current_bytes": false
             },
             "current_time": "2026-05-01T00:00:00Z",
             "previously_seen_version": 1,
@@ -333,6 +350,10 @@ fn build_delegation_accept_vector_two_link(
         ops_pk_hex,
         mandate_pk_hex,
         json!({ "outcome": "accept" }),
+        // All three envelopes verify — happy path.
+        true,
+        true,
+        true,
     )
 }
 
@@ -347,6 +368,9 @@ fn build_delegation_reject_vector_two_link(
     root_pk_hex: &str,
     ops_pk_hex: &str,
     mandate_pk_hex: &str,
+    link0_sig_valid: bool,
+    link1_sig_valid: bool,
+    mandate_sig_valid: bool,
 ) -> Value {
     build_delegation_two_link_vector(
         id,
@@ -360,9 +384,13 @@ fn build_delegation_reject_vector_two_link(
         ops_pk_hex,
         mandate_pk_hex,
         json!({ "outcome": "reject", "reject_code": "signature-invalid" }),
+        link0_sig_valid,
+        link1_sig_valid,
+        mandate_sig_valid,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_delegation_two_link_vector(
     id: &str,
     category: &str,
@@ -375,6 +403,9 @@ fn build_delegation_two_link_vector(
     ops_pk_hex: &str,
     mandate_pk_hex: &str,
     expected: Value,
+    link0_sig_valid: bool,
+    link1_sig_valid: bool,
+    mandate_sig_valid: bool,
 ) -> Value {
     json!({
         "id": id,
@@ -397,7 +428,7 @@ fn build_delegation_two_link_vector(
                     "valid_from": 1_714_608_000,
                     "valid_until": 1_767_139_200,
                     "signed_by": KID_ROOT,
-                    "signature_valid": true,
+                    "signature_valid": link0_sig_valid,
                     "cose_sign1_bytes": link0_cose_hex
                 },
                 {
@@ -415,7 +446,7 @@ fn build_delegation_two_link_vector(
                     "valid_from": 1_714_608_000,
                     "valid_until": 1_767_139_200,
                     "signed_by": KID_OPS,
-                    "signature_valid": true,
+                    "signature_valid": link1_sig_valid,
                     "cose_sign1_bytes": link1_cose_hex
                 }
             ],
@@ -429,7 +460,7 @@ fn build_delegation_two_link_vector(
                 "min_tariff_version": 1,
                 "signer_key_hint": KID_MANDATE,
                 "signed_by": KID_MANDATE,
-                "signature_valid": true,
+                "signature_valid": mandate_sig_valid,
                 "cose_sign1_bytes": mandate_cose_hex
             },
             "context": {

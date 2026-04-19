@@ -1223,7 +1223,7 @@
           "min_tariff_version": 1,
           "signer_key_hint": "K_mandate_signer_pk_TEST",
           "signed_by": "K_mandate_signer_pk_TEST",
-          "signature_valid": true,
+          "signature_valid": false,
           "cose_sign1_bytes": "84581ea201270458184b5f6d616e646174655f7369676e65725f706b5f54455354a04f6c616e646174652d626f64792d76315840b33f6694754acc420b5fe87f72f6fcf2b886dcd62b4e06292035bab64f9736e37a2558c5486268f0678f2aee7ab6c6172b243b6386774ad94727a7083c83a60d"
         },
         "context": {

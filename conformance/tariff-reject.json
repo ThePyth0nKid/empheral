@@ -1417,7 +1417,7 @@
             "K_cust_root_pk_TEST"
           ],
           "signature_valid_under_original_bytes": true,
-          "signature_valid_under_current_bytes": true
+          "signature_valid_under_current_bytes": false
         },
         "current_time": "2026-05-01T00:00:00Z",
         "previously_seen_version": 1,
@@ -1451,8 +1451,8 @@
           "trust_anchors": [
             "K_cust_root_pk_TEST"
           ],
-          "signature_valid_under_original_bytes": true,
-          "signature_valid_under_current_bytes": true
+          "signature_valid_under_original_bytes": false,
+          "signature_valid_under_current_bytes": false
         },
         "current_time": "2026-05-01T00:00:00Z",
         "previously_seen_version": 1,
@@ -1486,8 +1486,8 @@
           "trust_anchors": [
             "K_cust_root_pk_TEST"
           ],
-          "signature_valid_under_original_bytes": true,
-          "signature_valid_under_current_bytes": true
+          "signature_valid_under_original_bytes": false,
+          "signature_valid_under_current_bytes": false
         },
         "current_time": "2026-05-01T00:00:00Z",
         "previously_seen_version": 1,

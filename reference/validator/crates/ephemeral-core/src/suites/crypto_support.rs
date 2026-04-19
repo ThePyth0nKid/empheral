@@ -48,7 +48,7 @@ pub(super) fn build_anchor_set(
         }
         let pk_bytes = hex::decode(&def.pk_hex).map_err(|_| CoseError::HexDecode)?;
         let anchor = TrustAnchor::new_ed25519(def.kid.clone(), &pk_bytes)?;
-        set.insert(anchor);
+        set.insert(anchor)?;
     }
     Ok(set)
 }

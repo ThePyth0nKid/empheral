@@ -120,4 +120,12 @@ pub enum CoseError {
     /// Hex decode error for a public-key or signature field.
     #[error("hex decode error")]
     HexDecode,
+
+    /// A [`TrustAnchorSet`](crate::TrustAnchorSet) received two anchors
+    /// sharing the same `kid`. Rejected at insertion time so that kid
+    /// resolution in [`TrustAnchorSet::lookup`](crate::TrustAnchorSet::lookup)
+    /// is unambiguous — first-wins behaviour would let a prepended
+    /// attacker-controlled anchor shadow a legitimate one.
+    #[error("duplicate trust-anchor kid: {kid}")]
+    DuplicateKid { kid: String },
 }
