@@ -578,7 +578,10 @@ fn build_vector(
                 "attestations": attestations,
                 "transparency_log_proof": transparency_log_proof
             },
-            "cose_sign1_bytes": null,
+            // No `cose_sign1_bytes` key: the outer pcr.rs dispatch enters the
+            // live-Nitro path whenever that key is present (null-valued or
+            // not), and live-Rekor vectors carry no Nitro COSE bundle. Mock-
+            // bool reject vectors omit the field for the same reason.
             "current_time": f.current_time,
             "router_nonce_issued": id
         },

@@ -1,0 +1,715 @@
+{
+  "schema_version": "1.0.0",
+  "vector_suite": "pcr-attestation-reject",
+  "spec_reference": "design-final.md §9.4.2 (Phase C.2.5 live Rekor)",
+  "spec_version": "round8-delta-applied + phase-c2-5-live-rekor",
+  "generated_at": "2026-04-19T00:00:00Z",
+  "coverage_summary": {
+    "rekor-inclusion-proof-malformed-hex": 1,
+    "rekor-inclusion-proof-siblings-tampered": 1,
+    "rekor-inclusion-proof-depth-wrong": 1,
+    "rekor-sth-signature-malformed-length": 1,
+    "rekor-sth-signature-wrong-key": 1,
+    "rekor-sth-timestamp-future": 1,
+    "rekor-sth-stale": 1,
+    "rekor-log-id-not-trusted": 1
+  },
+  "vectors": [
+    {
+      "id": "pcrrej-110",
+      "category": "rekor-inclusion-proof-malformed-hex",
+      "description": "Phase C.2.5 live-Rekor vector: a structurally valid STH + inclusion proof, but the first sibling hash in proof_path_hex is a three-char hex fragment (\"abc\") — odd length, not decodable. MUST reject with pcr-attestation-transparency-invalid before any hashing work.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": [
+            "A1",
+            "A2",
+            "A3"
+          ],
+          "quorum": 2,
+          "expected_pcrs": {
+            "PCR0": "sha256:fw",
+            "PCR4": "sha256:k",
+            "PCR8": "sha256:app"
+          },
+          "trusted_transparency_logs": [
+            {
+              "log_id": "1111111111111111111111111111111111111111111111111111111111111111",
+              "key_alg": "ed25519"
+            }
+          ],
+          "transparency_log_max_root_age_seconds": 3600
+        },
+        "attestation_bundle": {
+          "commit_hash": "phase-c2-5",
+          "attestations": [
+            {
+              "attestor_id": "A1",
+              "pcrs": {
+                "PCR0": "sha256:fw",
+                "PCR4": "sha256:k",
+                "PCR8": "sha256:app"
+              },
+              "iat": 1700000000,
+              "nonce": "pcrrej-110",
+              "signature_valid": true
+            },
+            {
+              "attestor_id": "A2",
+              "pcrs": {
+                "PCR0": "sha256:fw",
+                "PCR4": "sha256:k",
+                "PCR8": "sha256:app"
+              },
+              "iat": 1700000010,
+              "nonce": "pcrrej-110",
+              "signature_valid": true
+            }
+          ],
+          "transparency_log_proof": {
+            "log_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "inclusion_proof_valid": true,
+            "root_age_seconds": 100,
+            "entry_index": 3,
+            "sth_tree_size": 8,
+            "proof_path_hex": [
+              "abc",
+              "3cfde3699eda290015715c3ddacd4af4ec0df363e225820e520bcbc47746c948",
+              "41b573552f8674307cb72b97b9d51395de9bff7d7187afb32fc8283e514cc1b8"
+            ],
+            "sth_signature_hex": "5249e30b3af2072b430aa8388cb3fbc8471c02a9097393751090078877b33f032468e881cf149f72469657f32c7a724becd8cc55c4191bae9fd63252a1f2cc00",
+            "sth_timestamp": 1700000000,
+            "sth_tree_root_hex": "e653b82ae51d05db90fe55237ae9fea0301ebfd3071556728df03ddb4fdd2887",
+            "log_pubkey_hex": "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+            "entry_leaf_hash_hex": "e95189bcdfc299ae3c2b6dc089cb528248cb683e2a6c18e28e4bd939e8bbfeff",
+            "current_time": 1700000100,
+            "log_id_hex": "1111111111111111111111111111111111111111111111111111111111111111",
+            "log_key_valid_from": 1699913600,
+            "log_key_valid_until": 1700086400,
+            "max_root_age_seconds_override": 3600
+          }
+        },
+        "current_time": 1700000100,
+        "router_nonce_issued": "pcrrej-110"
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "pcr-attestation-transparency-invalid"
+      },
+      "rationale": "design-final.md §9.4.2: fixed-width hex fields in the live path are treated as adversary-controlled. Odd-length or non-hex input is rejected at decode time — no partial decode, no silent zero-padding.",
+      "redteam_refs": [
+        "PHASE-C2-5-LIVE"
+      ],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-111",
+      "category": "rekor-inclusion-proof-siblings-tampered",
+      "description": "Phase C.2.5 live-Rekor vector: a valid STH over the real Merkle root, but the first sibling hash in the inclusion proof has one bit flipped. Merkle walk reconstructs a different root → pcr-attestation-transparency-invalid.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": [
+            "A1",
+            "A2",
+            "A3"
+          ],
+          "quorum": 2,
+          "expected_pcrs": {
+            "PCR0": "sha256:fw",
+            "PCR4": "sha256:k",
+            "PCR8": "sha256:app"
+          },
+          "trusted_transparency_logs": [
+            {
+              "log_id": "1111111111111111111111111111111111111111111111111111111111111111",
+              "key_alg": "ed25519"
+            }
+          ],
+          "transparency_log_max_root_age_seconds": 3600
+        },
+        "attestation_bundle": {
+          "commit_hash": "phase-c2-5",
+          "attestations": [
+            {
+              "attestor_id": "A1",
+              "pcrs": {
+                "PCR0": "sha256:fw",
+                "PCR4": "sha256:k",
+                "PCR8": "sha256:app"
+              },
+              "iat": 1700000000,
+              "nonce": "pcrrej-111",
+              "signature_valid": true
+            },
+            {
+              "attestor_id": "A2",
+              "pcrs": {
+                "PCR0": "sha256:fw",
+                "PCR4": "sha256:k",
+                "PCR8": "sha256:app"
+              },
+              "iat": 1700000010,
+              "nonce": "pcrrej-111",
+              "signature_valid": true
+            }
+          ],
+          "transparency_log_proof": {
+            "log_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "inclusion_proof_valid": true,
+            "root_age_seconds": 100,
+            "entry_index": 3,
+            "sth_tree_size": 8,
+            "proof_path_hex": [
+              "27f05469b348cf06371da7434aee6a624771c46e6d1965524de8a01efcfe5221",
+              "3cfde3699eda290015715c3ddacd4af4ec0df363e225820e520bcbc47746c948",
+              "41b573552f8674307cb72b97b9d51395de9bff7d7187afb32fc8283e514cc1b8"
+            ],
+            "sth_signature_hex": "5249e30b3af2072b430aa8388cb3fbc8471c02a9097393751090078877b33f032468e881cf149f72469657f32c7a724becd8cc55c4191bae9fd63252a1f2cc00",
+            "sth_timestamp": 1700000000,
+            "sth_tree_root_hex": "e653b82ae51d05db90fe55237ae9fea0301ebfd3071556728df03ddb4fdd2887",
+            "log_pubkey_hex": "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+            "entry_leaf_hash_hex": "e95189bcdfc299ae3c2b6dc089cb528248cb683e2a6c18e28e4bd939e8bbfeff",
+            "current_time": 1700000100,
+            "log_id_hex": "1111111111111111111111111111111111111111111111111111111111111111",
+            "log_key_valid_from": 1699913600,
+            "log_key_valid_until": 1700086400,
+            "max_root_age_seconds_override": 3600
+          }
+        },
+        "current_time": 1700000100,
+        "router_nonce_issued": "pcrrej-111"
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "pcr-attestation-transparency-invalid"
+      },
+      "rationale": "design-final.md §9.4.2: the Merkle walk is the second half of the live-Rekor pipeline. Any sibling tamper must fail the root comparison constant-time equality check.",
+      "redteam_refs": [
+        "PHASE-C2-5-LIVE"
+      ],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-112",
+      "category": "rekor-inclusion-proof-depth-wrong",
+      "description": "Phase C.2.5 live-Rekor vector: STH claims tree_size=16 (signature covers that value). Proof path is length 3 — the correct depth for tree_size=8. Validator computes expected_depth(3, 16)=4 and rejects with pcr-attestation-transparency-invalid.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": [
+            "A1",
+            "A2",
+            "A3"
+          ],
+          "quorum": 2,
+          "expected_pcrs": {
+            "PCR0": "sha256:fw",
+            "PCR4": "sha256:k",
+            "PCR8": "sha256:app"
+          },
+          "trusted_transparency_logs": [
+            {
+              "log_id": "1111111111111111111111111111111111111111111111111111111111111111",
+              "key_alg": "ed25519"
+            }
+          ],
+          "transparency_log_max_root_age_seconds": 3600
+        },
+        "attestation_bundle": {
+          "commit_hash": "phase-c2-5",
+          "attestations": [
+            {
+              "attestor_id": "A1",
+              "pcrs": {
+                "PCR0": "sha256:fw",
+                "PCR4": "sha256:k",
+                "PCR8": "sha256:app"
+              },
+              "iat": 1700000000,
+              "nonce": "pcrrej-112",
+              "signature_valid": true
+            },
+            {
+              "attestor_id": "A2",
+              "pcrs": {
+                "PCR0": "sha256:fw",
+                "PCR4": "sha256:k",
+                "PCR8": "sha256:app"
+              },
+              "iat": 1700000010,
+              "nonce": "pcrrej-112",
+              "signature_valid": true
+            }
+          ],
+          "transparency_log_proof": {
+            "log_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "inclusion_proof_valid": true,
+            "root_age_seconds": 100,
+            "entry_index": 3,
+            "sth_tree_size": 16,
+            "proof_path_hex": [
+              "26f05469b348cf06371da7434aee6a624771c46e6d1965524de8a01efcfe5221",
+              "3cfde3699eda290015715c3ddacd4af4ec0df363e225820e520bcbc47746c948",
+              "41b573552f8674307cb72b97b9d51395de9bff7d7187afb32fc8283e514cc1b8"
+            ],
+            "sth_signature_hex": "d89c0a192a804ebc6abac93e3dd2825572e2b4d4623af50deeec354ff32e4b9b16d762a85dfd3e30f03ad122a32702afbda420d2dadef08f3a68d40187b1e403",
+            "sth_timestamp": 1700000000,
+            "sth_tree_root_hex": "e653b82ae51d05db90fe55237ae9fea0301ebfd3071556728df03ddb4fdd2887",
+            "log_pubkey_hex": "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+            "entry_leaf_hash_hex": "e95189bcdfc299ae3c2b6dc089cb528248cb683e2a6c18e28e4bd939e8bbfeff",
+            "current_time": 1700000100,
+            "log_id_hex": "1111111111111111111111111111111111111111111111111111111111111111",
+            "log_key_valid_from": 1699913600,
+            "log_key_valid_until": 1700086400,
+            "max_root_age_seconds_override": 3600
+          }
+        },
+        "current_time": 1700000100,
+        "router_nonce_issued": "pcrrej-112"
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "pcr-attestation-transparency-invalid"
+      },
+      "rationale": "design-final.md §9.4.2 + RFC 9162 §2.1.1: proof_path length is strictly determined by (index, tree_size). Length mismatch is an early-reject because a longer- or shorter-than-expected path cannot reconstruct any valid root.",
+      "redteam_refs": [
+        "PHASE-C2-5-LIVE"
+      ],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-113",
+      "category": "rekor-sth-signature-malformed-length",
+      "description": "Phase C.2.5 live-Rekor vector: STH signature truncated to 63 bytes (one byte short of the Ed25519 required length). Validator rejects at Signature::from_slice before ever calling verify_strict.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": [
+            "A1",
+            "A2",
+            "A3"
+          ],
+          "quorum": 2,
+          "expected_pcrs": {
+            "PCR0": "sha256:fw",
+            "PCR4": "sha256:k",
+            "PCR8": "sha256:app"
+          },
+          "trusted_transparency_logs": [
+            {
+              "log_id": "1111111111111111111111111111111111111111111111111111111111111111",
+              "key_alg": "ed25519"
+            }
+          ],
+          "transparency_log_max_root_age_seconds": 3600
+        },
+        "attestation_bundle": {
+          "commit_hash": "phase-c2-5",
+          "attestations": [
+            {
+              "attestor_id": "A1",
+              "pcrs": {
+                "PCR0": "sha256:fw",
+                "PCR4": "sha256:k",
+                "PCR8": "sha256:app"
+              },
+              "iat": 1700000000,
+              "nonce": "pcrrej-113",
+              "signature_valid": true
+            },
+            {
+              "attestor_id": "A2",
+              "pcrs": {
+                "PCR0": "sha256:fw",
+                "PCR4": "sha256:k",
+                "PCR8": "sha256:app"
+              },
+              "iat": 1700000010,
+              "nonce": "pcrrej-113",
+              "signature_valid": true
+            }
+          ],
+          "transparency_log_proof": {
+            "log_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "inclusion_proof_valid": true,
+            "root_age_seconds": 100,
+            "entry_index": 3,
+            "sth_tree_size": 8,
+            "proof_path_hex": [
+              "26f05469b348cf06371da7434aee6a624771c46e6d1965524de8a01efcfe5221",
+              "3cfde3699eda290015715c3ddacd4af4ec0df363e225820e520bcbc47746c948",
+              "41b573552f8674307cb72b97b9d51395de9bff7d7187afb32fc8283e514cc1b8"
+            ],
+            "sth_signature_hex": "5249e30b3af2072b430aa8388cb3fbc8471c02a9097393751090078877b33f032468e881cf149f72469657f32c7a724becd8cc55c4191bae9fd63252a1f2cc",
+            "sth_timestamp": 1700000000,
+            "sth_tree_root_hex": "e653b82ae51d05db90fe55237ae9fea0301ebfd3071556728df03ddb4fdd2887",
+            "log_pubkey_hex": "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+            "entry_leaf_hash_hex": "e95189bcdfc299ae3c2b6dc089cb528248cb683e2a6c18e28e4bd939e8bbfeff",
+            "current_time": 1700000100,
+            "log_id_hex": "1111111111111111111111111111111111111111111111111111111111111111",
+            "log_key_valid_from": 1699913600,
+            "log_key_valid_until": 1700086400,
+            "max_root_age_seconds_override": 3600
+          }
+        },
+        "current_time": 1700000100,
+        "router_nonce_issued": "pcrrej-113"
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "pcr-attestation-transparency-invalid"
+      },
+      "rationale": "design-final.md §9.4.2 + RFC 8032 §5.1.7: Ed25519 signatures are exactly 64 bytes. Any non-conforming length is a malformed signature and a hard reject.",
+      "redteam_refs": [
+        "PHASE-C2-5-LIVE"
+      ],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-114",
+      "category": "rekor-sth-signature-wrong-key",
+      "description": "Phase C.2.5 live-Rekor vector: STH signed by a key the validator does not register. log_pubkey_hex pins SEED_SIGNING_KEY's verifying key; signature was produced by SEED_ALT_KEY. verify_strict MUST reject with pcr-attestation-transparency-invalid.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": [
+            "A1",
+            "A2",
+            "A3"
+          ],
+          "quorum": 2,
+          "expected_pcrs": {
+            "PCR0": "sha256:fw",
+            "PCR4": "sha256:k",
+            "PCR8": "sha256:app"
+          },
+          "trusted_transparency_logs": [
+            {
+              "log_id": "1111111111111111111111111111111111111111111111111111111111111111",
+              "key_alg": "ed25519"
+            }
+          ],
+          "transparency_log_max_root_age_seconds": 3600
+        },
+        "attestation_bundle": {
+          "commit_hash": "phase-c2-5",
+          "attestations": [
+            {
+              "attestor_id": "A1",
+              "pcrs": {
+                "PCR0": "sha256:fw",
+                "PCR4": "sha256:k",
+                "PCR8": "sha256:app"
+              },
+              "iat": 1700000000,
+              "nonce": "pcrrej-114",
+              "signature_valid": true
+            },
+            {
+              "attestor_id": "A2",
+              "pcrs": {
+                "PCR0": "sha256:fw",
+                "PCR4": "sha256:k",
+                "PCR8": "sha256:app"
+              },
+              "iat": 1700000010,
+              "nonce": "pcrrej-114",
+              "signature_valid": true
+            }
+          ],
+          "transparency_log_proof": {
+            "log_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "inclusion_proof_valid": true,
+            "root_age_seconds": 100,
+            "entry_index": 3,
+            "sth_tree_size": 8,
+            "proof_path_hex": [
+              "26f05469b348cf06371da7434aee6a624771c46e6d1965524de8a01efcfe5221",
+              "3cfde3699eda290015715c3ddacd4af4ec0df363e225820e520bcbc47746c948",
+              "41b573552f8674307cb72b97b9d51395de9bff7d7187afb32fc8283e514cc1b8"
+            ],
+            "sth_signature_hex": "b0b70b67e1e540a0c4e609633851a99757723fa4985e034d7855e910426ed2f76cb35c68e1e485644d836f9539515bff6c11980fc7056aedb5f752a18d4a5a05",
+            "sth_timestamp": 1700000000,
+            "sth_tree_root_hex": "e653b82ae51d05db90fe55237ae9fea0301ebfd3071556728df03ddb4fdd2887",
+            "log_pubkey_hex": "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+            "entry_leaf_hash_hex": "e95189bcdfc299ae3c2b6dc089cb528248cb683e2a6c18e28e4bd939e8bbfeff",
+            "current_time": 1700000100,
+            "log_id_hex": "1111111111111111111111111111111111111111111111111111111111111111",
+            "log_key_valid_from": 1699913600,
+            "log_key_valid_until": 1700086400,
+            "max_root_age_seconds_override": 3600
+          }
+        },
+        "current_time": 1700000100,
+        "router_nonce_issued": "pcrrej-114"
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "pcr-attestation-transparency-invalid"
+      },
+      "rationale": "design-final.md §9.4.2 + RFC 8032 §5.1.7: Ed25519 signatures bind to exactly one verifying key. Pinning the pubkey and presenting a signature from a different secret is the canonical wrong-key failure and must never succeed.",
+      "redteam_refs": [
+        "PHASE-C2-5-LIVE"
+      ],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-115",
+      "category": "rekor-sth-timestamp-future",
+      "description": "Phase C.2.5 live-Rekor vector: STH timestamp strictly greater than the suite-supplied current_time. Validator classifies this as a future-stamped STH (a trivially forged freshness) and rejects with pcr-attestation-transparency-invalid.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": [
+            "A1",
+            "A2",
+            "A3"
+          ],
+          "quorum": 2,
+          "expected_pcrs": {
+            "PCR0": "sha256:fw",
+            "PCR4": "sha256:k",
+            "PCR8": "sha256:app"
+          },
+          "trusted_transparency_logs": [
+            {
+              "log_id": "1111111111111111111111111111111111111111111111111111111111111111",
+              "key_alg": "ed25519"
+            }
+          ],
+          "transparency_log_max_root_age_seconds": 3600
+        },
+        "attestation_bundle": {
+          "commit_hash": "phase-c2-5",
+          "attestations": [
+            {
+              "attestor_id": "A1",
+              "pcrs": {
+                "PCR0": "sha256:fw",
+                "PCR4": "sha256:k",
+                "PCR8": "sha256:app"
+              },
+              "iat": 1700000000,
+              "nonce": "pcrrej-115",
+              "signature_valid": true
+            },
+            {
+              "attestor_id": "A2",
+              "pcrs": {
+                "PCR0": "sha256:fw",
+                "PCR4": "sha256:k",
+                "PCR8": "sha256:app"
+              },
+              "iat": 1700000010,
+              "nonce": "pcrrej-115",
+              "signature_valid": true
+            }
+          ],
+          "transparency_log_proof": {
+            "log_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "inclusion_proof_valid": true,
+            "root_age_seconds": 100,
+            "entry_index": 3,
+            "sth_tree_size": 8,
+            "proof_path_hex": [
+              "26f05469b348cf06371da7434aee6a624771c46e6d1965524de8a01efcfe5221",
+              "3cfde3699eda290015715c3ddacd4af4ec0df363e225820e520bcbc47746c948",
+              "41b573552f8674307cb72b97b9d51395de9bff7d7187afb32fc8283e514cc1b8"
+            ],
+            "sth_signature_hex": "6a36ae00c1216db17d4985583fa2becb81f6d7821797ee918db92c0871d6b7c6e111078fb9982cc7e48a3b95ecc03143879cb2c7f2d03f2396b0c8f7b3deaf09",
+            "sth_timestamp": 1700000101,
+            "sth_tree_root_hex": "e653b82ae51d05db90fe55237ae9fea0301ebfd3071556728df03ddb4fdd2887",
+            "log_pubkey_hex": "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+            "entry_leaf_hash_hex": "e95189bcdfc299ae3c2b6dc089cb528248cb683e2a6c18e28e4bd939e8bbfeff",
+            "current_time": 1700000100,
+            "log_id_hex": "1111111111111111111111111111111111111111111111111111111111111111",
+            "log_key_valid_from": 1699913701,
+            "log_key_valid_until": 1700086501,
+            "max_root_age_seconds_override": 3600
+          }
+        },
+        "current_time": 1700000100,
+        "router_nonce_issued": "pcrrej-115"
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "pcr-attestation-transparency-invalid"
+      },
+      "rationale": "design-final.md §9.4.2: a verifier never treats an STH signed for a future time as fresh — doing so would let an attacker pre-generate valid-looking STHs and race the real log.",
+      "redteam_refs": [
+        "PHASE-C2-5-LIVE"
+      ],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-116",
+      "category": "rekor-sth-stale",
+      "description": "Phase C.2.5 live-Rekor vector: STH signed at STH_TIMESTAMP is 10000 seconds older than the suite-supplied CURRENT_TIME_STALE, exceeding the 3600-second Tariff freshness window. MUST reject with pcr-attestation-transparency-stale.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": [
+            "A1",
+            "A2",
+            "A3"
+          ],
+          "quorum": 2,
+          "expected_pcrs": {
+            "PCR0": "sha256:fw",
+            "PCR4": "sha256:k",
+            "PCR8": "sha256:app"
+          },
+          "trusted_transparency_logs": [
+            {
+              "log_id": "1111111111111111111111111111111111111111111111111111111111111111",
+              "key_alg": "ed25519"
+            }
+          ],
+          "transparency_log_max_root_age_seconds": 3600
+        },
+        "attestation_bundle": {
+          "commit_hash": "phase-c2-5",
+          "attestations": [
+            {
+              "attestor_id": "A1",
+              "pcrs": {
+                "PCR0": "sha256:fw",
+                "PCR4": "sha256:k",
+                "PCR8": "sha256:app"
+              },
+              "iat": 1700000000,
+              "nonce": "pcrrej-116",
+              "signature_valid": true
+            },
+            {
+              "attestor_id": "A2",
+              "pcrs": {
+                "PCR0": "sha256:fw",
+                "PCR4": "sha256:k",
+                "PCR8": "sha256:app"
+              },
+              "iat": 1700000010,
+              "nonce": "pcrrej-116",
+              "signature_valid": true
+            }
+          ],
+          "transparency_log_proof": {
+            "log_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "inclusion_proof_valid": true,
+            "root_age_seconds": 100,
+            "entry_index": 3,
+            "sth_tree_size": 8,
+            "proof_path_hex": [
+              "26f05469b348cf06371da7434aee6a624771c46e6d1965524de8a01efcfe5221",
+              "3cfde3699eda290015715c3ddacd4af4ec0df363e225820e520bcbc47746c948",
+              "41b573552f8674307cb72b97b9d51395de9bff7d7187afb32fc8283e514cc1b8"
+            ],
+            "sth_signature_hex": "5249e30b3af2072b430aa8388cb3fbc8471c02a9097393751090078877b33f032468e881cf149f72469657f32c7a724becd8cc55c4191bae9fd63252a1f2cc00",
+            "sth_timestamp": 1700000000,
+            "sth_tree_root_hex": "e653b82ae51d05db90fe55237ae9fea0301ebfd3071556728df03ddb4fdd2887",
+            "log_pubkey_hex": "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+            "entry_leaf_hash_hex": "e95189bcdfc299ae3c2b6dc089cb528248cb683e2a6c18e28e4bd939e8bbfeff",
+            "current_time": 1700010000,
+            "log_id_hex": "1111111111111111111111111111111111111111111111111111111111111111",
+            "log_key_valid_from": 1699913600,
+            "log_key_valid_until": 1700086400,
+            "max_root_age_seconds_override": 3600
+          }
+        },
+        "current_time": 1700010000,
+        "router_nonce_issued": "pcrrej-116"
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "pcr-attestation-transparency-stale"
+      },
+      "rationale": "design-final.md §9.4.2: the Tariff-level max root age is the policy dial for how fresh an STH must be. Anything older than the window is rejected irrespective of signature validity.",
+      "redteam_refs": [
+        "PHASE-C2-5-LIVE"
+      ],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "pcrrej-117",
+      "category": "rekor-log-id-not-trusted",
+      "description": "Phase C.2.5 live-Rekor vector: STH and Merkle proof are cryptographically valid under LOG_ID_UNTRUSTED, but the Tariff's trusted_transparency_logs only lists LOG_ID_TRUSTED. Trust check fails first → pcr-attestation-transparency-log-unknown.",
+      "input": {
+        "tariff_pcr_requirement": {
+          "attestors": [
+            "A1",
+            "A2",
+            "A3"
+          ],
+          "quorum": 2,
+          "expected_pcrs": {
+            "PCR0": "sha256:fw",
+            "PCR4": "sha256:k",
+            "PCR8": "sha256:app"
+          },
+          "trusted_transparency_logs": [
+            {
+              "log_id": "1111111111111111111111111111111111111111111111111111111111111111",
+              "key_alg": "ed25519"
+            }
+          ],
+          "transparency_log_max_root_age_seconds": 3600
+        },
+        "attestation_bundle": {
+          "commit_hash": "phase-c2-5",
+          "attestations": [
+            {
+              "attestor_id": "A1",
+              "pcrs": {
+                "PCR0": "sha256:fw",
+                "PCR4": "sha256:k",
+                "PCR8": "sha256:app"
+              },
+              "iat": 1700000000,
+              "nonce": "pcrrej-117",
+              "signature_valid": true
+            },
+            {
+              "attestor_id": "A2",
+              "pcrs": {
+                "PCR0": "sha256:fw",
+                "PCR4": "sha256:k",
+                "PCR8": "sha256:app"
+              },
+              "iat": 1700000010,
+              "nonce": "pcrrej-117",
+              "signature_valid": true
+            }
+          ],
+          "transparency_log_proof": {
+            "log_id": "4444444444444444444444444444444444444444444444444444444444444444",
+            "inclusion_proof_valid": true,
+            "root_age_seconds": 100,
+            "entry_index": 3,
+            "sth_tree_size": 8,
+            "proof_path_hex": [
+              "26f05469b348cf06371da7434aee6a624771c46e6d1965524de8a01efcfe5221",
+              "3cfde3699eda290015715c3ddacd4af4ec0df363e225820e520bcbc47746c948",
+              "41b573552f8674307cb72b97b9d51395de9bff7d7187afb32fc8283e514cc1b8"
+            ],
+            "sth_signature_hex": "f1ed9751371c7363d7eb66e819abd66d1c2c4e410aa9e37ace0062eeb48e6804b4328e3a44e9ad29fbab8b37cb6f2366b3a82a877019545931436296da5b8009",
+            "sth_timestamp": 1700000000,
+            "sth_tree_root_hex": "e653b82ae51d05db90fe55237ae9fea0301ebfd3071556728df03ddb4fdd2887",
+            "log_pubkey_hex": "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+            "entry_leaf_hash_hex": "e95189bcdfc299ae3c2b6dc089cb528248cb683e2a6c18e28e4bd939e8bbfeff",
+            "current_time": 1700000100,
+            "log_id_hex": "4444444444444444444444444444444444444444444444444444444444444444",
+            "log_key_valid_from": 1699913600,
+            "log_key_valid_until": 1700086400,
+            "max_root_age_seconds_override": 3600
+          }
+        },
+        "current_time": 1700000100,
+        "router_nonce_issued": "pcrrej-117"
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "pcr-attestation-transparency-log-unknown"
+      },
+      "rationale": "design-final.md §9.4.2: Tariff's trusted-log list is the root of accountability for the transparency layer. A well-signed STH from a log the Tariff does not recognize is still untrusted — this check runs before any crypto so an unknown-log attack cannot even burn verifier CPU.",
+      "redteam_refs": [
+        "PHASE-C2-5-LIVE"
+      ],
+      "severity_if_failed": "critical"
+    }
+  ]
+}

@@ -718,6 +718,18 @@ fn classify_transparency_log(
         }
     }
     // pcrrej-023: log_id not in trusted set.
+    //
+    // NOTE (M-1): on this mock-bool path `t.log_id == proof.log_id` is a
+    // plain string comparison — a free-form identifier, not a cryptographic
+    // commitment. The branch is only reachable when
+    // `live_rekor_presence(proof) == LiveRekorPresence::None`; a live-Rekor
+    // vector (presence == Full) routes through `classify_live_rekor`, which
+    // canonicalises the log identity to its 32-byte `log_id_bytes` form
+    // (bound into the STH signing payload) and matches against the same
+    // Tariff `trusted_transparency_logs` list on those bytes — closing the
+    // string-vs-bytes split-view hazard. A second, lower fail-closed net
+    // (`ALLOWED_LOG_IDS` in `ephemeral_attestation::rekor`) rejects any
+    // `log_id` not on the hard-coded allow-list regardless of Tariff input.
     if let Some(trusted) = req.trusted_transparency_logs.as_deref() {
         if !trusted.iter().any(|t| t.log_id == proof.log_id) {
             return Some(PcrRejectCode::PcrAttestationTransparencyLogUnknown);
