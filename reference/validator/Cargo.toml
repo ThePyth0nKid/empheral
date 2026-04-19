@@ -6,6 +6,7 @@ members = [
     "crates/ephemeral-cli",
     "crates/ephemeral-core",
     "crates/ephemeral-crypto",
+    "tools/prod-symbol-probe",
     "tools/vector-signer",
 ]
 
@@ -49,3 +50,21 @@ zeroize = "1.8"
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
+
+# Dedicated profile for the feature-leak guard probe
+# (`tools/prod-symbol-probe`).  Intentionally unoptimized — what we test
+# is the *compilation* of `ephemeral-core` without its `test-fixtures`
+# feature.  Optimizations (LTO, DCE, symbol stripping) would delete
+# symbol names even when the items were compiled in, masking a real
+# leak.  `debug = 0` removes DWARF so doc-comment text cannot create
+# false positives for substring searches.  Do NOT reuse this profile
+# for shipped binaries — it is a static-analysis artifact, not a
+# production target.
+[profile.symbol-probe]
+inherits = "dev"
+strip = "none"
+debug = 0
+lto = false
+codegen-units = 16
+opt-level = 0
+incremental = false

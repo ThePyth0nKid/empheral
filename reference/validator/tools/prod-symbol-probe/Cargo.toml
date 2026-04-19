@@ -1,0 +1,34 @@
+[package]
+name = "ephemeral-prod-symbol-probe"
+description = "Build probe that links ephemeral-core WITHOUT the `test-fixtures` feature. Its binary is scanned by CI and by a local integration test to prove that live-Nitro / synthetic-root-bypass symbols never leak into a production build of ephemeral-core."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "ephemeral-prod-symbol-probe"
+path = "src/main.rs"
+
+[dependencies]
+# CRITICAL: `default-features = false` and NO `features = [...]`. This
+# crate's entire purpose is to be a negative control — if a future change
+# adds the `test-fixtures` feature here, the `no_leak.rs` test AND the CI
+# `feature-leak-guard` job must immediately go red. Do not "fix" such a
+# failure by changing these flags.
+ephemeral-core = { path = "../../crates/ephemeral-core", default-features = false }
+
+[dev-dependencies]
+# `object` parses the symbol tables of PE/ELF/Mach-O binaries. We need
+# this because on Windows (PE) Rust-mangled symbol names are NOT stored
+# as plain ASCII in the binary — a byte-substring scan that works on
+# ELF would silently return "no leak" on Windows even for a broken
+# feature-gate. Parsing the symbol table directly makes the no-leak
+# test cross-platform sound.
+object = { version = "0.36", default-features = false, features = ["read", "std", "archive"] }
+serde_json = { workspace = true }

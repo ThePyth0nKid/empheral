@@ -1,0 +1,175 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  # Fail fast on warnings in CI; local dev can still build with them.
+  RUSTFLAGS: "-D warnings"
+
+defaults:
+  run:
+    # The Rust workspace lives under reference/validator, not at repo root.
+    working-directory: reference/validator
+
+jobs:
+  # Full workspace test suite across the three major targets.  Verifies
+  # that every conformance vector passes and that live crypto / live
+  # Nitro paths work on every supported developer OS.
+  build-test:
+    name: build + test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: reference/validator
+      - name: cargo test --workspace
+        run: cargo test --workspace --locked
+
+  # Clippy across the three targets. `-D warnings` is already in
+  # RUSTFLAGS; we still pass it explicitly to clippy so the lint is
+  # applied even if someone drops the env var.
+  clippy:
+    name: clippy (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain (stable, with clippy)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: reference/validator
+      - name: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  # Task D-2 step 1 — ephemeral-core MUST compile without its
+  # `test-fixtures` feature. If someone accidentally re-hardwires the
+  # feature (e.g. moves it to `default`, or introduces a new dependency
+  # that pulls it in via workspace-wide feature unification), this job
+  # breaks before anything ships.
+  no-default-features-build:
+    name: ephemeral-core builds with --no-default-features
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: reference/validator
+      - name: cargo build --no-default-features
+        run: cargo build --release -p ephemeral-core --no-default-features --locked
+
+  # Task D-2 step 2 — run the local integration test that parses the
+  # probe's rlibs and asserts the `test-fixtures` symbols are absent
+  # from a production build. This is the Rust-native, cross-platform
+  # implementation; the nm-based job below is an independent second
+  # check on the same invariant (belt-and-suspenders).
+  probe-symbol-test:
+    name: probe rlib feature-leak test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: reference/validator
+      - name: cargo test -p ephemeral-prod-symbol-probe --test no_leak
+        run: cargo test -p ephemeral-prod-symbol-probe --test no_leak --locked
+
+  # Task D-2 step 3 — redundant, independent nm-based leak check on
+  # Ubuntu.  If the Rust-level probe test above ever passes because of
+  # a parser bug or a rustc change, `nm` will still catch it.  We
+  # scan both relevant rlibs and grep for the forbidden symbols.  A
+  # positive-control grep ensures the rlibs are non-empty.
+  feature-leak-guard-nm:
+    name: feature-leak guard (nm)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: reference/validator
+      - name: Build probe with symbol-probe profile
+        run: cargo build --profile symbol-probe -p ephemeral-prod-symbol-probe --locked
+      - name: Assert forbidden symbols are absent
+        shell: bash
+        run: |
+          set -euo pipefail
+          core_rlib=$(ls target/symbol-probe/deps/libephemeral_core-*.rlib | head -n1)
+          att_rlib=$(ls target/symbol-probe/deps/libephemeral_attestation-*.rlib | head -n1)
+          echo "Scanning $core_rlib and $att_rlib"
+          for rlib in "$core_rlib" "$att_rlib"; do
+            # Negative: forbidden symbols MUST NOT be present.
+            if nm --defined-only "$rlib" 2>/dev/null \
+                | grep -E "insert_trusted_der_for_test|classify_live_nitro"; then
+              echo "::error::LEAK: test-fixtures symbol found in $rlib"
+              exit 1
+            fi
+          done
+          # Positive control: core rlib must contain `total_failing`,
+          # attestation rlib must contain `sha256_fingerprint`. If
+          # neither matches, the rlib was stripped too hard and the
+          # negative check above is meaningless.
+          if ! nm --defined-only "$core_rlib" 2>/dev/null | grep -q total_failing; then
+            echo "::error::control check failed: total_failing not found in $core_rlib"
+            exit 1
+          fi
+          if ! nm --defined-only "$att_rlib" 2>/dev/null | grep -q sha256_fingerprint; then
+            echo "::error::control check failed: sha256_fingerprint not found in $att_rlib"
+            exit 1
+          fi
+          echo "feature-leak guard (nm): OK"
+
+  # Determinism tripwires from the Phase C.2 commit stack. If the
+  # vector-signer output or the committed c2-live vector file drift
+  # without intent, CI flashes red.
+  determinism-tripwires:
+    name: determinism tripwires
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: reference/validator
+      - name: vector-signer dry-run SHA256
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual=$(cargo run -p vector-signer --release --quiet --locked -- gen-phase-c2 --dry-run | sha256sum | awk '{print $1}')
+          expected="87f985aa9046b008851a30f6244fa168eeb65853442ed00179d33fb43ce46869"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::gen-phase-c2 dry-run SHA drifted: got $actual, expected $expected"
+            exit 1
+          fi
+      - name: pcr-attestation-reject-c2-live.json SHA256
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual=$(sha256sum conformance/pcr-attestation-reject-c2-live.json | awk '{print $1}')
+          expected="3a73b2507b8967b56a7a6829d0c1b85e8110203c2598d40be3e62c4117007d1c"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::c2-live vector file drifted: got $actual, expected $expected"
+            exit 1
+          fi
