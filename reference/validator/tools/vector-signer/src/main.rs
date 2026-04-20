@@ -40,6 +40,15 @@
 //! reject codes plus two ABI-policy accept cases (default + override).
 //! Signing inputs flow through `ephemeral_classifier::test_fixtures`, the
 //! single source of truth also consumed by ephemeral-core's step-9.5 tests.
+//!
+//! ### `gen-fuzz-c3-c`
+//! Phase C.3-C Session 2 Task #10 patch for `fuzz-baseline.json`.
+//! Replaces the mock-era `fuzz-190` (`classifier_would_return: u32`) with
+//! a real ABI-v1 classifier-WASM dispatch vector, and inserts a new
+//! `fuzz-200` exercising the `classifier-execution-failed` reject surface
+//! via the `fuel_exhausted` fixture.  Delegates vector shape to
+//! `phase_c3_c_fuzz::build_all()`; mutates the target file in-place
+//! rather than appending to an envelope.
 
 // NOTE: This binary unconditionally activates `test-fixtures` on
 // `ephemeral-attestation`, so `insert_trusted_der_for_test` is reachable at
@@ -77,6 +86,7 @@ use serde_json::{json, Value};
 mod merkle;
 mod phase_c2_5;
 mod phase_c3_c;
+mod phase_c3_c_fuzz;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "EPHEMERAL COSE_Sign1 vector signer")]
@@ -97,6 +107,9 @@ enum Cmd {
     GenPhaseC2_5(GenPhaseC2_5Args),
     /// Regenerate + append the eight Phase C.3-C classifier-signature vectors.
     GenPhaseC3_C(GenPhaseC3_CArgs),
+    /// Patch fuzz-baseline.json with the two Phase C.3-C live-classifier
+    /// fuzz vectors (fuzz-190 replace, fuzz-200 insert).
+    GenFuzzC3_C(GenFuzzC3_CArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -157,6 +170,25 @@ struct GenPhaseC3_CArgs {
 }
 
 #[derive(clap::Args, Debug)]
+struct GenFuzzC3_CArgs {
+    /// Target JSON.  The fuzz-baseline file must already exist — this
+    /// subcommand patches two entries (fuzz-190 replace, fuzz-200
+    /// insert-if-missing), it does not create a fresh envelope.
+    ///
+    /// Path is relative to the canonical invocation cwd (workspace root,
+    /// i.e. `cargo run -p vector-signer -- gen-fuzz-c3-c`). From there,
+    /// `../../conformance/` resolves to the repo-root `conformance/` dir.
+    #[arg(long, default_value = r"..\..\conformance\fuzz-baseline.json")]
+    target: PathBuf,
+    /// Dry-run: print the two JSON values (fuzz-190 + fuzz-200) as a
+    /// JSON array to stdout; do not touch the file.  The committed
+    /// `tests/determinism_fuzz.rs` pins the SHA-256 of this dry-run
+    /// output as a non-determinism tripwire.
+    #[arg(long)]
+    dry_run: bool,
+}
+
+#[derive(clap::Args, Debug)]
 struct SignArgs {
     /// 32-byte Ed25519 seed as hex (64 hex chars).
     #[arg(long)]
@@ -180,6 +212,7 @@ fn main() -> Result<()> {
         Cmd::GenPhaseC2(a) => run_gen_phase_c2(&a),
         Cmd::GenPhaseC2_5(a) => run_gen_phase_c2_5(&a),
         Cmd::GenPhaseC3_C(a) => run_gen_phase_c3_c(&a),
+        Cmd::GenFuzzC3_C(a) => run_gen_fuzz_c3_c(&a),
     }
 }
 
@@ -1241,4 +1274,121 @@ fn build_c3_c_envelope() -> Value {
         },
         "vectors": []
     })
+}
+
+// ---- Phase C.3-C Session 2 Task #10 fuzz-baseline patch ----------------
+//
+// `gen-fuzz-c3-c` is distinct from the other `gen-phase-*` subcommands in
+// one structural way: it modifies an *existing* vectors array rather than
+// appending to a fresh envelope.  `fuzz-190` already lives in
+// `conformance/fuzz-baseline.json` as a hand-authored mock-era vector
+// that Session 2 migrates to live classifier dispatch; `fuzz-200` is
+// brand-new and exercises the `classifier-execution-failed` reject
+// surface introduced by this task.  The patch-in-place flow keeps the
+// 205 → 206 vector count change visible as a single deterministic
+// regeneration step rather than a hand-edit.
+
+fn run_gen_fuzz_c3_c(args: &GenFuzzC3_CArgs) -> Result<()> {
+    let patches = phase_c3_c_fuzz::build_all();
+
+    if args.dry_run {
+        // Render as a JSON array so consumers (determinism tests, manual
+        // inspection, scripts) can parse the full payload with a single
+        // `serde_json::from_str` call. The element order matches
+        // `build_all` — fuzz-190 before fuzz-200.
+        let arr: Vec<Value> = patches.iter().map(|(_, v)| v.clone()).collect();
+        let mut stdout = std::io::stdout().lock();
+        writeln!(stdout, "{}", serde_json::to_string_pretty(&Value::Array(arr))?)?;
+        return Ok(());
+    }
+
+    patch_vectors_in_file(&args.target, patches)
+}
+
+/// Apply a list of `(id, vector)` patches to the `vectors` array of an
+/// existing suite JSON file.
+///
+/// Semantics per entry:
+///
+/// - If a vector with the given id already exists, it is replaced
+///   in-place (array position preserved — critical because fuzz-190's
+///   neighbors look for it at a specific index in some ad-hoc red-team
+///   scripts).
+/// - If it does not, the new vector is appended at the end.
+///
+/// The target file must already exist — this helper does not synthesise
+/// a fresh envelope, unlike [`append_vectors_with_envelope`].  The
+/// output is pretty-printed JSON with a trailing newline, matching the
+/// existing committed shape.
+fn patch_vectors_in_file(target: &Path, patches: Vec<(String, Value)>) -> Result<()> {
+    if target.extension().and_then(|s| s.to_str()) != Some("json") {
+        anyhow::bail!(
+            "--target must have a .json extension, got: {}",
+            target.display()
+        );
+    }
+    if !target.exists() {
+        anyhow::bail!(
+            "patch target must already exist (gen-fuzz-c3-c does not create a fresh envelope): {}",
+            target.display()
+        );
+    }
+
+    let raw = fs::read_to_string(target)
+        .with_context(|| format!("read {}", target.display()))?;
+    let mut doc: Value = serde_json::from_str(&raw)
+        .with_context(|| format!("parse {} as JSON", target.display()))?;
+
+    let vectors = doc
+        .get_mut("vectors")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| anyhow!("target JSON missing top-level `vectors` array"))?;
+
+    // Reject duplicate IDs inside the patches list itself.  Without this
+    // guard, a buggy caller supplying `[("fuzz-190", a), ("fuzz-190", b)]`
+    // would silently overwrite once, then re-find the updated entry and
+    // overwrite again with `b`, leaving `a` lost and no error surfaced.
+    let mut seen_ids: HashSet<&str> = HashSet::new();
+    for (id, _) in &patches {
+        if !seen_ids.insert(id.as_str()) {
+            anyhow::bail!("patches list contains duplicate id `{id}`");
+        }
+    }
+
+    let mut replaced = HashSet::<String>::new();
+    let mut inserted = Vec::<String>::new();
+
+    for (id, new_val) in patches {
+        let pos = vectors
+            .iter()
+            .position(|v| v.get("id").and_then(Value::as_str) == Some(id.as_str()));
+        if let Some(i) = pos {
+            vectors[i] = new_val;
+            replaced.insert(id);
+        } else {
+            vectors.push(new_val);
+            inserted.push(id);
+        }
+    }
+
+    let mut out = serde_json::to_string_pretty(&doc)?;
+    out.push('\n');
+
+    // Atomic write: truncate-then-write via `fs::write` leaves the target
+    // zero-length or half-written on SIGKILL / power loss, corrupting the
+    // only copy of `fuzz-baseline.json`.  Write to a sibling temp file
+    // and rename — same-volume rename is atomic on POSIX and NTFS.
+    let tmp = target.with_extension("json.tmp");
+    fs::write(&tmp, &out)
+        .with_context(|| format!("write tmp {}", tmp.display()))?;
+    fs::rename(&tmp, target)
+        .with_context(|| format!("rename {} -> {}", tmp.display(), target.display()))?;
+
+    eprintln!(
+        "patched {}: replaced={:?} inserted={:?}",
+        target.display(),
+        replaced,
+        inserted
+    );
+    Ok(())
 }

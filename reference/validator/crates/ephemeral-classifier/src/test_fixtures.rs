@@ -193,6 +193,32 @@ pub fn reject_by_schema_wat() -> String {
     build_classifier_wat(&reject_by_schema_output())
 }
 
+/// WAT source for a module whose `classify` burns through fuel in a tight
+/// loop and never produces output.
+///
+/// Shape is ABI-v1-conformant (memory, alloc, classify exports; no
+/// imports; no start function) so it parses and loads cleanly — the
+/// failure surface is exclusively `ClassifierExecError::ClassifyCallTrap`
+/// triggered by fuel exhaustion inside `classify`.  Used by the fuzz
+/// suite's `classifier-execution-failed` reject-path vector so the
+/// conformance harness can assert the runtime raises the error at call
+/// time, not at load time.
+///
+/// `unreachable` after the infinite `loop` keeps wasmi's validator
+/// satisfied that the `(result i64)` signature is structurally honored.
+#[must_use]
+pub fn fuel_exhausted_wat() -> String {
+    r#"(module
+  (memory (export "memory") 1)
+  (func (export "alloc") (param i32) (result i32)
+    i32.const 4096)
+  (func (export "classify") (param i32 i32) (result i64)
+    (loop $l (br $l))
+    unreachable))
+"#
+    .to_string()
+}
+
 // ============================================================================
 // Shared pre-compiled WASM artifact pool
 // ============================================================================
@@ -213,6 +239,10 @@ pub struct SharedWasmArtifacts {
     pub tier_9999: Vec<u8>,
     /// Bytes of the schema-violation escalator.
     pub reject: Vec<u8>,
+    /// Bytes of the fuel-exhaustion module — loads cleanly, traps at
+    /// `classify`-call time with
+    /// [`crate::ClassifierExecError::ClassifyCallTrap`].
+    pub fuel_exhausted: Vec<u8>,
 }
 
 /// Return a lazily initialised, process-global pool of pre-compiled
@@ -241,6 +271,8 @@ pub fn shared_wasm_artifacts() -> &'static SharedWasmArtifacts {
             .expect("always_tier_9999_wat must parse"),
         reject: wat::parse_str(reject_by_schema_wat())
             .expect("reject_by_schema_wat must parse"),
+        fuel_exhausted: wat::parse_str(fuel_exhausted_wat())
+            .expect("fuel_exhausted_wat must parse"),
     })
 }
 
@@ -455,6 +487,24 @@ mod self_test {
             .expect("reject classifier executes");
         assert_eq!(out, reject_by_schema_output());
         assert_eq!(out.escalations, vec!["schema-violation".to_string()]);
+    }
+
+    #[test]
+    fn fuel_exhausted_artifact_traps_at_classify() {
+        let pool = shared_wasm_artifacts();
+        let err = execute_classifier(
+            &pool.fuel_exhausted,
+            b"ignored",
+            &ClassifierConfig::default(),
+        )
+        .expect_err("fuel_exhausted module must trap at classify");
+        // The module parses cleanly (no imports, canonical exports),
+        // loads cleanly (ABI-v1 shape), and only fails at call time when
+        // the fuel budget is consumed by the infinite `(loop (br))`.
+        match err {
+            crate::ClassifierError::Exec(crate::ClassifierExecError::ClassifyCallTrap) => {}
+            other => panic!("expected ClassifyCallTrap, got {other:?}"),
+        }
     }
 
     #[test]

@@ -1781,11 +1781,13 @@ name = "vector-signer"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "ciborium",
  "clap",
  "coset",
  "ed25519-dalek",
  "ephemeral-attestation",
  "ephemeral-attestation-test-support",
+ "ephemeral-classifier",
  "ephemeral-core",
  "ephemeral-crypto",
  "hex",
