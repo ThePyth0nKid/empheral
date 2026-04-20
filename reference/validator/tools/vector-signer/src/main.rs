@@ -142,7 +142,14 @@ struct GenPhaseC3_CArgs {
     /// `vector_suite` must load both `tariff-reject.json` (mock-era) and
     /// `tariff-reject-c3-c-classifier.json` (this file) when selecting for
     /// the `tariff-reject` suite.
-    #[arg(long, default_value = r"..\..\..\conformance\tariff-reject-c3-c-classifier.json")]
+    ///
+    /// Path is relative to the canonical invocation cwd (workspace root,
+    /// i.e. `cargo run -p vector-signer -- gen-phase-c3-c`). From there,
+    /// `../../conformance/` resolves to the repo-root `conformance/` dir.
+    /// The earlier C.2 / C.2.5 defaults carry a latent off-by-one (three
+    /// `..` instead of two) — fixed here for C.3-C; CI and regeneration
+    /// currently pass explicit `--target`, so neither is exercised today.
+    #[arg(long, default_value = r"..\..\conformance\tariff-reject-c3-c-classifier.json")]
     target: PathBuf,
     /// Dry-run: print the 8 JSON values to stdout; do not touch the file.
     #[arg(long)]

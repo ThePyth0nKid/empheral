@@ -1,0 +1,291 @@
+{
+  "schema_version": "1.0.0",
+  "vector_suite": "tariff-reject",
+  "spec_reference": "design-final.md §4.3 (Phase C.3-C classifier signature verification)",
+  "spec_version": "round8-delta-applied + phase-c3-c-classifier-sig",
+  "generated_at": "2026-04-20T00:00:00Z",
+  "coverage_summary": {
+    "live-classifier-sig-cose-verify-tampered": 1,
+    "live-classifier-sig-payload-sha256-wrong-length": 1,
+    "live-classifier-sig-abi-version-mismatch": 1,
+    "live-classifier-sig-wasm-hash-mismatch": 1,
+    "live-classifier-sig-inner-kid-mismatch": 1,
+    "live-classifier-sig-partial-triple-missing-anchors": 1,
+    "live-classifier-sig-happy-default-abi": 1,
+    "live-classifier-sig-happy-abi-override": 1
+  },
+  "vectors": [
+    {
+      "id": "trej-120",
+      "category": "live-classifier-sig-cose-verify-tampered",
+      "description": "Phase C.3-C live-crypto vector: a valid classifier COSE_Sign1 envelope with the first inner-payload byte flipped after signing. Outer Ed25519 MAC fails, classifier-sig verification surfaces as classifier-signature-invalid.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: live-crypto vector drives verification via cose_sign1_bytes_classifier>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": [
+            "K_cust_root_pk_TEST"
+          ],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1,
+        "cose_sign1_bytes_classifier": "84581ca2012704574b5f666978747572655f636c61737369666965725f706ba0585aa2667368613235365820a6c1a44c667d69f356f25309258bec33269d1fdd3985b147312879eedb70639e6b6162695f76657273696f6e016a7369676e65725f6b6964774b5f666978747572655f636c61737369666965725f706b5840551cade04ae592f5c208edc2d8e07cc171e69849182b4eb47007e68970875538af3fcc33d042bde9e3881953e42c0ce1a7c5d204a8c36766325be90c3c58a907",
+        "wasm_bytes_classifier": "70686173652d63332d632d636c61737369666965722d7761736d2d626c6f622d7631",
+        "trust_anchor_keys_classifier": [
+          {
+            "kid": "K_fixture_classifier_pk",
+            "alg": "ed25519",
+            "pk_hex": "18e4e94e9ab47e2cba249f30e8d8be2d8284da83b56d811bcc63453cb55877b2"
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "classifier-signature-invalid"
+      },
+      "rationale": "design-final.md §4.3 + RFC 9052 §4.4: the classifier envelope is protected exactly the way the tariff envelope is. Any post-signing mutation of the signed bytes breaks the MAC; the live path must detect what no mock bool could have.",
+      "redteam_refs": [
+        "PHASE-C3-C-LIVE"
+      ],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-121",
+      "category": "live-classifier-sig-payload-sha256-wrong-length",
+      "description": "Phase C.3-C live-crypto vector: valid outer COSE_Sign1 over an inner CBOR payload whose `sha256` byte string is 31 bytes (one short of SHA-256's 32-byte fixed width). Length gate rejects at decode time → classifier-signature-payload-malformed.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: live-crypto vector drives verification via cose_sign1_bytes_classifier>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": [
+            "K_cust_root_pk_TEST"
+          ],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1,
+        "cose_sign1_bytes_classifier": "84581ca2012704574b5f666978747572655f636c61737369666965725f706ba05859a366736861323536581faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa6b6162695f76657273696f6e016a7369676e65725f6b6964774b5f666978747572655f636c61737369666965725f706b584059f9c66726878de505a9887fca1c63a5a7642f69319a319463b8eda5c951a0c822e4e9e62c4ca9ea616629c5cf2c01e211a5c858da6782f6c4602e9ddc225109",
+        "wasm_bytes_classifier": "70686173652d63332d632d636c61737369666965722d7761736d2d626c6f622d7631",
+        "trust_anchor_keys_classifier": [
+          {
+            "kid": "K_fixture_classifier_pk",
+            "alg": "ed25519",
+            "pk_hex": "18e4e94e9ab47e2cba249f30e8d8be2d8284da83b56d811bcc63453cb55877b2"
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "classifier-signature-payload-malformed"
+      },
+      "rationale": "design-final.md §4.3: the classifier payload's hash field is normatively 32 bytes. A decoder that silently zero-pads or truncates would open a collision avenue; length enforcement is mandatory, pre-crypto.",
+      "redteam_refs": [
+        "PHASE-C3-C-LIVE"
+      ],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-122",
+      "category": "live-classifier-sig-abi-version-mismatch",
+      "description": "Phase C.3-C live-crypto vector: classifier envelope signed with abi_version=2 but Tariff policy pins abi_version=1 (default, no policy override supplied). Mismatch MUST reject with classifier-abi-version-mismatch before the hash path runs.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: live-crypto vector drives verification via cose_sign1_bytes_classifier>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": [
+            "K_cust_root_pk_TEST"
+          ],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1,
+        "cose_sign1_bytes_classifier": "84581ca2012704574b5f666978747572655f636c61737369666965725f706ba0585aa3667368613235365820a6c1a44c667d69f356f25309258bec33269d1fdd3985b147312879eedb70639e6b6162695f76657273696f6e026a7369676e65725f6b6964774b5f666978747572655f636c61737369666965725f706b5840d6dd016e5fa8f97987f7dce042f3a9906e64cfaa7882b365db21211d9359bd391dcca267d3a06387f9df448203ede0921f217180a59714124eca1f0b055da70d",
+        "wasm_bytes_classifier": "70686173652d63332d632d636c61737369666965722d7761736d2d626c6f622d7631",
+        "trust_anchor_keys_classifier": [
+          {
+            "kid": "K_fixture_classifier_pk",
+            "alg": "ed25519",
+            "pk_hex": "18e4e94e9ab47e2cba249f30e8d8be2d8284da83b56d811bcc63453cb55877b2"
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "classifier-abi-version-mismatch"
+      },
+      "rationale": "design-final.md §4.3: the ABI version field is how the Tariff signals which classifier generation it is willing to run. A stale or forward-rolled version must be caught before verify_classifier_hash executes — a higher abi could imply changed guest↔host contracts.",
+      "redteam_refs": [
+        "PHASE-C3-C-LIVE"
+      ],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-123",
+      "category": "live-classifier-sig-wasm-hash-mismatch",
+      "description": "Phase C.3-C live-crypto vector: envelope commits to sha256(ALT_CLASSIFIER_WASM) but the vector supplies the non-alternate CLASSIFIER_WASM blob for hashing. Mismatch MUST reject with classifier-wasm-hash-mismatch.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: live-crypto vector drives verification via cose_sign1_bytes_classifier>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": [
+            "K_cust_root_pk_TEST"
+          ],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1,
+        "cose_sign1_bytes_classifier": "84581ca2012704574b5f666978747572655f636c61737369666965725f706ba0585aa36673686132353658209ce09af0dc6d4f0fc578e07706c45e96864f86276a2c79d85236b009567912cc6b6162695f76657273696f6e016a7369676e65725f6b6964774b5f666978747572655f636c61737369666965725f706b5840abada94b618ab4072cf58397d9d06f2992820a9a711a0e4d2347fb6d58eb38ab0520686615a02354f7aa7129687c6ff688334de37bc026d2c369de69bc4b8400",
+        "wasm_bytes_classifier": "70686173652d63332d632d636c61737369666965722d7761736d2d626c6f622d7631",
+        "trust_anchor_keys_classifier": [
+          {
+            "kid": "K_fixture_classifier_pk",
+            "alg": "ed25519",
+            "pk_hex": "18e4e94e9ab47e2cba249f30e8d8be2d8284da83b56d811bcc63453cb55877b2"
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "classifier-wasm-hash-mismatch"
+      },
+      "rationale": "design-final.md §4.3: the sha256 field is the payload's commitment to the exact WASM bytes the signer audited. A swapped binary at deploy time must fail this comparison — otherwise the signer's approval no longer applies to what runs.",
+      "redteam_refs": [
+        "PHASE-C3-C-LIVE"
+      ],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-124",
+      "category": "live-classifier-sig-inner-kid-mismatch",
+      "description": "Phase C.3-C live-crypto vector: outer COSE_Sign1 header `kid` is K_impostor_classifier_pk (anchor registers this kid against the real fixture pubkey so the outer MAC verifies); inner CBOR payload's signer_kid is K_fixture_classifier_pk. Inner/outer mismatch MUST reject with classifier-signer-kid-mismatch.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: live-crypto vector drives verification via cose_sign1_bytes_classifier>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": [
+            "K_cust_root_pk_TEST"
+          ],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1,
+        "cose_sign1_bytes_classifier": "84581ea201270458184b5f696d706f73746f725f636c61737369666965725f706ba0585aa3667368613235365820a6c1a44c667d69f356f25309258bec33269d1fdd3985b147312879eedb70639e6b6162695f76657273696f6e016a7369676e65725f6b6964774b5f666978747572655f636c61737369666965725f706b5840879b875e2aad0d965000748395c72f84dbc96bb0adec6f1ddc9915dddd09214631c66ce1b9401ae053f717084da48bb305fcb0efec5d8a5c61da50dad294730a",
+        "wasm_bytes_classifier": "70686173652d63332d632d636c61737369666965722d7761736d2d626c6f622d7631",
+        "trust_anchor_keys_classifier": [
+          {
+            "kid": "K_impostor_classifier_pk",
+            "alg": "ed25519",
+            "pk_hex": "18e4e94e9ab47e2cba249f30e8d8be2d8284da83b56d811bcc63453cb55877b2"
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "classifier-signer-kid-mismatch"
+      },
+      "rationale": "design-final.md §4.3: duplicating the signer identity inside the signed payload is defense-in-depth against header substitution. An attacker who gains the ability to rewrite the outer kid (but not the inner bytes) must still be caught by the consistency gate — this vector pins that gate.",
+      "redteam_refs": [
+        "PHASE-C3-C-LIVE"
+      ],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-125",
+      "category": "live-classifier-sig-partial-triple-missing-anchors",
+      "description": "Phase C.3-C live-crypto vector: a perfectly-signed envelope + valid wasm bytes are supplied but the Tariff input omits trust_anchor_keys_classifier. tariff.rs step 9.5 treats any partial triple as an authoring error and rejects with classifier-signature-invalid — silent acceptance would bypass classifier trust entirely.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: live-crypto vector drives verification via cose_sign1_bytes_classifier>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": [
+            "K_cust_root_pk_TEST"
+          ],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1,
+        "cose_sign1_bytes_classifier": "84581ca2012704574b5f666978747572655f636c61737369666965725f706ba0585aa3667368613235365820a6c1a44c667d69f356f25309258bec33269d1fdd3985b147312879eedb70639e6b6162695f76657273696f6e016a7369676e65725f6b6964774b5f666978747572655f636c61737369666965725f706b5840551cade04ae592f5c208edc2d8e07cc171e69849182b4eb47007e68970875538af3fcc33d042bde9e3881953e42c0ce1a7c5d204a8c36766325be90c3c58a907",
+        "wasm_bytes_classifier": "70686173652d63332d632d636c61737369666965722d7761736d2d626c6f622d7631"
+      },
+      "expected": {
+        "outcome": "reject",
+        "reject_code": "classifier-signature-invalid"
+      },
+      "rationale": "design-final.md §4.3: presence of the classifier envelope fields is an all-or-nothing contract. A Tariff that declares a classifier signature without anchors is not exempt — it is malformed, and the validator must refuse to classify it.",
+      "redteam_refs": [
+        "PHASE-C3-C-LIVE"
+      ],
+      "severity_if_failed": "critical"
+    },
+    {
+      "id": "trej-126",
+      "category": "live-classifier-sig-happy-default-abi",
+      "description": "Phase C.3-C live-crypto accept: canonical classifier envelope signed under abi_version=CLASSIFIER_ABI_VERSION, matching hash, matching kid, registered anchor. Validator reaches the end of step 9.5 without rejecting and continues to steps 10-13 which also pass (empty category, no version skew, no validity window). Outcome: accept.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: live-crypto vector drives verification via cose_sign1_bytes_classifier>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": [
+            "K_cust_root_pk_TEST"
+          ],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1,
+        "cose_sign1_bytes_classifier": "84581ca2012704574b5f666978747572655f636c61737369666965725f706ba0585aa3667368613235365820a6c1a44c667d69f356f25309258bec33269d1fdd3985b147312879eedb70639e6b6162695f76657273696f6e016a7369676e65725f6b6964774b5f666978747572655f636c61737369666965725f706b5840551cade04ae592f5c208edc2d8e07cc171e69849182b4eb47007e68970875538af3fcc33d042bde9e3881953e42c0ce1a7c5d204a8c36766325be90c3c58a907",
+        "wasm_bytes_classifier": "70686173652d63332d632d636c61737369666965722d7761736d2d626c6f622d7631",
+        "trust_anchor_keys_classifier": [
+          {
+            "kid": "K_fixture_classifier_pk",
+            "alg": "ed25519",
+            "pk_hex": "18e4e94e9ab47e2cba249f30e8d8be2d8284da83b56d811bcc63453cb55877b2"
+          }
+        ]
+      },
+      "expected": {
+        "outcome": "accept"
+      },
+      "rationale": "design-final.md §4.3: the happy-path vector is the positive control. Without it, a validator that always rejects at step 9.5 would pass every reject vector and appear conformant — this vector makes that failure mode observable.",
+      "redteam_refs": [
+        "PHASE-C3-C-LIVE"
+      ],
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "trej-127",
+      "category": "live-classifier-sig-happy-abi-override",
+      "description": "Phase C.3-C live-crypto accept: envelope signed with abi_version=2, Tariff sets policy_classifier_abi_version=2, other fields match the happy path. Validator MUST accept — pins that the override actually takes effect.",
+      "input": {
+        "tariff_cbor_hex": "<placeholder: live-crypto vector drives verification via cose_sign1_bytes_classifier>",
+        "signature_verification_context": {
+          "signer_key_id": "K_tariff_signer_pk_TEST",
+          "trust_anchors": [
+            "K_cust_root_pk_TEST"
+          ],
+          "signature_valid_under_current_bytes": true
+        },
+        "current_time": "2026-05-01T00:00:00Z",
+        "previously_seen_version": 1,
+        "cose_sign1_bytes_classifier": "84581ca2012704574b5f666978747572655f636c61737369666965725f706ba0585aa3667368613235365820a6c1a44c667d69f356f25309258bec33269d1fdd3985b147312879eedb70639e6b6162695f76657273696f6e026a7369676e65725f6b6964774b5f666978747572655f636c61737369666965725f706b5840d6dd016e5fa8f97987f7dce042f3a9906e64cfaa7882b365db21211d9359bd391dcca267d3a06387f9df448203ede0921f217180a59714124eca1f0b055da70d",
+        "wasm_bytes_classifier": "70686173652d63332d632d636c61737369666965722d7761736d2d626c6f622d7631",
+        "trust_anchor_keys_classifier": [
+          {
+            "kid": "K_fixture_classifier_pk",
+            "alg": "ed25519",
+            "pk_hex": "18e4e94e9ab47e2cba249f30e8d8be2d8284da83b56d811bcc63453cb55877b2"
+          }
+        ],
+        "policy_classifier_abi_version": 2
+      },
+      "expected": {
+        "outcome": "accept"
+      },
+      "rationale": "design-final.md §4.3: the policy_classifier_abi_version override is how a Tariff opts into a future classifier generation. A validator that silently ignored the override (and kept comparing against the hard-coded 1) would pass trej-122 and fail trej-127 — that asymmetry is exactly what this vector detects.",
+      "redteam_refs": [
+        "PHASE-C3-C-LIVE"
+      ],
+      "severity_if_failed": "high"
+    }
+  ]
+}
