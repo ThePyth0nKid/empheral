@@ -1,7 +1,8 @@
 //! Classifier WASM signature verification (Phase C.3-C).
 //!
-//! This module binds a classifier WASM binary to a [`ClassifierSigner`]
-//! -signed metadata envelope via a cryptographic pipeline that layers
+//! This module binds a classifier WASM binary to a
+//! [`AnchorRole::ClassifierSigner`]-signed metadata envelope via a
+//! cryptographic pipeline that layers
 //! over [`ephemeral_crypto::verify_cose_sign1`]:
 //!
 //! ```text
@@ -164,8 +165,8 @@ pub struct ClassifierSigPayload {
 pub struct VerifiedClassifierSignature {
     /// The kid of the signer, taken from the cryptographically
     /// authoritative outer `COSE_Sign1` protected header and passed
-    /// through [`sanitize_log_string`] (non-printable ASCII replaced
-    /// with `'?'`, truncated to [`MAX_LOG_STRING_BYTES`]) so this field
+    /// through `sanitize_log_string` (non-printable ASCII replaced
+    /// with `'?'`, truncated to `MAX_LOG_STRING_BYTES`) so this field
     /// is always safe to embed in log output or error messages.
     ///
     /// Do NOT use this value as a lookup key back into a

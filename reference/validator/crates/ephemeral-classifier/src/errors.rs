@@ -228,9 +228,9 @@ pub enum ClassifierSigError {
     /// is a defense-in-depth consistency gate that catches signer-side
     /// authoring bugs (duplicated envelopes with stale inner metadata).
     ///
-    /// Both fields are truncated to [`MAX_LOG_STRING_BYTES`] bytes and
+    /// Both fields are truncated to `MAX_LOG_STRING_BYTES` bytes and
     /// sanitised of control characters before storage via
-    /// [`sanitize_log_string`], so adversarial CBOR cannot inject
+    /// `sanitize_log_string`, so adversarial CBOR cannot inject
     /// newlines or ANSI sequences into validator logs via this path.
     #[error("signer kid mismatch: outer COSE kid `{outer}`, signed payload claims `{signed}`")]
     SignerKidMismatch { outer: String, signed: String },

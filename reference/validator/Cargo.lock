@@ -603,6 +603,7 @@ dependencies = [
 name = "ephemeral-prod-symbol-probe"
 version = "0.1.0"
 dependencies = [
+ "ephemeral-classifier",
  "ephemeral-core",
  "object",
  "serde_json",

@@ -1,6 +1,7 @@
-//! Task D-2 local guard — assert that `ephemeral-core` and
-//! `ephemeral-attestation` built without the `test-fixtures` feature do
-//! NOT leak any of the four test-only surfaces into the compiled library:
+//! Task D-2 local guard — assert that `ephemeral-core`,
+//! `ephemeral-attestation`, and `ephemeral-classifier` built without
+//! their respective `test-fixtures` / `test_fixtures` features do NOT
+//! leak any of the test-only surfaces into the compiled library:
 //!
 //! | Surface                         | Crate                 | Phase |
 //! |---------------------------------|-----------------------|-------|
@@ -8,6 +9,10 @@
 //! | `classify_live_nitro`           | ephemeral-core        | C.2   |
 //! | `insert_trusted_key_for_test`   | ephemeral-attestation | C.2.5 |
 //! | `classify_live_rekor`           | ephemeral-core        | C.2.5 |
+//! | `shared_wasm_artifacts`         | ephemeral-classifier  | C.3-C |
+//! | `sign_classifier_envelope`      | ephemeral-classifier  | C.3-C |
+//! | `fixture_signing_key`           | ephemeral-classifier  | C.3-C |
+//! | `build_classifier_wat`          | ephemeral-classifier  | C.3-C |
 //!
 //! Why a rlib, not a final binary:
 //!
@@ -62,7 +67,11 @@ fn cargo() -> String {
 /// and never opts into `test-fixtures`. If that ever changes, both
 /// rlibs will immediately leak — which is the whole point.
 fn build_and_locate_relevant_rlibs() -> Vec<PathBuf> {
-    const WATCHED: &[&str] = &["ephemeral_core", "ephemeral_attestation"];
+    const WATCHED: &[&str] = &[
+        "ephemeral_core",
+        "ephemeral_attestation",
+        "ephemeral_classifier",
+    ];
 
     let output = Command::new(cargo())
         .args([
@@ -187,10 +196,23 @@ fn test_fixtures_symbols_do_not_leak_into_prod_rlibs() {
     //   Ed25519 public-key anchor installation.
     // - `classify_live_rekor` (ephemeral-core) — live-Rekor classifier.
     let forbidden = [
+        // Phase C.2 / C.2.5 — ephemeral-core / ephemeral-attestation.
         "insert_trusted_der_for_test",
         "classify_live_nitro",
         "insert_trusted_key_for_test",
         "classify_live_rekor",
+        // Phase C.3-C — ephemeral-classifier `test_fixtures` surface.
+        // Symbols chosen as the four most-unique Rust-mangled
+        // fragments of the public fixture API.  Any of them appearing
+        // in the probe-profile rlib means `features = ["test_fixtures"]`
+        // is being activated on a code path that must stay production-
+        // clean.  The crate-qualified mangling (`ephemeral_classifier`
+        // + `test_fixtures`) makes collisions with unrelated symbols
+        // astronomically unlikely.
+        "shared_wasm_artifacts",
+        "sign_classifier_envelope",
+        "fixture_signing_key",
+        "build_classifier_wat",
     ];
     // Positive control per rlib: at least one unconditionally public,
     // non-generic symbol that MUST be monomorphized into the rlib. If
@@ -201,6 +223,11 @@ fn test_fixtures_symbols_do_not_leak_into_prod_rlibs() {
     let controls = [
         ("ephemeral_core", "total_failing"),
         ("ephemeral_attestation", "sha256_fingerprint"),
+        // `verify_classifier_hash` is unconditionally public
+        // (no feature gate, no generics); the probe binary references
+        // it through `black_box` in `main.rs`, guaranteeing it survives
+        // dead-code elimination under the `symbol-probe` profile.
+        ("ephemeral_classifier", "verify_classifier_hash"),
     ];
 
     for rlib in &rlibs {
@@ -228,7 +255,10 @@ fn test_fixtures_symbols_do_not_leak_into_prod_rlibs() {
                  ephemeral-core/src/suites/pcr.rs (classify_live_nitro, \
                  classify_live_rekor) and in ephemeral-attestation \
                  (insert_trusted_der_for_test in anchors.rs, \
-                 insert_trusted_key_for_test in rekor.rs). First 5 hits:\n  {}",
+                 insert_trusted_key_for_test in rekor.rs), and \
+                 #[cfg(feature = \"test_fixtures\")] on \
+                 ephemeral-classifier's `pub mod test_fixtures;` in \
+                 src/lib.rs.  First 5 hits:\n  {}",
                 hits.len(),
                 rlib.display(),
                 hits.iter().take(5).map(|s| s.as_str()).collect::<Vec<_>>().join("\n  "),

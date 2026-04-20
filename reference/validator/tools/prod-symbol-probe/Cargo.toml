@@ -22,6 +22,14 @@ path = "src/main.rs"
 # `feature-leak-guard` job must immediately go red. Do not "fix" such a
 # failure by changing these flags.
 ephemeral-core = { path = "../../crates/ephemeral-core", default-features = false }
+# Phase C.3-C Session 2 extension: the classifier crate grew its own
+# `test_fixtures` feature (signing keys, `shared_wasm_artifacts`,
+# `sign_classifier_envelope`).  Linking the classifier rlib here with
+# `default-features = false` and NO feature opt-in lets `no_leak.rs`
+# scan it for those symbols — same invariant as the ephemeral-core
+# `test-fixtures` leak check, applied at the classifier layer.  Do NOT
+# add `features = ["test_fixtures"]`.
+ephemeral-classifier = { path = "../../crates/ephemeral-classifier", default-features = false }
 
 [dev-dependencies]
 # `object` parses the symbol tables of PE/ELF/Mach-O binaries. We need

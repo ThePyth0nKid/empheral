@@ -81,6 +81,15 @@ pub mod runtime;
 pub mod signature;
 pub mod validate;
 
+/// Test-only fixture module — canned WAT classifier sources, a shared
+/// pre-compiled WASM artifact pool, and a deterministic classifier
+/// signing helper.  Kept behind the `test_fixtures` feature so its
+/// `ed25519-dalek` / `coset` signing surface cannot reach a production
+/// consumer.  The `ephemeral-prod-symbol-probe` rlib scan enforces
+/// that the feature stays opt-in.
+#[cfg(feature = "test_fixtures")]
+pub mod test_fixtures;
+
 pub use config::{
     ClassifierConfig, DEFAULT_FUEL_BUDGET, DEFAULT_MAX_MEMORY_PAGES, DEFAULT_MAX_OUTPUT_BYTES,
     WASM_PAGE_SIZE,
