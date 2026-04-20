@@ -32,7 +32,7 @@
 
 use std::fmt;
 
-use ephemeral_crypto::CoseError;
+use ephemeral_crypto::{AnchorRole, CoseError};
 use serde::Deserialize;
 
 use super::crypto_support::{verify_with_defs, TrustAnchorKeyDef};
@@ -368,9 +368,14 @@ fn check_link_signature(
     anchor_defs: Option<&[TrustAnchorKeyDef]>,
 ) -> Result<(), DelegationRejectCode> {
     match (&link.cose_sign1_bytes, anchor_defs) {
-        (Some(hex_bytes), Some(defs)) => verify_with_defs(hex_bytes, defs, b"delegation-link")
-            .map(|_| ())
-            .map_err(|e| map_cose_error_to_delegation(&e)),
+        (Some(hex_bytes), Some(defs)) => verify_with_defs(
+            hex_bytes,
+            defs,
+            b"delegation-link",
+            AnchorRole::DelegationSigner,
+        )
+        .map(|_| ())
+        .map_err(|e| map_cose_error_to_delegation(&e)),
         (Some(_), None) | (None, Some(_)) => Err(DelegationRejectCode::SignatureInvalid),
         (None, None) => {
             if link.signature_valid {
@@ -391,9 +396,14 @@ fn check_mandate_signature(
     anchor_defs: Option<&[TrustAnchorKeyDef]>,
 ) -> Result<(), DelegationRejectCode> {
     match (&mandate.cose_sign1_bytes, anchor_defs) {
-        (Some(hex_bytes), Some(defs)) => verify_with_defs(hex_bytes, defs, b"mandate")
-            .map(|_| ())
-            .map_err(|e| map_cose_error_to_delegation(&e)),
+        (Some(hex_bytes), Some(defs)) => verify_with_defs(
+            hex_bytes,
+            defs,
+            b"mandate",
+            AnchorRole::DelegationSigner,
+        )
+        .map(|_| ())
+        .map_err(|e| map_cose_error_to_delegation(&e)),
         (Some(_), None) | (None, Some(_)) => Err(DelegationRejectCode::SignatureInvalid),
         (None, None) => {
             if mandate.signature_valid {

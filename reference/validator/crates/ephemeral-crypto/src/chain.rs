@@ -6,7 +6,7 @@
 //! are suite-specific. This crate supplies the crypto primitive that the
 //! delegation executor calls once per link.
 
-use crate::anchors::{TrustAnchor, TrustAnchorSet};
+use crate::anchors::{AnchorRole, TrustAnchor, TrustAnchorSet};
 use crate::error::CoseError;
 use crate::verify::{verify_cose_sign1, VerifiedPayload};
 
@@ -18,7 +18,11 @@ pub const MAX_CHAIN_DEPTH: usize = 3;
 ///
 /// The parent anchor is the previous link's verified child key (or the
 /// pinned root trust anchor for the first link). `aad` is the domain
-/// separation tag (e.g. `b"delegation-link"`).
+/// separation tag (e.g. `b"delegation-link"`). `expected_role` is the
+/// signer-role context enforced at kid lookup — delegation chains
+/// always pass [`AnchorRole::DelegationSigner`], but the parameter is
+/// kept explicit so the primitive documents its own role assumption
+/// at the call site.
 ///
 /// Callers build the per-link anchor from the verified payload of the
 /// previous link; for the first link it's the root trust anchor set.
@@ -26,10 +30,11 @@ pub fn verify_chain_link(
     cose_bytes: &[u8],
     parent_anchor: &TrustAnchor,
     aad: &[u8],
+    expected_role: AnchorRole,
 ) -> Result<VerifiedPayload, CoseError> {
     let mut set = TrustAnchorSet::new();
     set.insert(parent_anchor.clone())?;
-    verify_cose_sign1(cose_bytes, &set, aad)
+    verify_cose_sign1(cose_bytes, &set, aad, expected_role)
 }
 
 #[cfg(test)]

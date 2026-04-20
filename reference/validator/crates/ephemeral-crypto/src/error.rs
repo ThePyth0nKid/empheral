@@ -69,6 +69,15 @@ pub enum CoseError {
     #[error("unsupported alg label: {alg}")]
     UnsupportedAlg { alg: i64 },
 
+    /// A caller-supplied alg *string* (e.g. from vector JSON) did not
+    /// name any alg family this crate recognises. Distinct from
+    /// [`CoseError::UnsupportedAlg`], which carries an integer label
+    /// observed in a parsed COSE header. The inner string is truncated
+    /// to ≤ 64 bytes at the construction site so adversarial JSON
+    /// cannot blow up log output.
+    #[error("unknown alg string: {label}")]
+    UnknownAlgString { label: String },
+
     /// The alg label in the header does not match the key type pinned on
     /// the matched trust anchor (e.g. alg=-8/EdDSA but anchor is ECDSA).
     #[error("alg/key-type mismatch: alg={alg}, anchor_key_type={key_type}")]
@@ -123,9 +132,17 @@ pub enum CoseError {
 
     /// A [`TrustAnchorSet`](crate::TrustAnchorSet) received two anchors
     /// sharing the same `kid`. Rejected at insertion time so that kid
-    /// resolution in [`TrustAnchorSet::lookup`](crate::TrustAnchorSet::lookup)
+    /// resolution in
+    /// [`TrustAnchorSet::lookup_with_role`](crate::TrustAnchorSet::lookup_with_role)
     /// is unambiguous — first-wins behaviour would let a prepended
     /// attacker-controlled anchor shadow a legitimate one.
     #[error("duplicate trust-anchor kid: {kid}")]
     DuplicateKid { kid: String },
+
+    /// A vector supplied a role string that does not map to any
+    /// [`AnchorRole`](crate::AnchorRole) variant.  The inner string is
+    /// truncated to ≤ 64 bytes at the parse site so log output is
+    /// bounded even for adversarial JSON.
+    #[error("invalid anchor role label: {role}")]
+    InvalidAnchorRole { role: String },
 }

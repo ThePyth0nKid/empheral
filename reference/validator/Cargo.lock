@@ -531,9 +531,13 @@ name = "ephemeral-classifier"
 version = "0.1.0"
 dependencies = [
  "ciborium",
+ "coset",
+ "ed25519-dalek",
+ "ephemeral-crypto",
  "hex",
  "proptest",
  "serde",
+ "serde_bytes",
  "sha2",
  "thiserror",
  "wasmi",
@@ -557,13 +561,19 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "caseless",
+ "ciborium",
+ "coset",
+ "ed25519-dalek",
  "ephemeral-attestation",
+ "ephemeral-classifier",
  "ephemeral-crypto",
  "hex",
  "jsonschema",
  "proptest",
  "serde",
+ "serde_bytes",
  "serde_json",
+ "sha2",
  "thiserror",
  "time",
  "unicode-normalization",
@@ -1476,6 +1486,16 @@ checksum = "9a8e94ea7f378bd32cbbd37198a4a91436180c5bb472411e48b5ec2e2124ae9e"
 dependencies = [
  "serde_core",
  "serde_derive",
+]
+
+[[package]]
+name = "serde_bytes"
+version = "0.11.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5d440709e79d88e51ac01c4b72fc6cb7314017bb7da9eeff678aa94c10e3ea8"
+dependencies = [
+ "serde",
+ "serde_core",
 ]
 
 [[package]]

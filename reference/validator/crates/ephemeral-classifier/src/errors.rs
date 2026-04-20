@@ -169,6 +169,73 @@ pub enum ClassifierExecError {
     OutputDecodeFailed,
 }
 
+/// Failure surface for classifier *signature verification* (Phase C.3-C).
+///
+/// Returned by [`crate::signature::verify_classifier_signature`] — the
+/// entry point the Tariff suite calls at check-step 9.5 to pin a
+/// classifier WASM to its ClassifierSigner-signed metadata envelope.
+///
+/// Variant boundaries are drawn to avoid leaking anchor-set structure
+/// to an attacker: every outer-envelope failure collapses into
+/// [`ClassifierSigError::CoseVerifyFailed`] so unknown-kid and
+/// role-mismatch and signature-failed are indistinguishable from the
+/// caller's perspective.
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ClassifierSigError {
+    /// Outer `COSE_Sign1` verification failed. All underlying causes
+    /// (parse error, unknown kid, alg mismatch, AAD mismatch,
+    /// signature invalid, role mismatch) fold into this single
+    /// variant so the caller cannot distinguish e.g. a missing kid
+    /// from a role-mismatch — otherwise a probing adversary could
+    /// enumerate the anchor set's role assignments by rotating kids.
+    #[error("classifier COSE envelope verification failed")]
+    CoseVerifyFailed,
+
+    /// The inner payload bytes could not be decoded as a
+    /// [`crate::signature::ClassifierSigPayload`] CBOR structure —
+    /// missing required field, wrong type, truncated encoding, or
+    /// the `sha256` byte string was not exactly 32 bytes.
+    #[error("classifier signature payload is not a valid CBOR-encoded ClassifierSigPayload")]
+    PayloadDecodeFailed,
+
+    /// The `abi_version` declared in the signed payload does not
+    /// match the version this validator was built against (passed
+    /// by the caller, typically [`crate::CLASSIFIER_ABI_VERSION`]).
+    /// A mismatch means the Tariff pinned a classifier signed for a
+    /// different ABI era; the validator refuses to execute it.
+    #[error(
+        "classifier ABI version mismatch: validator expects {expected}, signed payload declares {signed}"
+    )]
+    AbiVersionMismatch { expected: u32, signed: u32 },
+
+    /// The `sha256` field in the signed payload does not match the
+    /// runtime SHA-256 of the WASM bytes handed to the verifier. An
+    /// attacker who swapped the WASM blob after signing lands here —
+    /// the validator reports both hashes so auditors can diff them;
+    /// both values are public content hashes, not secrets.
+    #[error("classifier WASM hash does not match signed hash")]
+    WasmHashMismatch {
+        /// The digest the signer committed to.
+        expected: [u8; 32],
+        /// The digest computed from the WASM bytes at verification time.
+        actual: [u8; 32],
+    },
+
+    /// The `signer_kid` field embedded in the signed CBOR payload does
+    /// not match the `kid` from the outer `COSE_Sign1` protected header.
+    /// The outer value is cryptographically authoritative; this check
+    /// is a defense-in-depth consistency gate that catches signer-side
+    /// authoring bugs (duplicated envelopes with stale inner metadata).
+    ///
+    /// Both fields are truncated to [`MAX_LOG_STRING_BYTES`] bytes and
+    /// sanitised of control characters before storage via
+    /// [`sanitize_log_string`], so adversarial CBOR cannot inject
+    /// newlines or ANSI sequences into validator logs via this path.
+    #[error("signer kid mismatch: outer COSE kid `{outer}`, signed payload claims `{signed}`")]
+    SignerKidMismatch { outer: String, signed: String },
+}
+
 /// Combined load + execute failure surface.
 ///
 /// [`crate::execute_classifier`] returns this so callers can distinguish
@@ -176,6 +243,11 @@ pub enum ClassifierExecError {
 /// start-function present) from per-invocation execution failures
 /// (fuel exhaustion, trap, memory cap, decode error) without a second
 /// enum layer.
+///
+/// Signature verification errors ([`ClassifierSigError`]) are NOT
+/// folded in here because the signature check is an outer wrapper run
+/// by the Tariff suite *before* the classifier is executed — it is a
+/// separate pipeline step, not a per-invocation failure mode.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ClassifierError {

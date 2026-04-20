@@ -33,7 +33,7 @@ mod size_guard;
 mod verify;
 
 pub use alg::{Alg, COSE_ALG_EDDSA};
-pub use anchors::{TrustAnchor, TrustAnchorSet};
+pub use anchors::{AnchorRole, TrustAnchor, TrustAnchorSet};
 pub use chain::{verify_chain_link, MAX_CHAIN_DEPTH};
 pub use error::CoseError;
 pub use size_guard::{MAX_CBOR_DEPTH, MAX_COSE_BYTES};

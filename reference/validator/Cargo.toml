@@ -46,6 +46,10 @@ time = { version = "0.3", features = ["parsing", "formatting", "macros"] }
 coset = "0.4"
 ed25519-dalek = "2.2"
 ciborium = "0.2"
+# serde_bytes enables canonical CBOR byte-string encoding for Vec<u8>
+# and &[u8] fields (ciborium's default maps `Vec<u8>` to a CBOR array
+# of uints — wrong shape for our 32-byte hash payload).
+serde_bytes = "0.11"
 zeroize = "1.8"
 
 [profile.release]

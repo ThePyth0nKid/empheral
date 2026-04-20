@@ -59,11 +59,14 @@
 
 use std::fmt;
 
-use ephemeral_crypto::CoseError;
+use ephemeral_classifier::{
+    verify_classifier_signature, ClassifierSigError, CLASSIFIER_ABI_VERSION,
+};
+use ephemeral_crypto::{AnchorRole, CoseError};
 use serde::Deserialize;
 use time::OffsetDateTime;
 
-use super::crypto_support::{verify_with_defs, TrustAnchorKeyDef};
+use super::crypto_support::{build_anchor_set, verify_with_defs, TrustAnchorKeyDef};
 use crate::types::{Outcome, ValidationOutcome, Vector};
 
 // ---------------- constants ------------------------------------------------
@@ -110,6 +113,16 @@ pub enum TariffRejectCode {
     PayloadEncodingInvalid,
     PayloadNotDeterministicCbor,
     TariffDuplicateEntries,
+    // Classifier signature (§4.3 — tariff step 9.5). Envelope binding
+    // between the Tariff-referenced classifier WASM hash and the
+    // classifier-signer authority. Surfaces before version-monotonicity
+    // so a stale-but-signature-valid tariff cannot outrank a classifier
+    // integrity failure.
+    ClassifierSignatureInvalid,
+    ClassifierSignaturePayloadMalformed,
+    ClassifierAbiVersionMismatch,
+    ClassifierWasmHashMismatch,
+    ClassifierSignerKidMismatch,
     // Monotonicity (§10.3)
     VersionTooOld,
     TariffSelfInconsistentVersion,
@@ -149,6 +162,11 @@ impl fmt::Display for TariffRejectCode {
             Self::PayloadEncodingInvalid => "payload-encoding-invalid",
             Self::PayloadNotDeterministicCbor => "payload-not-deterministic-cbor",
             Self::TariffDuplicateEntries => "tariff-duplicate-entries",
+            Self::ClassifierSignatureInvalid => "classifier-signature-invalid",
+            Self::ClassifierSignaturePayloadMalformed => "classifier-signature-payload-malformed",
+            Self::ClassifierAbiVersionMismatch => "classifier-abi-version-mismatch",
+            Self::ClassifierWasmHashMismatch => "classifier-wasm-hash-mismatch",
+            Self::ClassifierSignerKidMismatch => "classifier-signer-kid-mismatch",
             Self::VersionTooOld => "version-too-old",
             Self::TariffSelfInconsistentVersion => "tariff-self-inconsistent-version",
             Self::Expired => "expired",
@@ -213,6 +231,29 @@ struct TariffInput {
     /// [`cose_sign1_bytes`] to enable live verification.
     #[serde(default)]
     trust_anchor_keys: Option<Vec<TrustAnchorKeyDef>>,
+    /// Phase C.3-C — optional hex-encoded classifier COSE_Sign1 envelope.
+    /// When supplied together with [`wasm_bytes_classifier`] and
+    /// [`trust_anchor_keys_classifier`], tariff step 9.5 runs live
+    /// classifier-signature verification. Partial presence of this
+    /// triple surfaces as `classifier-signature-invalid` (authoring-
+    /// error / missing signature), mirroring the step-6 posture.
+    #[serde(default)]
+    cose_sign1_bytes_classifier: Option<String>,
+    /// Phase C.3-C — hex-encoded classifier WASM bytes whose SHA-256
+    /// must match the signed payload's `sha256` field.
+    #[serde(default)]
+    wasm_bytes_classifier: Option<String>,
+    /// Phase C.3-C — per-vector classifier-role trust anchor bag. Each
+    /// def is role-stamped as [`AnchorRole::ClassifierSigner`] unless
+    /// the def carries an explicit `role` override.
+    #[serde(default)]
+    trust_anchor_keys_classifier: Option<Vec<TrustAnchorKeyDef>>,
+    /// Phase C.3-C — optional override of the expected ABI version
+    /// pinned into the signed payload. Defaults to
+    /// [`ephemeral_classifier::CLASSIFIER_ABI_VERSION`] (= 1); bump only
+    /// for vectors that deliberately assert a mismatch outcome.
+    #[serde(default)]
+    policy_classifier_abi_version: Option<u32>,
     // Remaining known-vocabulary hints are accepted but not inspected directly;
     // category-driven dispatch handles their cases. We keep serde happy without
     // `deny_unknown_fields` because vectors carry heterogeneous hint fields.
@@ -370,7 +411,7 @@ fn classify(input: &TariffInput, category: &str) -> Result<(), TariffRejectCode>
     //                                   `signature_valid_under_current_bytes == Some(false)`.
     match (&input.cose_sign1_bytes, &input.trust_anchor_keys) {
         (Some(hex_bytes), Some(defs)) => {
-            if let Err(e) = verify_with_defs(hex_bytes, defs, b"tariff") {
+            if let Err(e) = verify_with_defs(hex_bytes, defs, b"tariff", AnchorRole::TariffSigner) {
                 return Err(map_cose_error_to_tariff(&e));
             }
         }
@@ -417,6 +458,49 @@ fn classify(input: &TariffInput, category: &str) -> Result<(), TariffRejectCode>
     }
     if ctx.duplicate_map_keys_present == Some(true) {
         return Err(TariffRejectCode::TariffDuplicateEntries);
+    }
+
+    // 9.5. Classifier-signature verification (Phase C.3-C, §4.3).
+    //
+    // Three-field dispatch, mirroring step 6:
+    //   - all three Some      → live verify via ephemeral-classifier
+    //   - any partial subset  → authoring error / missing signature,
+    //                           surface as classifier-signature-invalid
+    //   - all three None      → legacy path, skip (vectors without a
+    //                           classifier envelope keep working)
+    //
+    // Runs AFTER payload encoding (step 9) so an outer-payload fault
+    // does not leak into classifier-layer signaling, and BEFORE version
+    // monotonicity (step 10) so a stale-but-signature-valid tariff
+    // cannot outrank a classifier integrity failure.
+    match (
+        &input.cose_sign1_bytes_classifier,
+        &input.wasm_bytes_classifier,
+        &input.trust_anchor_keys_classifier,
+    ) {
+        (Some(cose_hex), Some(wasm_hex), Some(defs)) => {
+            let expected_abi = input
+                .policy_classifier_abi_version
+                .unwrap_or(CLASSIFIER_ABI_VERSION);
+            let cose_bytes = hex::decode(cose_hex)
+                .map_err(|_| TariffRejectCode::ClassifierSignatureInvalid)?;
+            let wasm_bytes = hex::decode(wasm_hex)
+                .map_err(|_| TariffRejectCode::ClassifierSignatureInvalid)?;
+            let anchors = build_anchor_set(defs, AnchorRole::ClassifierSigner)
+                .map_err(|_| TariffRejectCode::ClassifierSignatureInvalid)?;
+            if let Err(e) = verify_classifier_signature(
+                &wasm_bytes,
+                &cose_bytes,
+                &anchors,
+                expected_abi,
+            ) {
+                return Err(map_classifier_sig_error_to_tariff(&e));
+            }
+        }
+        (None, None, None) => {}
+        _ => {
+            return Err(TariffRejectCode::ClassifierSignatureInvalid);
+        }
     }
 
     // 10. Version monotonicity (§10.3).
@@ -609,6 +693,38 @@ fn map_cose_error_to_tariff(e: &CoseError) -> TariffRejectCode {
     }
 }
 
+/// Map a [`ClassifierSigError`] to the tariff-layer reject code surfaced
+/// from step 9.5.
+///
+/// The classifier crate already collapses kid-unknown, role-mismatched
+/// and signature-invalid into `CoseVerifyFailed`, so this mapping does
+/// not need to re-expand those. The five explicit classifier-layer
+/// codes (mismatch / malformed / invalid) map 1:1; a future
+/// non-exhaustive variant lands on the generic
+/// `ClassifierSignatureInvalid` as a safe default.
+fn map_classifier_sig_error_to_tariff(e: &ClassifierSigError) -> TariffRejectCode {
+    match e {
+        ClassifierSigError::PayloadDecodeFailed => {
+            TariffRejectCode::ClassifierSignaturePayloadMalformed
+        }
+        ClassifierSigError::AbiVersionMismatch { .. } => {
+            TariffRejectCode::ClassifierAbiVersionMismatch
+        }
+        ClassifierSigError::WasmHashMismatch { .. } => {
+            TariffRejectCode::ClassifierWasmHashMismatch
+        }
+        ClassifierSigError::SignerKidMismatch { .. } => {
+            TariffRejectCode::ClassifierSignerKidMismatch
+        }
+        // `CoseVerifyFailed` and any future `#[non_exhaustive]` variant
+        // fall through to the generic invalid code. The classifier crate
+        // already folds kid-unknown, role-mismatched, and signature-
+        // failed into `CoseVerifyFailed` so this caller cannot
+        // distinguish them — a deliberate anti-enumeration posture.
+        _ => TariffRejectCode::ClassifierSignatureInvalid,
+    }
+}
+
 fn render_outcome(vector: &Vector, got: Result<(), TariffRejectCode>) -> ValidationOutcome {
     let expected_code = vector.expected.reject_code.as_deref().unwrap_or("");
     match (vector.expected.outcome, got) {
@@ -636,6 +752,7 @@ fn render_outcome(vector: &Vector, got: Result<(), TariffRejectCode>) -> Validat
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ephemeral_classifier::{ClassifierSigPayload, CLASSIFIER_AAD};
     use serde_json::json;
 
     fn v(id: &str, category: &str, reject_code: &str, input: serde_json::Value) -> Vector {
@@ -1061,6 +1178,607 @@ mod tests {
         assert_eq!(
             TariffRejectCode::TariffPcrQuorumInvalid.to_string(),
             "tariff-pcr-quorum-invalid"
+        );
+        assert_eq!(
+            TariffRejectCode::ClassifierSignatureInvalid.to_string(),
+            "classifier-signature-invalid"
+        );
+        assert_eq!(
+            TariffRejectCode::ClassifierSignaturePayloadMalformed.to_string(),
+            "classifier-signature-payload-malformed"
+        );
+        assert_eq!(
+            TariffRejectCode::ClassifierAbiVersionMismatch.to_string(),
+            "classifier-abi-version-mismatch"
+        );
+        assert_eq!(
+            TariffRejectCode::ClassifierWasmHashMismatch.to_string(),
+            "classifier-wasm-hash-mismatch"
+        );
+        assert_eq!(
+            TariffRejectCode::ClassifierSignerKidMismatch.to_string(),
+            "classifier-signer-kid-mismatch"
+        );
+    }
+
+    // ---------- Step 9.5 (Phase C.3-C) integration tests -------------------
+    //
+    // The helper functions below replicate the envelope-construction
+    // machinery that lives in `ephemeral_classifier::signature::tests`.
+    // The duplication is deliberate for Session 1 — moving these into a
+    // shared `ephemeral-classifier::test_fixtures` feature is tracked as
+    // a Session 2 follow-up so the classifier crate's tests and these
+    // tariff integration tests stay self-contained for now.
+
+    mod step_9_5_fixtures {
+        use super::*;
+
+        use coset::{iana, CborSerializable, CoseSign1Builder, HeaderBuilder};
+        use ed25519_dalek::{Signer as _, SigningKey, VerifyingKey};
+        use ephemeral_classifier::{ClassifierSigPayload, CLASSIFIER_AAD};
+        use sha2::{Digest, Sha256};
+
+        pub const CLASSIFIER_TEST_KID: &str = "K_cust_classifier_pk_TEST";
+        /// Fixed seed — deterministic keys so vectors reproduce byte-for-byte.
+        /// Distinct from the classifier crate's own test seed; separation
+        /// avoids cross-test-suite coincidental collisions.
+        pub const CLASSIFIER_SEED: [u8; 32] = [
+            0xc0, 0xde, 0xc0, 0xde, 0xba, 0xdd, 0xca, 0xfe, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06,
+            0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14,
+            0x15, 0x16, 0x17, 0x18,
+        ];
+
+        pub fn classifier_key() -> SigningKey {
+            SigningKey::from_bytes(&CLASSIFIER_SEED)
+        }
+
+        pub fn classifier_vk() -> VerifyingKey {
+            classifier_key().verifying_key()
+        }
+
+        /// Build the JSON shape the tariff vector uses for
+        /// `trust_anchor_keys_classifier`. The role string is omitted
+        /// since the tariff step 9.5 supplies
+        /// `AnchorRole::ClassifierSigner` as the default.
+        pub fn classifier_anchor_def_json(kid: &str) -> serde_json::Value {
+            json!([{
+                "kid": kid,
+                "alg": "ed25519",
+                "pk_hex": hex::encode(classifier_vk().as_bytes()),
+            }])
+        }
+
+        pub fn sha256_of(bytes: &[u8]) -> [u8; 32] {
+            let mut h = Sha256::new();
+            h.update(bytes);
+            h.finalize().into()
+        }
+
+        /// CBOR-encode a payload via ciborium (same encoder the live
+        /// verifier decodes with — deterministic shape).
+        pub fn cbor_encode(payload: &ClassifierSigPayload) -> Vec<u8> {
+            let mut out = Vec::new();
+            ciborium::into_writer(payload, &mut out).expect("ciborium serialize");
+            out
+        }
+
+        /// Build a COSE_Sign1 blob over the supplied inner payload,
+        /// signed with the classifier test key under header `kid` and
+        /// `aad`. Tests vary `kid`, `aad`, or `inner` to exercise each
+        /// reject branch.
+        pub fn sign_envelope(
+            inner_payload_bytes: Vec<u8>,
+            kid: &str,
+            aad: &[u8],
+        ) -> Vec<u8> {
+            let sk = classifier_key();
+            let protected = HeaderBuilder::new()
+                .algorithm(iana::Algorithm::EdDSA)
+                .key_id(kid.as_bytes().to_vec())
+                .build();
+            let sign1 = CoseSign1Builder::new()
+                .protected(protected)
+                .payload(inner_payload_bytes)
+                .create_signature(aad, |tbs| sk.sign(tbs).to_bytes().to_vec())
+                .build();
+            sign1.to_vec().expect("serialize COSE_Sign1")
+        }
+
+        /// Happy-path envelope: signer commits to `wasm_bytes` actual
+        /// sha256, expected ABI version, matching outer/inner kid,
+        /// under the correct AAD.
+        pub fn happy_envelope(wasm_bytes: &[u8]) -> Vec<u8> {
+            let payload = ClassifierSigPayload {
+                sha256: sha256_of(wasm_bytes).to_vec(),
+                abi_version: CLASSIFIER_ABI_VERSION,
+                signer_kid: CLASSIFIER_TEST_KID.to_string(),
+            };
+            sign_envelope(
+                cbor_encode(&payload),
+                CLASSIFIER_TEST_KID,
+                CLASSIFIER_AAD,
+            )
+        }
+    }
+
+    /// Minimal "classifier WASM" blob used throughout the step-9.5
+    /// tests. The tariff step does not re-execute the classifier; it
+    /// only checks that the signed sha256 matches the supplied bytes.
+    /// Using a non-parseable blob is therefore fine and keeps the test
+    /// corpus tiny.
+    const STEP_9_5_WASM: &[u8] = b"classifier-wasm-test-blob-\xde\xad\xbe\xef";
+
+    fn step_9_5_base_input(
+        cose_hex: Option<String>,
+        wasm_hex: Option<String>,
+        anchors: Option<serde_json::Value>,
+        abi_override: Option<u32>,
+    ) -> serde_json::Value {
+        let mut inp = base_input(base_ctx(json!({})));
+        {
+            let map = inp.as_object_mut().expect("base_input returns object");
+            if let Some(c) = cose_hex {
+                map.insert("cose_sign1_bytes_classifier".into(), json!(c));
+            }
+            if let Some(w) = wasm_hex {
+                map.insert("wasm_bytes_classifier".into(), json!(w));
+            }
+            if let Some(a) = anchors {
+                map.insert("trust_anchor_keys_classifier".into(), a);
+            }
+            if let Some(v) = abi_override {
+                map.insert("policy_classifier_abi_version".into(), json!(v));
+            }
+        }
+        // Return the mutated Value by move — avoids the full object
+        // clone the previous revision performed on every test setup.
+        inp
+    }
+
+    #[test]
+    fn step_9_5_accepts_valid_classifier_envelope() {
+        let cose = step_9_5_fixtures::happy_envelope(STEP_9_5_WASM);
+        let input = step_9_5_base_input(
+            Some(hex::encode(&cose)),
+            Some(hex::encode(STEP_9_5_WASM)),
+            Some(step_9_5_fixtures::classifier_anchor_def_json(
+                step_9_5_fixtures::CLASSIFIER_TEST_KID,
+            )),
+            None,
+        );
+        // previously_seen_version=1, tariff_version_in_payload absent → step
+        // 10 monotonicity no-op; pipeline reaches dispatch and returns Ok.
+        let input: TariffInput = serde_json::from_value(input).expect("valid input shape");
+        let result = classify(&input, "accept-baseline");
+        assert!(
+            matches!(result, Ok(())),
+            "step 9.5 happy path reached non-accept: {result:?}"
+        );
+    }
+
+    #[test]
+    fn step_9_5_rejects_signature_invalid_on_tampered_cose() {
+        let mut cose = step_9_5_fixtures::happy_envelope(STEP_9_5_WASM);
+        // Flip the final byte (signature region) — ed25519 verify must fail.
+        *cose.last_mut().unwrap() ^= 0xff;
+        let input = step_9_5_base_input(
+            Some(hex::encode(&cose)),
+            Some(hex::encode(STEP_9_5_WASM)),
+            Some(step_9_5_fixtures::classifier_anchor_def_json(
+                step_9_5_fixtures::CLASSIFIER_TEST_KID,
+            )),
+            None,
+        );
+        let input: TariffInput = serde_json::from_value(input).unwrap();
+        assert_eq!(
+            classify(&input, ""),
+            Err(TariffRejectCode::ClassifierSignatureInvalid)
+        );
+    }
+
+    #[test]
+    fn step_9_5_rejects_payload_malformed_on_non_cbor() {
+        // Inner payload is valid UTF-8 but not CBOR — outer signature verifies,
+        // inner decode must surface as payload-malformed.
+        let cose = step_9_5_fixtures::sign_envelope(
+            b"this-is-not-cbor".to_vec(),
+            step_9_5_fixtures::CLASSIFIER_TEST_KID,
+            CLASSIFIER_AAD,
+        );
+        let input = step_9_5_base_input(
+            Some(hex::encode(&cose)),
+            Some(hex::encode(STEP_9_5_WASM)),
+            Some(step_9_5_fixtures::classifier_anchor_def_json(
+                step_9_5_fixtures::CLASSIFIER_TEST_KID,
+            )),
+            None,
+        );
+        let input: TariffInput = serde_json::from_value(input).unwrap();
+        assert_eq!(
+            classify(&input, ""),
+            Err(TariffRejectCode::ClassifierSignaturePayloadMalformed)
+        );
+    }
+
+    #[test]
+    fn step_9_5_rejects_abi_version_mismatch() {
+        let payload = ClassifierSigPayload {
+            sha256: step_9_5_fixtures::sha256_of(STEP_9_5_WASM).to_vec(),
+            abi_version: 99,
+            signer_kid: step_9_5_fixtures::CLASSIFIER_TEST_KID.to_string(),
+        };
+        let cose = step_9_5_fixtures::sign_envelope(
+            step_9_5_fixtures::cbor_encode(&payload),
+            step_9_5_fixtures::CLASSIFIER_TEST_KID,
+            CLASSIFIER_AAD,
+        );
+        let input = step_9_5_base_input(
+            Some(hex::encode(&cose)),
+            Some(hex::encode(STEP_9_5_WASM)),
+            Some(step_9_5_fixtures::classifier_anchor_def_json(
+                step_9_5_fixtures::CLASSIFIER_TEST_KID,
+            )),
+            None,
+        );
+        let input: TariffInput = serde_json::from_value(input).unwrap();
+        assert_eq!(
+            classify(&input, ""),
+            Err(TariffRejectCode::ClassifierAbiVersionMismatch)
+        );
+    }
+
+    #[test]
+    fn step_9_5_rejects_wasm_hash_mismatch() {
+        // Sign over the *wrong* wasm hash (off-by-one-byte blob).
+        let other_wasm: &[u8] = b"other-wasm-bytes";
+        let payload = ClassifierSigPayload {
+            sha256: step_9_5_fixtures::sha256_of(other_wasm).to_vec(),
+            abi_version: CLASSIFIER_ABI_VERSION,
+            signer_kid: step_9_5_fixtures::CLASSIFIER_TEST_KID.to_string(),
+        };
+        let cose = step_9_5_fixtures::sign_envelope(
+            step_9_5_fixtures::cbor_encode(&payload),
+            step_9_5_fixtures::CLASSIFIER_TEST_KID,
+            CLASSIFIER_AAD,
+        );
+        // Vector supplies STEP_9_5_WASM, payload committed to other_wasm.
+        let input = step_9_5_base_input(
+            Some(hex::encode(&cose)),
+            Some(hex::encode(STEP_9_5_WASM)),
+            Some(step_9_5_fixtures::classifier_anchor_def_json(
+                step_9_5_fixtures::CLASSIFIER_TEST_KID,
+            )),
+            None,
+        );
+        let input: TariffInput = serde_json::from_value(input).unwrap();
+        assert_eq!(
+            classify(&input, ""),
+            Err(TariffRejectCode::ClassifierWasmHashMismatch)
+        );
+    }
+
+    #[test]
+    fn step_9_5_rejects_signer_kid_mismatch() {
+        // Outer kid = CLASSIFIER_TEST_KID (resolves anchor),
+        // Inner payload.signer_kid = "other-kid" → consistency-check fails.
+        let payload = ClassifierSigPayload {
+            sha256: step_9_5_fixtures::sha256_of(STEP_9_5_WASM).to_vec(),
+            abi_version: CLASSIFIER_ABI_VERSION,
+            signer_kid: "K_other_classifier_pk_TEST".to_string(),
+        };
+        let cose = step_9_5_fixtures::sign_envelope(
+            step_9_5_fixtures::cbor_encode(&payload),
+            step_9_5_fixtures::CLASSIFIER_TEST_KID,
+            CLASSIFIER_AAD,
+        );
+        let input = step_9_5_base_input(
+            Some(hex::encode(&cose)),
+            Some(hex::encode(STEP_9_5_WASM)),
+            Some(step_9_5_fixtures::classifier_anchor_def_json(
+                step_9_5_fixtures::CLASSIFIER_TEST_KID,
+            )),
+            None,
+        );
+        let input: TariffInput = serde_json::from_value(input).unwrap();
+        assert_eq!(
+            classify(&input, ""),
+            Err(TariffRejectCode::ClassifierSignerKidMismatch)
+        );
+    }
+
+    #[test]
+    fn step_9_5_partial_triple_rejects_as_invalid() {
+        // Only cose_sign1_bytes_classifier present — wasm and anchors absent.
+        // Authoring error: surface as classifier-signature-invalid.
+        let cose = step_9_5_fixtures::happy_envelope(STEP_9_5_WASM);
+        let input = step_9_5_base_input(Some(hex::encode(&cose)), None, None, None);
+        let input: TariffInput = serde_json::from_value(input).unwrap();
+        assert_eq!(
+            classify(&input, ""),
+            Err(TariffRejectCode::ClassifierSignatureInvalid)
+        );
+    }
+
+    #[test]
+    fn step_9_5_skipped_when_triple_absent() {
+        // Legacy tariff vector — no classifier fields — must not regress.
+        // Accept path succeeds, confirming step 9.5 is a no-op in this mode.
+        let input = step_9_5_base_input(None, None, None, None);
+        let input: TariffInput = serde_json::from_value(input).unwrap();
+        assert!(matches!(classify(&input, ""), Ok(())));
+    }
+
+    /// ARCH-1 drift guard: the envelope-signing helpers are duplicated
+    /// across `ephemeral_classifier::signature::tests` and
+    /// `step_9_5_fixtures` here (Session 1 deliberate duplication).
+    /// Until Session 2 consolidates both into a shared
+    /// `ephemeral-classifier::test_fixtures` feature, this fixture
+    /// locks the `step_9_5_fixtures::happy_envelope` output byte-for-
+    /// byte against a committed reference. Any drift — ciborium /
+    /// coset / ed25519-dalek version bump changing canonicalization,
+    /// or a helper refactor silently altering the signed TBS shape —
+    /// surfaces here before it leaks into conformance vectors.
+    ///
+    /// Fixture regeneration: if an intentional change shifts the
+    /// bytes, re-run the (removed-in-prod) dump test at the top of
+    /// this module's git history OR temporarily panic-print
+    /// `step_9_5_fixtures::happy_envelope(ARCH_1_PROBE_WASM)` and
+    /// paste the hex into `ARCH_1_COMMITTED_ENVELOPE_HEX`.
+    ///
+    /// Locks three axes simultaneously:
+    ///   1. Byte equality against committed fixture (drift).
+    ///   2. Round-trip verification through `verify_classifier_signature`
+    ///      (the fixture must still be accepted by the current verifier).
+    ///   3. Intra-run determinism (two fresh productions must match).
+    #[test]
+    fn arch_1_classifier_envelope_drift_regression() {
+        /// Probe payload — distinct from test-suite payloads so this
+        /// fixture doesn't accidentally alias one of them.
+        const ARCH_1_PROBE_WASM: &[u8] = b"ARCH-1-byte-probe-v1";
+
+        /// Committed byte shape of `happy_envelope(ARCH_1_PROBE_WASM)`
+        /// under the classifier test seed (`CLASSIFIER_SEED`), AAD
+        /// `b"ephemeral/classifier/v1"`, alg EdDSA (-8), and inner
+        /// payload `ClassifierSigPayload { sha256(ARCH_1_PROBE_WASM),
+        /// abi_version = CLASSIFIER_ABI_VERSION, signer_kid =
+        /// CLASSIFIER_TEST_KID }`.
+        const ARCH_1_COMMITTED_ENVELOPE_HEX: &str = "\
+            84581fa201270458194b5f637573745f636c61737369666965725f706b\
+            5f54455354a0585da3667368613235365820\
+            6447ece714140cf177c55550fa78aba1dbed4d01867dc6d7b3de124f98287d66\
+            6b6162695f76657273696f6e01\
+            6a7369676e65725f6b696478194b5f637573745f636c61737369666965725f706b5f54455354\
+            5840\
+            4931f652e475c8a4b102b345f258c8fd58d3558b79f91128f7535ce9fe79f11c\
+            d0e99a519ef1e04d466df4b793461c555e6d2a6a3ef8ec25c66afc61bb8dbc01";
+
+        let committed = hex::decode(ARCH_1_COMMITTED_ENVELOPE_HEX.replace(char::is_whitespace, ""))
+            .expect("committed fixture hex is malformed — repair const");
+
+        // Axis 1: byte equality.
+        let produced = step_9_5_fixtures::happy_envelope(ARCH_1_PROBE_WASM);
+        assert_eq!(
+            produced, committed,
+            "classifier envelope byte shape drifted from committed \
+             fixture — run the drift-dump workflow, confirm the change \
+             is intentional, regen conformance vectors, then update \
+             ARCH_1_COMMITTED_ENVELOPE_HEX"
+        );
+
+        // Axis 2: committed fixture must still verify under current code.
+        // Uses classify() end-to-end so the full step-9.5 dispatch is
+        // exercised against the committed bytes, not just the inner
+        // signature-verify primitive.
+        let input = step_9_5_base_input(
+            Some(hex::encode(&committed)),
+            Some(hex::encode(ARCH_1_PROBE_WASM)),
+            Some(step_9_5_fixtures::classifier_anchor_def_json(
+                step_9_5_fixtures::CLASSIFIER_TEST_KID,
+            )),
+            None,
+        );
+        let input: TariffInput = serde_json::from_value(input).unwrap();
+        assert!(
+            matches!(classify(&input, ""), Ok(())),
+            "committed fixture must verify under current code path — \
+             a drift in the verifier (as opposed to the signer) is \
+             separately caught here"
+        );
+
+        // Axis 3: intra-run determinism. Two fresh productions must be
+        // byte-identical even without the committed reference (guards
+        // against any sub-layer silently introducing randomness).
+        let produced_again = step_9_5_fixtures::happy_envelope(ARCH_1_PROBE_WASM);
+        assert_eq!(
+            produced, produced_again,
+            "envelope production is not byte-deterministic across calls"
+        );
+    }
+
+    #[test]
+    fn step_9_5_rejects_malformed_hex_fields() {
+        // Both `cose_sign1_bytes_classifier` and `wasm_bytes_classifier`
+        // are hex-decoded at dispatch; a non-hex string in either must
+        // reject as ClassifierSignatureInvalid (authoring error) rather
+        // than leak a raw hex-decode error code upstream.
+        let cose = step_9_5_fixtures::happy_envelope(STEP_9_5_WASM);
+        let good_cose_hex = hex::encode(&cose);
+        let good_wasm_hex = hex::encode(STEP_9_5_WASM);
+        let anchors = step_9_5_fixtures::classifier_anchor_def_json(
+            step_9_5_fixtures::CLASSIFIER_TEST_KID,
+        );
+
+        // Case A: cose hex malformed.
+        let input_a = step_9_5_base_input(
+            Some("zz!!@@".into()),
+            Some(good_wasm_hex.clone()),
+            Some(anchors.clone()),
+            None,
+        );
+        let input_a: TariffInput = serde_json::from_value(input_a).unwrap();
+        assert_eq!(
+            classify(&input_a, ""),
+            Err(TariffRejectCode::ClassifierSignatureInvalid),
+            "malformed cose hex must reject as ClassifierSignatureInvalid"
+        );
+
+        // Case B: wasm hex malformed (the test this FIX was written for —
+        // pre-fix the cose-hex path had a test, the wasm-hex path didn't).
+        let input_b = step_9_5_base_input(
+            Some(good_cose_hex),
+            Some("not-valid-hex!!".into()),
+            Some(anchors),
+            None,
+        );
+        let input_b: TariffInput = serde_json::from_value(input_b).unwrap();
+        assert_eq!(
+            classify(&input_b, ""),
+            Err(TariffRejectCode::ClassifierSignatureInvalid),
+            "malformed wasm hex must reject as ClassifierSignatureInvalid"
+        );
+    }
+
+    #[test]
+    #[allow(clippy::type_complexity)] // parametric test-vector tuple, only used locally
+    fn step_9_5_rejects_remaining_partial_triple_shapes() {
+        // `step_9_5_partial_triple_rejects_as_invalid` covers the
+        // (Some, None, None) shape. The three-field dispatch has six
+        // partial shapes total — this test locks the remaining five so
+        // a future refactor that accidentally accepts `(None, Some, Some)`
+        // as "skip with stale anchors" is caught here.
+        let cose = step_9_5_fixtures::happy_envelope(STEP_9_5_WASM);
+        let cose_hex = hex::encode(&cose);
+        let wasm_hex = hex::encode(STEP_9_5_WASM);
+        let anchors = step_9_5_fixtures::classifier_anchor_def_json(
+            step_9_5_fixtures::CLASSIFIER_TEST_KID,
+        );
+
+        let cases: [(Option<String>, Option<String>, Option<serde_json::Value>, &str); 5] = [
+            (None, Some(wasm_hex.clone()), None, "wasm-only"),
+            (None, None, Some(anchors.clone()), "anchors-only"),
+            (
+                Some(cose_hex.clone()),
+                Some(wasm_hex.clone()),
+                None,
+                "cose+wasm, no anchors",
+            ),
+            (
+                Some(cose_hex.clone()),
+                None,
+                Some(anchors.clone()),
+                "cose+anchors, no wasm",
+            ),
+            (None, Some(wasm_hex), Some(anchors), "wasm+anchors, no cose"),
+        ];
+        for (c, w, a, label) in cases {
+            let input = step_9_5_base_input(c, w, a, None);
+            let input: TariffInput = serde_json::from_value(input).unwrap();
+            assert_eq!(
+                classify(&input, ""),
+                Err(TariffRejectCode::ClassifierSignatureInvalid),
+                "partial-triple shape `{label}` must reject as ClassifierSignatureInvalid"
+            );
+        }
+    }
+
+    #[test]
+    fn step_9_5_rejects_classifier_role_mismatch_in_anchor_def() {
+        // Build an anchor def where the role string explicitly overrides
+        // the caller-supplied default (`AnchorRole::ClassifierSigner`)
+        // to `tariff-signer`. build_anchor_set honours the explicit role,
+        // so the anchor is registered as a TariffSigner — which the
+        // classifier pipeline's role-aware lookup cannot resolve. The
+        // crypto layer returns UnknownKid, collapsed to CoseVerifyFailed
+        // by the classifier crate, then mapped to ClassifierSignatureInvalid
+        // by the tariff step 9.5 mapper. Role confusion shut at the
+        // vector-JSON parse seam.
+        let cose = step_9_5_fixtures::happy_envelope(STEP_9_5_WASM);
+        let pk_hex = hex::encode(
+            ed25519_dalek::SigningKey::from_bytes(&step_9_5_fixtures::CLASSIFIER_SEED)
+                .verifying_key()
+                .as_bytes(),
+        );
+        let wrong_role_anchors = json!([{
+            "kid": step_9_5_fixtures::CLASSIFIER_TEST_KID,
+            "alg": "ed25519",
+            "pk_hex": pk_hex,
+            "role": "tariff-signer",
+        }]);
+
+        let input = step_9_5_base_input(
+            Some(hex::encode(&cose)),
+            Some(hex::encode(STEP_9_5_WASM)),
+            Some(wrong_role_anchors),
+            None,
+        );
+        let input: TariffInput = serde_json::from_value(input).unwrap();
+        assert_eq!(
+            classify(&input, ""),
+            Err(TariffRejectCode::ClassifierSignatureInvalid),
+            "anchor with role='tariff-signer' must not satisfy classifier verify"
+        );
+    }
+
+    #[test]
+    fn step_9_5_runs_after_duplicate_keys_before_version() {
+        // Compound-failure vectors prove the check ordering: a tariff that
+        // has BOTH a duplicate-map-keys fault (step 9) AND a broken
+        // classifier signature (step 9.5) must surface the step-9 fault
+        // first — and a tariff with BOTH a version-too-old fault (step 10)
+        // AND a broken classifier signature must surface the 9.5 fault.
+        let mut bad_cose = step_9_5_fixtures::happy_envelope(STEP_9_5_WASM);
+        *bad_cose.last_mut().unwrap() ^= 0xff;
+
+        // Case A: step 9 (duplicate keys) wins over 9.5.
+        let ctx_a = base_ctx(json!({"duplicate_map_keys_present": true}));
+        let mut inp_a = base_input(ctx_a);
+        let map_a = inp_a.as_object_mut().unwrap();
+        map_a.insert(
+            "cose_sign1_bytes_classifier".into(),
+            json!(hex::encode(&bad_cose)),
+        );
+        map_a.insert(
+            "wasm_bytes_classifier".into(),
+            json!(hex::encode(STEP_9_5_WASM)),
+        );
+        map_a.insert(
+            "trust_anchor_keys_classifier".into(),
+            step_9_5_fixtures::classifier_anchor_def_json(
+                step_9_5_fixtures::CLASSIFIER_TEST_KID,
+            ),
+        );
+        let input_a: TariffInput = serde_json::from_value(inp_a).unwrap();
+        assert_eq!(
+            classify(&input_a, ""),
+            Err(TariffRejectCode::TariffDuplicateEntries),
+            "duplicate-keys (step 9) must fire before classifier sig (step 9.5)"
+        );
+
+        // Case B: step 9.5 (classifier sig) wins over 10 (version-too-old).
+        let mut inp_b = base_input(base_ctx(json!({})));
+        let map_b = inp_b.as_object_mut().unwrap();
+        map_b.insert("tariff_version_in_payload".into(), json!(0));
+        // previously_seen_version=1 in base_input; payload v=0 → would
+        // normally trip version-too-old at step 10.
+        map_b.insert(
+            "cose_sign1_bytes_classifier".into(),
+            json!(hex::encode(&bad_cose)),
+        );
+        map_b.insert(
+            "wasm_bytes_classifier".into(),
+            json!(hex::encode(STEP_9_5_WASM)),
+        );
+        map_b.insert(
+            "trust_anchor_keys_classifier".into(),
+            step_9_5_fixtures::classifier_anchor_def_json(
+                step_9_5_fixtures::CLASSIFIER_TEST_KID,
+            ),
+        );
+        let input_b: TariffInput = serde_json::from_value(inp_b).unwrap();
+        assert_eq!(
+            classify(&input_b, ""),
+            Err(TariffRejectCode::ClassifierSignatureInvalid),
+            "classifier sig (step 9.5) must fire before version (step 10)"
         );
     }
 }

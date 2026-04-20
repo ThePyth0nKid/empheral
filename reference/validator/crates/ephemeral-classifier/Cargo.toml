@@ -34,9 +34,21 @@ wasmi = { version = "=0.47.2", default-features = false, features = ["std"] }
 sha2 = "0.10"
 ciborium = { workspace = true }
 serde = { workspace = true }
+serde_bytes = { workspace = true }
 thiserror = { workspace = true }
 hex = { workspace = true }
+
+# Phase C.3-C — classifier envelope verification layers on top of the
+# Ed25519/COSE_Sign1 primitive from `ephemeral-crypto`. This is the only
+# cross-crate dependency the classifier takes; core- / CLI-layer wiring
+# stays one-way (classifier depends on crypto, never the reverse).
+ephemeral-crypto = { path = "../ephemeral-crypto" }
 
 [dev-dependencies]
 wat = "=1.247.0"
 proptest = { workspace = true }
+# Dev-only Ed25519 sign path for building fixture envelopes inside the
+# classifier crate's unit tests.  Production code never signs — only
+# verifies — so this stays out of the release dependency graph.
+ed25519-dalek = { workspace = true }
+coset = { workspace = true }

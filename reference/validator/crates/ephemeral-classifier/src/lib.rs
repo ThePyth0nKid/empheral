@@ -78,13 +78,18 @@ pub mod hash;
 pub mod limiter;
 pub mod output;
 pub mod runtime;
+pub mod signature;
 pub mod validate;
 
 pub use config::{
     ClassifierConfig, DEFAULT_FUEL_BUDGET, DEFAULT_MAX_MEMORY_PAGES, DEFAULT_MAX_OUTPUT_BYTES,
     WASM_PAGE_SIZE,
 };
-pub use errors::{ClassifierError, ClassifierExecError, ClassifierLoadError};
+pub use errors::{ClassifierError, ClassifierExecError, ClassifierLoadError, ClassifierSigError};
 pub use hash::verify_classifier_hash;
 pub use output::ClassifierOutput;
 pub use runtime::execute_classifier;
+pub use signature::{
+    verify_classifier_signature, ClassifierSigPayload, VerifiedClassifierSignature,
+    CLASSIFIER_AAD,
+};

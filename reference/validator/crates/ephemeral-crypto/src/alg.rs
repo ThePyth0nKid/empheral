@@ -40,6 +40,7 @@ impl Alg {
     }
 
     /// Kebab-case wire name, used in vector JSON (`"alg": "ed25519"`).
+    #[must_use]
     pub fn as_wire_str(self) -> &'static str {
         match self {
             Self::Ed25519 => "ed25519",
@@ -47,10 +48,27 @@ impl Alg {
     }
 
     /// Parse wire name from vector JSON.
+    ///
+    /// Returns [`CoseError::UnknownAlgString`] carrying the rejected
+    /// input (char-boundary truncated to ≤ 64 bytes) on any unknown
+    /// token. The variant is distinct from [`CoseError::UnsupportedAlg`]
+    /// which carries an *integer* label observed in a parsed COSE
+    /// header — keeping them separate means downstream error mappers
+    /// can tell vector-JSON parse failures from protocol-level
+    /// header-allowlist rejections.
     pub fn from_wire_str(s: &str) -> Result<Self, CoseError> {
         match s {
             "ed25519" | "Ed25519" => Ok(Self::Ed25519),
-            _ => Err(CoseError::UnsupportedAlg { alg: 0 }),
+            _ => {
+                let mut trimmed = String::new();
+                for c in s.chars() {
+                    if trimmed.len() + c.len_utf8() > 64 {
+                        break;
+                    }
+                    trimmed.push(c);
+                }
+                Err(CoseError::UnknownAlgString { label: trimmed })
+            }
         }
     }
 }

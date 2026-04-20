@@ -21,6 +21,11 @@ time = { workspace = true }
 hex = { workspace = true }
 ephemeral-crypto = { path = "../ephemeral-crypto" }
 ephemeral-attestation = { path = "../ephemeral-attestation" }
+# Phase C.3-C — classifier envelope verification is invoked from the
+# Tariff check pipeline (§4.3 / step 9.5 in tariff.rs).  The classifier
+# crate itself has no reverse-dependency on ephemeral-core, so this
+# stays a one-way coupling.
+ephemeral-classifier = { path = "../ephemeral-classifier" }
 
 [features]
 # Enables the Phase C.2 live-Nitro dispatch path (classify_live_nitro + the
@@ -42,3 +47,14 @@ rekor = ["ephemeral-attestation/rekor"]
 [dev-dependencies]
 anyhow = { workspace = true }
 proptest = { workspace = true }
+# Phase C.3-C — dev-only classifier-envelope construction for the
+# tariff step-9.5 integration tests.  None of these pull into release
+# builds of ephemeral-core (see [profile.release] strip = "symbols" +
+# prod-symbol-probe tripwire).  Session 2 will consolidate the signing
+# helpers into a ephemeral-classifier test_fixtures feature so this
+# duplication across crates disappears.
+ed25519-dalek = { workspace = true }
+coset = { workspace = true }
+ciborium = { workspace = true }
+sha2 = "0.10"
+serde_bytes = { workspace = true }

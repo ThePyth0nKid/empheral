@@ -29,11 +29,17 @@ use coset::{iana, CborSerializable, CoseSign1Builder, HeaderBuilder};
 use ed25519_dalek::{Signer, SigningKey};
 
 use ephemeral_crypto::{
-    verify_cose_sign1, Alg, CoseError, TrustAnchor, TrustAnchorSet,
+    verify_cose_sign1, Alg, AnchorRole, CoseError, TrustAnchor, TrustAnchorSet,
 };
 
 const KID: &str = "K_test_ed25519";
 const AAD: &[u8] = b"tariff";
+/// These tests drive the tariff-signing path (AAD = `b"tariff"`), so
+/// the anchor is registered as a [`AnchorRole::TariffSigner`] and the
+/// verifier is invoked with the same role. Negative tests that want to
+/// exercise *signature* failure keep this role so the failure point is
+/// the TBS mismatch rather than a silent kid-miss under the wrong role.
+const ROLE: AnchorRole = AnchorRole::TariffSigner;
 const SEED: [u8; 32] = [
     0x42, 0xe1, 0x7a, 0x3f, 0x5b, 0x9c, 0x12, 0x88, 0x44, 0x77, 0xaa, 0x0b, 0xcd, 0xef, 0x00, 0x11,
     0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11,
@@ -45,7 +51,7 @@ fn signing_key() -> SigningKey {
 
 fn anchor_set() -> TrustAnchorSet {
     let pk = signing_key().verifying_key();
-    let anchor = TrustAnchor::new_ed25519(KID.to_string(), pk.as_bytes())
+    let anchor = TrustAnchor::new_ed25519(KID.to_string(), pk.as_bytes(), ROLE)
         .expect("fixed seed yields non-weak pk");
     let mut set = TrustAnchorSet::new();
     set.insert(anchor).expect("fresh set has no dup kid");
@@ -73,7 +79,7 @@ fn build_sign1(payload: Vec<u8>, kid: &str, aad: &[u8]) -> Vec<u8> {
 fn happy_path_roundtrips() {
     let payload = b"{\"price\":\"100\"}".to_vec();
     let bytes = build_sign1(payload.clone(), KID, AAD);
-    let verified = verify_cose_sign1(&bytes, &anchor_set(), AAD).expect("verify");
+    let verified = verify_cose_sign1(&bytes, &anchor_set(), AAD, ROLE).expect("verify");
 
     assert_eq!(verified.kid, KID);
     assert_eq!(verified.alg, Alg::Ed25519);
@@ -83,7 +89,7 @@ fn happy_path_roundtrips() {
 #[test]
 fn wrong_kid_rejected() {
     let bytes = build_sign1(b"payload".to_vec(), "K_unknown_kid", AAD);
-    let err = verify_cose_sign1(&bytes, &anchor_set(), AAD).unwrap_err();
+    let err = verify_cose_sign1(&bytes, &anchor_set(), AAD, ROLE).unwrap_err();
     assert!(matches!(err, CoseError::UnknownKid { kid } if kid == "K_unknown_kid"));
 }
 
@@ -97,14 +103,14 @@ fn tampered_payload_rejected() {
     payload[0] ^= 0x01; // flip one bit
     let tampered = sign1.to_vec().expect("reserialize");
 
-    let err = verify_cose_sign1(&tampered, &anchor_set(), AAD).unwrap_err();
+    let err = verify_cose_sign1(&tampered, &anchor_set(), AAD, ROLE).unwrap_err();
     assert!(matches!(err, CoseError::SignatureInvalid { .. }));
 }
 
 #[test]
 fn wrong_aad_rejected() {
     let bytes = build_sign1(b"payload".to_vec(), KID, AAD);
-    let err = verify_cose_sign1(&bytes, &anchor_set(), b"delegation-link").unwrap_err();
+    let err = verify_cose_sign1(&bytes, &anchor_set(), b"delegation-link", ROLE).unwrap_err();
     assert!(matches!(err, CoseError::SignatureInvalid { .. }));
 }
 
@@ -124,7 +130,7 @@ fn unsupported_alg_rejected() {
         .build();
     let bytes = sign1.to_vec().expect("serialize");
 
-    let err = verify_cose_sign1(&bytes, &anchor_set(), AAD).unwrap_err();
+    let err = verify_cose_sign1(&bytes, &anchor_set(), AAD, ROLE).unwrap_err();
     assert!(matches!(err, CoseError::UnsupportedAlg { alg: -7 }));
 }
 
@@ -135,7 +141,7 @@ fn oversize_rejected() {
     let bytes = build_sign1(big, KID, AAD);
     assert!(bytes.len() > 65_536);
 
-    let err = verify_cose_sign1(&bytes, &anchor_set(), AAD).unwrap_err();
+    let err = verify_cose_sign1(&bytes, &anchor_set(), AAD, ROLE).unwrap_err();
     assert!(matches!(
         err,
         CoseError::PayloadTooLarge { observed, cap } if observed == bytes.len() && cap == 65_536
@@ -145,7 +151,7 @@ fn oversize_rejected() {
 #[test]
 fn empty_kid_rejected() {
     let bytes = build_sign1(b"payload".to_vec(), "", AAD);
-    let err = verify_cose_sign1(&bytes, &anchor_set(), AAD).unwrap_err();
+    let err = verify_cose_sign1(&bytes, &anchor_set(), AAD, ROLE).unwrap_err();
     assert!(matches!(err, CoseError::MalformedHeader { .. }));
 }
 
@@ -153,7 +159,7 @@ fn empty_kid_rejected() {
 fn bogus_bytes_rejected() {
     // Random-looking but non-CBOR input — must not panic, must return Err.
     let junk: Vec<u8> = (0..128u8).collect();
-    let err = verify_cose_sign1(&junk, &anchor_set(), AAD).unwrap_err();
+    let err = verify_cose_sign1(&junk, &anchor_set(), AAD, ROLE).unwrap_err();
     assert!(matches!(
         err,
         CoseError::MalformedHeader { .. } | CoseError::CborParse
@@ -162,7 +168,7 @@ fn bogus_bytes_rejected() {
 
 #[test]
 fn empty_input_rejected() {
-    let err = verify_cose_sign1(&[], &anchor_set(), AAD).unwrap_err();
+    let err = verify_cose_sign1(&[], &anchor_set(), AAD, ROLE).unwrap_err();
     assert!(matches!(
         err,
         CoseError::MalformedHeader { .. } | CoseError::CborParse
@@ -170,7 +176,7 @@ fn empty_input_rejected() {
 }
 
 mod proptest_fuzz {
-    use super::{anchor_set, verify_cose_sign1, AAD};
+    use super::{anchor_set, verify_cose_sign1, AAD, ROLE};
     use proptest::prelude::*;
 
     // The verifier must be total on random bytes — no panics, no
@@ -179,7 +185,7 @@ mod proptest_fuzz {
     proptest! {
         #[test]
         fn verifier_is_total_on_random_input(bytes in prop::collection::vec(any::<u8>(), 0..2048)) {
-            let _ = verify_cose_sign1(&bytes, &anchor_set(), AAD);
+            let _ = verify_cose_sign1(&bytes, &anchor_set(), AAD, ROLE);
         }
     }
 }
