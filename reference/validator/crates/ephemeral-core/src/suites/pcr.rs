@@ -721,9 +721,15 @@ fn classify_transparency_log(
     }
     // pcrrej-023: log_id not in trusted set.
     //
-    // NOTE (M-1): on this mock-bool path `t.log_id == proof.log_id` is a
-    // plain string comparison — a free-form identifier, not a cryptographic
-    // commitment. The branch is only reachable when
+    // Fail-closed (H-1): a missing Tariff `trusted_transparency_logs` list
+    // is itself a reject (TransparencyLogUnknown). An absent trust anchor
+    // cannot accept any log; allowing the check to be skipped when the
+    // list is absent is a permissive default that would let a Tariff which
+    // forgot to pin its logs accept arbitrary Rekor-like claims.
+    //
+    // On this mock-bool path `t.log_id == proof.log_id` is a plain string
+    // comparison — a free-form identifier, not a cryptographic commitment.
+    // The branch is only reachable when
     // `live_rekor_presence(proof) == LiveRekorPresence::None`; a live-Rekor
     // vector (presence == Full) routes through `classify_live_rekor`, which
     // canonicalises the log identity to its 32-byte `log_id_bytes` form
@@ -732,10 +738,11 @@ fn classify_transparency_log(
     // string-vs-bytes split-view hazard. A second, lower fail-closed net
     // (`ALLOWED_LOG_IDS` in `ephemeral_attestation::rekor`) rejects any
     // `log_id` not on the hard-coded allow-list regardless of Tariff input.
-    if let Some(trusted) = req.trusted_transparency_logs.as_deref() {
-        if !trusted.iter().any(|t| t.log_id == proof.log_id) {
-            return Some(PcrRejectCode::PcrAttestationTransparencyLogUnknown);
-        }
+    let Some(trusted) = req.trusted_transparency_logs.as_deref() else {
+        return Some(PcrRejectCode::PcrAttestationTransparencyLogUnknown);
+    };
+    if !trusted.iter().any(|t| t.log_id == proof.log_id) {
+        return Some(PcrRejectCode::PcrAttestationTransparencyLogUnknown);
     }
     // pcrrej-024: entry_index beyond tree head.
     if let (Some(idx), Some(size)) = (proof.entry_index, proof.sth_tree_size) {
@@ -1313,7 +1320,13 @@ fn classify_live_rekor(
     //
     // Checked BEFORE cryptographic verification so an unknown-log attack
     // (spending verifier CPU on a key the Tariff does not even trust) is
-    // rejected before we touch Ed25519.
+    // rejected before we verify the Ed25519 signature.
+    //
+    // Fail-closed (H-1): a missing `trusted_transparency_logs` list is
+    // itself a reject (TransparencyLogUnknown). An absent trust anchor
+    // cannot accept any log; allowing the check to be skipped when the
+    // list is None would let a Tariff that forgot to pin its logs accept
+    // arbitrary log keys that pass verify_rekor_sth's local gate only.
     //
     // Canonical identity on the live path is the 32-byte STH-bound
     // `log_id_bytes` (already decoded above), NOT the free-form
@@ -1325,13 +1338,15 @@ fn classify_live_rekor(
     // decoded as 32-byte hex and byte-compared against `log_id_bytes`.
     // Trust entries that cannot be decoded as 32-byte hex are treated as
     // non-live-log entries and contribute no trust (fail-closed).
-    if let Some(trusted) = req.trusted_transparency_logs.as_deref() {
-        let trust_hit = trusted
-            .iter()
-            .any(|t| decode_hex_fixed::<32>(&t.log_id).is_ok_and(|b| b == log_id_bytes));
-        if !trust_hit {
-            return Err(PcrRejectCode::PcrAttestationTransparencyLogUnknown);
-        }
+    let trusted = req
+        .trusted_transparency_logs
+        .as_deref()
+        .ok_or(PcrRejectCode::PcrAttestationTransparencyLogUnknown)?;
+    let trust_hit = trusted
+        .iter()
+        .any(|t| decode_hex_fixed::<32>(&t.log_id).is_ok_and(|b| b == log_id_bytes));
+    if !trust_hit {
+        return Err(PcrRejectCode::PcrAttestationTransparencyLogUnknown);
     }
 
     // ── 4. Policy: Tariff freshness window ──────────────────────────────────
@@ -1347,17 +1362,22 @@ fn classify_live_rekor(
     // TransparencyStale (not TransparencyInvalid that would come out of
     // verify_rekor_sth's crate-level cap).
     //
-    // `max_root_age_seconds_override` on the proof, when present, takes
-    // precedence over the Tariff value — the field name names the behavior.
-    // This is used by test vectors that want to drive the Stale path with
-    // a tighter window than the live Tariff would normally permit, and by
-    // any caller that needs to override the Tariff default for a single
-    // verification. Production callers do not populate the override; the
-    // Tariff value wins by default.
+    // `max_root_age_seconds_override` on the proof can only tighten the
+    // Tariff freshness window, never loosen it (H-2). The effective max is
+    // `min(override, base)`: if the override is larger than the Tariff
+    // value, the Tariff value wins; if smaller, the override wins. This
+    // prevents an attestor-supplied proof from relaxing the Tariff's
+    // freshness policy by presenting a larger tolerance. Test vectors that
+    // want to drive the Stale path with a tighter window than the live
+    // Tariff would normally permit still work, because tightening is
+    // allowed. Production callers do not populate the override; the Tariff
+    // value wins by default.
+    let base = req
+        .transparency_log_max_root_age_seconds
+        .unwrap_or(DEFAULT_MAX_ROOT_AGE_SECONDS);
     let tariff_max_age = proof
         .max_root_age_seconds_override
-        .or(req.transparency_log_max_root_age_seconds)
-        .unwrap_or(DEFAULT_MAX_ROOT_AGE_SECONDS);
+        .map_or(base, |o| o.min(base));
     let age_secs = current_time.saturating_sub(sth_timestamp);
     if age_secs < 0 {
         // STH from the future — cryptographic gate would catch this too,
@@ -1432,7 +1452,8 @@ mod tests {
             "tariff_pcr_requirement": {
                 "attestors": ["A1", "A2", "A3"],
                 "quorum": 2,
-                "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+                "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+                "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
             },
             "attestation_bundle": {
                 "commit_hash": "abc",
@@ -2024,6 +2045,174 @@ mod tests {
         assert_eq!(
             classify_from(v, "transparency-log-not-published-yet"),
             PcrRejectCode::PcrAttestationTransparencyNotYetLogged
+        );
+    }
+
+    // ── Phase C.2.5 Commit D — H-1 / H-2 regression tests ──────────────────
+    //
+    // These exercise the fail-closed invariants introduced by Commit D.
+    //
+    // H-1: a missing (`None`) or empty (`Some(vec![])`) Tariff
+    // `trusted_transparency_logs` list must reject with
+    // `TransparencyLogUnknown` on both the mock-bool and live paths. Before
+    // the fix, `None` was permissive — any log would pass the trust check.
+    //
+    // H-2: the proof-side `max_root_age_seconds_override` may only tighten
+    // the Tariff freshness window (`min(override, base)`), never loosen it.
+    // Before the fix, `override.or(base)` let a larger override relax the
+    // Tariff policy.
+
+    /// H-1 mock-bool path: `trusted_transparency_logs` missing from the
+    /// Tariff → `TransparencyLogUnknown`.
+    #[test]
+    fn trusted_transparency_logs_none_mock_fails_closed() {
+        let mut v = base_input();
+        v["tariff_pcr_requirement"]
+            .as_object_mut()
+            .unwrap()
+            .remove("trusted_transparency_logs");
+        assert_eq!(
+            classify_from(v, "h1-regression-mock-none"),
+            PcrRejectCode::PcrAttestationTransparencyLogUnknown
+        );
+    }
+
+    /// H-1 mock-bool path: empty `trusted_transparency_logs` (explicit
+    /// `[]`) → `TransparencyLogUnknown`. No trust entry can match, so the
+    /// iter-find returns false and the check fails closed.
+    #[test]
+    fn trusted_transparency_logs_empty_mock_fails_closed() {
+        let mut v = base_input();
+        v["tariff_pcr_requirement"]["trusted_transparency_logs"] = json!([]);
+        assert_eq!(
+            classify_from(v, "h1-regression-mock-empty"),
+            PcrRejectCode::PcrAttestationTransparencyLogUnknown
+        );
+    }
+
+    // The live-path regression tests below are gated behind `test-fixtures`
+    // because they exercise `classify_live_rekor`, whose implementation is
+    // itself gated (the live Ed25519/Merkle verifier only exists when that
+    // feature is enabled). CI covers them via `cargo test --all-features`.
+
+    /// RFC 8032 §7.1 test vector 1 public key. Deterministic, publicly
+    /// documented, and a valid Ed25519 compressed Edwards point so
+    /// `VerifyingKey::from_bytes` succeeds. Used only to get the pre-trust
+    /// decoding steps of `classify_live_rekor` past the parse guard.
+    #[cfg(feature = "test-fixtures")]
+    const TEST_LOG_PUBKEY_HEX: &str =
+        "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
+
+    /// 32-byte hex used as both the STH-bound `log_id_hex` and the matching
+    /// `trusted_transparency_logs[0].log_id` in the live H-2 tests below.
+    /// Value is arbitrary; it just has to decode to 32 bytes so the
+    /// byte-compare trust check succeeds.
+    #[cfg(feature = "test-fixtures")]
+    const TEST_LIVE_LOG_ID_HEX: &str =
+        "0202020202020202020202020202020202020202020202020202020202020202";
+
+    /// Overlay `base_input()` with Full live-Rekor presence. Timestamps are
+    /// driven by the caller via `sth_timestamp_offset` (seconds subtracted
+    /// from `current_time` = 1_714_525_200). All other live-path fields are
+    /// minimal but well-formed — proof-path empty, tree size 1, signature
+    /// 64 bytes of zero. The STH signature cannot verify, but the tests
+    /// below expect failure *before* signature verification (either at the
+    /// trust check or at the stale check).
+    #[cfg(feature = "test-fixtures")]
+    fn live_presence_input(sth_timestamp_offset: i64) -> serde_json::Value {
+        let mut v = base_input();
+        let current = 1_714_525_200_i64;
+        v["current_time"] = json!(current);
+        // The mock-bool `root_age_seconds` field no longer drives freshness
+        // on the live path, but leaving it set would be misleading. Remove
+        // it to keep the vector honest.
+        let proof = v["attestation_bundle"]["transparency_log_proof"]
+            .as_object_mut()
+            .unwrap();
+        proof.remove("root_age_seconds");
+        proof.insert("log_id".into(), json!(TEST_LIVE_LOG_ID_HEX));
+        proof.insert("log_id_hex".into(), json!(TEST_LIVE_LOG_ID_HEX));
+        proof.insert("proof_path_hex".into(), json!(Vec::<String>::new()));
+        proof.insert("sth_signature_hex".into(), json!("00".repeat(64)));
+        proof.insert("sth_timestamp".into(), json!(current - sth_timestamp_offset));
+        proof.insert("sth_tree_root_hex".into(), json!("00".repeat(32)));
+        proof.insert("log_pubkey_hex".into(), json!(TEST_LOG_PUBKEY_HEX));
+        proof.insert("entry_leaf_hash_hex".into(), json!("00".repeat(32)));
+        proof.insert("current_time".into(), json!(current));
+        proof.insert("entry_index".into(), json!(0_u64));
+        proof.insert("sth_tree_size".into(), json!(1_u64));
+        // Upgrade the Tariff trust entry from the mock-bool "rekor-v1"
+        // string form to the 32-byte hex form the live path compares on.
+        v["tariff_pcr_requirement"]["trusted_transparency_logs"] =
+            json!([{"log_id": TEST_LIVE_LOG_ID_HEX}]);
+        v
+    }
+
+    /// H-1 live path: `trusted_transparency_logs` missing from the Tariff
+    /// → `TransparencyLogUnknown`, fired before any STH cryptographic
+    /// verification.
+    #[cfg(feature = "test-fixtures")]
+    #[test]
+    fn trusted_transparency_logs_none_live_fails_closed() {
+        let mut v = live_presence_input(60);
+        v["tariff_pcr_requirement"]
+            .as_object_mut()
+            .unwrap()
+            .remove("trusted_transparency_logs");
+        assert_eq!(
+            classify_from(v, "h1-regression-live-none"),
+            PcrRejectCode::PcrAttestationTransparencyLogUnknown
+        );
+    }
+
+    /// H-2 live path: `max_root_age_seconds_override = 3_600` must not
+    /// loosen a Tariff `transparency_log_max_root_age_seconds = 60`. STH
+    /// age 120 s must classify as `Stale` (120 > clamped 60), not pass
+    /// through to the signature check (120 < 3_600).
+    #[cfg(feature = "test-fixtures")]
+    #[test]
+    fn max_root_age_override_cannot_loosen() {
+        let mut v = live_presence_input(120);
+        v["tariff_pcr_requirement"]["transparency_log_max_root_age_seconds"] =
+            json!(60_u64);
+        v["attestation_bundle"]["transparency_log_proof"]
+            ["max_root_age_seconds_override"] = json!(3_600_u64);
+        assert_eq!(
+            classify_from(v, "h2-regression-override-loosen"),
+            PcrRejectCode::PcrAttestationTransparencyStale
+        );
+    }
+
+    /// H-2 live path: `max_root_age_seconds_override = 30` tightens a
+    /// Tariff `transparency_log_max_root_age_seconds = 60` to 30. STH
+    /// age 45 s → `Stale` (45 > 30).
+    #[cfg(feature = "test-fixtures")]
+    #[test]
+    fn max_root_age_override_can_tighten() {
+        let mut v = live_presence_input(45);
+        v["tariff_pcr_requirement"]["transparency_log_max_root_age_seconds"] =
+            json!(60_u64);
+        v["attestation_bundle"]["transparency_log_proof"]
+            ["max_root_age_seconds_override"] = json!(30_u64);
+        assert_eq!(
+            classify_from(v, "h2-regression-override-tighten"),
+            PcrRejectCode::PcrAttestationTransparencyStale
+        );
+    }
+
+    /// H-2 live path: `max_root_age_seconds_override` absent → Tariff
+    /// base (`transparency_log_max_root_age_seconds = 60`) applies. STH
+    /// age 100 s → `Stale` (100 > 60).
+    #[cfg(feature = "test-fixtures")]
+    #[test]
+    fn max_root_age_override_none_uses_base() {
+        let mut v = live_presence_input(100);
+        v["tariff_pcr_requirement"]["transparency_log_max_root_age_seconds"] =
+            json!(60_u64);
+        // Override deliberately absent.
+        assert_eq!(
+            classify_from(v, "h2-regression-override-none"),
+            PcrRejectCode::PcrAttestationTransparencyStale
         );
     }
 }

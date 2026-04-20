@@ -58,7 +58,8 @@
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3", "A4", "A5"],
           "quorum": 3,
-          "expected_pcrs": {"PCR0": "sha256:firmware-good", "PCR4": "sha256:kernel-good", "PCR8": "sha256:app-good"}
+          "expected_pcrs": {"PCR0": "sha256:firmware-good", "PCR4": "sha256:kernel-good", "PCR8": "sha256:app-good"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -84,7 +85,8 @@
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3"],
           "quorum": 2,
-          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -109,7 +111,8 @@
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3", "A4", "A5"],
           "quorum": 3,
-          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -134,7 +137,8 @@
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3"],
           "quorum": 2,
-          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -157,7 +161,8 @@
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3"],
           "quorum": 3,
-          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -184,7 +189,8 @@
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3"],
           "quorum": 0,
-          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -209,7 +215,8 @@
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3"],
           "quorum": 2,
-          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -235,7 +242,8 @@
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3"],
           "quorum": 2,
-          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -261,7 +269,8 @@
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3"],
           "quorum": 2,
-          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -289,7 +298,8 @@
           "attestors": ["A1", "A2", "A3"],
           "quorum": 2,
           "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
-          "attestor_validity": {"A2": {"not_before": 1714530000, "not_after": 1800000000}}
+          "attestor_validity": {"A2": {"not_before": 1714530000, "not_after": 1800000000}},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -315,7 +325,8 @@
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3"],
           "quorum": 2,
-          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -341,7 +352,8 @@
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3"],
           "quorum": 2,
-          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -367,7 +379,8 @@
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3"],
           "quorum": 2,
-          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -393,7 +406,8 @@
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3"],
           "quorum": 3,
-          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -420,7 +434,8 @@
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3"],
           "quorum": 2,
-          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -446,7 +461,8 @@
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3", "A4", "A5"],
           "quorum": 3,
-          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -474,7 +490,8 @@
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3"],
           "quorum": 3,
-          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -501,7 +518,8 @@
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3"],
           "quorum": 2,
-          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -552,7 +570,8 @@
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3"],
           "quorum": 2,
-          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -578,7 +597,8 @@
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3"],
           "quorum": 2,
-          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -605,7 +625,8 @@
           "attestors": ["A1", "A2", "A3"],
           "quorum": 2,
           "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
-          "transparency_log_max_root_age_seconds": 86400
+          "transparency_log_max_root_age_seconds": 86400,
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -661,7 +682,8 @@
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3"],
           "quorum": 2,
-          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -687,7 +709,8 @@
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3"],
           "quorum": 2,
-          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app-EXPECTED"}
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app-EXPECTED"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -713,7 +736,8 @@
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3"],
           "quorum": 2,
-          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"}
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -739,7 +763,8 @@
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3"],
           "quorum": 2,
-          "expected_pcrs": {"PCR0": "sha256:fw-approved", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+          "expected_pcrs": {"PCR0": "sha256:fw-approved", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -765,7 +790,8 @@
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3"],
           "quorum": 2,
-          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k-approved", "PCR8": "sha256:app"}
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k-approved", "PCR8": "sha256:app"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -792,7 +818,8 @@
           "version": 5,
           "attestors": ["A1", "A2", "A3"],
           "quorum": 2,
-          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app-v5"}
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app-v5"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -819,7 +846,8 @@
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3"],
           "quorum": 2,
-          "classifier_wasm_hash": "sha256:cccc"
+          "classifier_wasm_hash": "sha256:cccc",
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -864,7 +892,8 @@
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3"],
           "quorum": 2,
-          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -890,7 +919,8 @@
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3"],
           "quorum": 2,
-          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -917,7 +947,8 @@
           "attestors": ["A1", "A2", "A3"],
           "quorum": 2,
           "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
-          "strict_mode": true
+          "strict_mode": true,
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -943,7 +974,8 @@
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3"],
           "quorum": 2,
-          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -970,7 +1002,8 @@
           "attestors": ["A1", "A2", "A3"],
           "quorum": 2,
           "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
-          "attestation_max_age_seconds": 86400
+          "attestation_max_age_seconds": 86400,
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -997,7 +1030,8 @@
           "attestors": ["A1", "A2", "A3"],
           "quorum": 2,
           "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
-          "attestation_max_age_seconds": 86400
+          "attestation_max_age_seconds": 86400,
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -1023,7 +1057,8 @@
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3"],
           "quorum": 2,
-          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -1050,7 +1085,8 @@
           "issued_at": 1714400000,
           "attestors": ["A1", "A2", "A3"],
           "quorum": 2,
-          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -1076,7 +1112,8 @@
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3"],
           "quorum": 2,
-          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -1105,7 +1142,8 @@
           "attestors": ["A1", "A2", "A3"],
           "quorum": 2,
           "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app-current"},
-          "attestation_max_age_seconds": 86400
+          "attestation_max_age_seconds": 86400,
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "old-abc123",
@@ -1131,7 +1169,8 @@
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3"],
           "quorum": 2,
-          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -1157,7 +1196,8 @@
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3"],
           "quorum": 2,
-          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app-good"}
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app-good"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -1184,7 +1224,8 @@
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3", "A4", "A5"],
           "quorum": 3,
-          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app-good"}
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app-good"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "evil-abc123",
@@ -1210,7 +1251,8 @@
           "attestors": ["A1", "A2", "A3"],
           "quorum": 2,
           "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
-          "required_witness_cosignatures": 2
+          "required_witness_cosignatures": 2,
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -1276,7 +1318,8 @@
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3"],
           "quorum": 1,
-          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
@@ -1301,7 +1344,8 @@
         "tariff_pcr_requirement": {
           "attestors": ["A1", "A2", "A3"],
           "quorum": 3,
-          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"}
+          "expected_pcrs": {"PCR0": "sha256:fw", "PCR4": "sha256:k", "PCR8": "sha256:app"},
+          "trusted_transparency_logs": [{"log_id": "rekor-v1"}]
         },
         "attestation_bundle": {
           "commit_hash": "abc123",
