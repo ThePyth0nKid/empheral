@@ -186,6 +186,16 @@ fn run_many_aggregates_all_six() {
     // corpus is 528 vectors (93 canon + 70 deleg + 205 fuzz + 71 tariff +
     // 49 pcr mock + 8 pcr c2-live + 32 audit); without the feature the
     // c2-live file is excluded, leaving 520.
+    //
+    // Intentionally NOT aggregated here: the Phase C.2.5 Rekor vectors
+    // (`pcr-attestation-reject-c2-5-rekor.json`, 16 vectors) and the
+    // Phase C.3-C classifier-signature vectors
+    // (`tariff-reject-c3-c-classifier.json`, 8 vectors).  Each has a
+    // dedicated `assert_file_all_executed` test covering its file end-
+    // to-end; folding them into this aggregate would require another
+    // feature-gated branch and an updated pin for every new session.
+    // The total ephemeral-cli run covers them via `default_inputs` —
+    // see the 536-vector number reported by `cargo run -p ephemeral-cli`.
     #[cfg(feature = "test-fixtures")]
     let expected_pass = 528;
     #[cfg(not(feature = "test-fixtures"))]

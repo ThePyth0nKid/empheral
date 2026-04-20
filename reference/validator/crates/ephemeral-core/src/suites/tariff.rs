@@ -1391,8 +1391,8 @@ mod tests {
 
     #[test]
     fn step_9_5_rejects_signer_kid_mismatch() {
-        // Outer kid = CLASSIFIER_TEST_KID (resolves anchor),
-        // Inner payload.signer_kid = "other-kid" → consistency-check fails.
+        // Outer kid = cft::FIXTURE_CLASSIFIER_KID (resolves anchor),
+        // Inner payload.signer_kid = "K_other_classifier_pk_TEST" → consistency-check fails.
         let payload = ClassifierSigPayload {
             sha256: cft::sha256_of(STEP_9_5_WASM).to_vec(),
             abi_version: CLASSIFIER_ABI_VERSION,
