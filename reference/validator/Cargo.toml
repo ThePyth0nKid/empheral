@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/ephemeral-attestation",
     "crates/ephemeral-attestation-test-support",
+    "crates/ephemeral-classifier",
     "crates/ephemeral-cli",
     "crates/ephemeral-core",
     "crates/ephemeral-crypto",

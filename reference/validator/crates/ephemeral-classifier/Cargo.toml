@@ -1,0 +1,42 @@
+[package]
+name = "ephemeral-classifier"
+description = "EPHEMERAL Classifier WASM execution primitives (wasmi-based, hermetic, deterministic)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# Forward-placeholder for Phase C.3-B conformance fixtures — canned
+# classifier WASM binaries and pinned hashes that will live behind this
+# feature so they cannot leak into `default-features = false` release
+# builds (pattern analogous to ephemeral-core's `test-fixtures`).  The
+# feature gates no items in C.3-A; declared here so workspace-wide
+# feature unification does not force a full rebuild when C.3-B lands.
+test-fixtures = []
+
+[dependencies]
+# wasmi 0.47.2 is the latest stable (2026-04).  Chosen over wasmtime for
+# this security-critical validator path because:
+#   - Interpreter-only: no JIT codegen attack surface, no per-arch
+#     Cranelift miscompiles (cf. 2026-04-09 advisory batch on aarch64).
+#   - Determinism by construction — no NaN canonicalization, no relaxed-SIMD,
+#     no version-dependent fuel cost model.
+#   - Small TCB (2 direct deps, `no_std`-compatible) — important for
+#     future Nitro Enclave deployment of the validator.
+# `default-features = false` drops the `wat` dev-capability from the
+# production build; WAT compilation stays a test-only dev-dependency.
+wasmi = { version = "=0.47.2", default-features = false, features = ["std"] }
+sha2 = "0.10"
+ciborium = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+hex = { workspace = true }
+
+[dev-dependencies]
+wat = "=1.247.0"
+proptest = { workspace = true }
