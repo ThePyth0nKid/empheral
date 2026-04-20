@@ -202,17 +202,23 @@ fn test_fixtures_symbols_do_not_leak_into_prod_rlibs() {
         "insert_trusted_key_for_test",
         "classify_live_rekor",
         // Phase C.3-C — ephemeral-classifier `test_fixtures` surface.
-        // Symbols chosen as the four most-unique Rust-mangled
-        // fragments of the public fixture API.  Any of them appearing
-        // in the probe-profile rlib means `features = ["test_fixtures"]`
-        // is being activated on a code path that must stay production-
-        // clean.  The crate-qualified mangling (`ephemeral_classifier`
-        // + `test_fixtures`) makes collisions with unrelated symbols
+        // Symbols chosen as the most-unique Rust-mangled fragments of
+        // the public fixture API.  Any of them appearing in the probe-
+        // profile rlib means `features = ["test_fixtures"]` is being
+        // activated on a code path that must stay production-clean.
+        // The crate-qualified mangling (`ephemeral_classifier` +
+        // `test_fixtures`) makes collisions with unrelated symbols
         // astronomically unlikely.
         "shared_wasm_artifacts",
         "sign_classifier_envelope",
         "fixture_signing_key",
         "build_classifier_wat",
+        // Phase C.3-C Session 2 — lower-level primitives added to
+        // support ephemeral-core's migration to this fixture API.
+        // Same invariant as above: they live in `test_fixtures.rs` and
+        // MUST NOT appear in a `default-features = false` build.
+        "cbor_encode_payload",
+        "sign_envelope_raw",
     ];
     // Positive control per rlib: at least one unconditionally public,
     // non-generic symbol that MUST be monomorphized into the rlib. If

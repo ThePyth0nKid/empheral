@@ -106,7 +106,7 @@ pub const CLASSIFIER_AAD: &[u8] = b"ephemeral/classifier/v1";
 /// [`ephemeral_crypto::MAX_COSE_BYTES`] cap already bounds the whole
 /// envelope, but a pathological payload could spend all of that budget
 /// on the kid string.  We clamp to 256 bytes here — `kid` is a short
-/// human-readable label in practice (`"K_cust_classifier_pk_TEST"` and
+/// human-readable label in practice (`"K_fixture_classifier_pk"` and
 /// friends, all well under 64 bytes).
 const MAX_INNER_KID_BYTES: usize = 256;
 

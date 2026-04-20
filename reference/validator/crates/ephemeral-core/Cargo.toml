@@ -47,14 +47,11 @@ rekor = ["ephemeral-attestation/rekor"]
 [dev-dependencies]
 anyhow = { workspace = true }
 proptest = { workspace = true }
-# Phase C.3-C — dev-only classifier-envelope construction for the
-# tariff step-9.5 integration tests.  None of these pull into release
-# builds of ephemeral-core (see [profile.release] strip = "symbols" +
-# prod-symbol-probe tripwire).  Session 2 will consolidate the signing
-# helpers into a ephemeral-classifier test_fixtures feature so this
-# duplication across crates disappears.
-ed25519-dalek = { workspace = true }
-coset = { workspace = true }
-ciborium = { workspace = true }
-sha2 = "0.10"
-serde_bytes = { workspace = true }
+# Phase C.3-C Session 2 — classifier envelope construction for the tariff
+# step-9.5 integration tests is consumed through ephemeral-classifier's
+# opt-in `test_fixtures` feature, which in turn pulls wat / ed25519-dalek /
+# coset as optional deps.  Using the feature keeps the previously duplicated
+# signing key, KID constant, SHA-256 helper, CBOR encoder, and COSE envelope
+# builder in exactly one place, and is guarded by the feature-leak tripwire
+# (`tools/prod-symbol-probe`) so a regression cannot land silently.
+ephemeral-classifier = { path = "../ephemeral-classifier", features = ["test_fixtures"] }

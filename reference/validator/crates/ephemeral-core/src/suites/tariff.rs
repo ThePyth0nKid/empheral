@@ -753,6 +753,13 @@ fn render_outcome(vector: &Vector, got: Result<(), TariffRejectCode>) -> Validat
 mod tests {
     use super::*;
     use ephemeral_classifier::{ClassifierSigPayload, CLASSIFIER_AAD};
+    // Shared classifier test-fixture surface — canonical signing key, KID,
+    // WASM digest helper, and envelope constructors live in exactly one
+    // place (`ephemeral-classifier/src/test_fixtures.rs`) so this crate's
+    // tariff-layer tests, the classifier crate's own unit tests, and the
+    // vector-signer tool cannot drift apart.  Session 2 consolidation of
+    // the Session-1 `step_9_5_fixtures` duplicate.
+    use ephemeral_classifier::test_fixtures as cft;
     use serde_json::json;
 
     fn v(id: &str, category: &str, reject_code: &str, input: serde_json::Value) -> Vector {
@@ -1203,102 +1210,24 @@ mod tests {
 
     // ---------- Step 9.5 (Phase C.3-C) integration tests -------------------
     //
-    // The helper functions below replicate the envelope-construction
-    // machinery that lives in `ephemeral_classifier::signature::tests`.
-    // The duplication is deliberate for Session 1 — moving these into a
-    // shared `ephemeral-classifier::test_fixtures` feature is tracked as
-    // a Session 2 follow-up so the classifier crate's tests and these
-    // tariff integration tests stay self-contained for now.
+    // The Session-1 `step_9_5_fixtures` submodule (canonical signing key,
+    // KID constant, SHA-256 helper, CBOR encoder, envelope builders) has
+    // been consolidated into `ephemeral_classifier::test_fixtures` under
+    // the `test_fixtures` feature, imported above as `cft`.  Only the
+    // tariff-specific JSON-anchor scaffolding stays local because its
+    // shape (`trust_anchor_keys_classifier` vector input field) is a
+    // tariff-layer concept, not a classifier-layer one.
 
-    mod step_9_5_fixtures {
-        use super::*;
-
-        use coset::{iana, CborSerializable, CoseSign1Builder, HeaderBuilder};
-        use ed25519_dalek::{Signer as _, SigningKey, VerifyingKey};
-        use ephemeral_classifier::{ClassifierSigPayload, CLASSIFIER_AAD};
-        use sha2::{Digest, Sha256};
-
-        pub const CLASSIFIER_TEST_KID: &str = "K_cust_classifier_pk_TEST";
-        /// Fixed seed — deterministic keys so vectors reproduce byte-for-byte.
-        /// Distinct from the classifier crate's own test seed; separation
-        /// avoids cross-test-suite coincidental collisions.
-        pub const CLASSIFIER_SEED: [u8; 32] = [
-            0xc0, 0xde, 0xc0, 0xde, 0xba, 0xdd, 0xca, 0xfe, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06,
-            0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14,
-            0x15, 0x16, 0x17, 0x18,
-        ];
-
-        pub fn classifier_key() -> SigningKey {
-            SigningKey::from_bytes(&CLASSIFIER_SEED)
-        }
-
-        pub fn classifier_vk() -> VerifyingKey {
-            classifier_key().verifying_key()
-        }
-
-        /// Build the JSON shape the tariff vector uses for
-        /// `trust_anchor_keys_classifier`. The role string is omitted
-        /// since the tariff step 9.5 supplies
-        /// `AnchorRole::ClassifierSigner` as the default.
-        pub fn classifier_anchor_def_json(kid: &str) -> serde_json::Value {
-            json!([{
-                "kid": kid,
-                "alg": "ed25519",
-                "pk_hex": hex::encode(classifier_vk().as_bytes()),
-            }])
-        }
-
-        pub fn sha256_of(bytes: &[u8]) -> [u8; 32] {
-            let mut h = Sha256::new();
-            h.update(bytes);
-            h.finalize().into()
-        }
-
-        /// CBOR-encode a payload via ciborium (same encoder the live
-        /// verifier decodes with — deterministic shape).
-        pub fn cbor_encode(payload: &ClassifierSigPayload) -> Vec<u8> {
-            let mut out = Vec::new();
-            ciborium::into_writer(payload, &mut out).expect("ciborium serialize");
-            out
-        }
-
-        /// Build a COSE_Sign1 blob over the supplied inner payload,
-        /// signed with the classifier test key under header `kid` and
-        /// `aad`. Tests vary `kid`, `aad`, or `inner` to exercise each
-        /// reject branch.
-        pub fn sign_envelope(
-            inner_payload_bytes: Vec<u8>,
-            kid: &str,
-            aad: &[u8],
-        ) -> Vec<u8> {
-            let sk = classifier_key();
-            let protected = HeaderBuilder::new()
-                .algorithm(iana::Algorithm::EdDSA)
-                .key_id(kid.as_bytes().to_vec())
-                .build();
-            let sign1 = CoseSign1Builder::new()
-                .protected(protected)
-                .payload(inner_payload_bytes)
-                .create_signature(aad, |tbs| sk.sign(tbs).to_bytes().to_vec())
-                .build();
-            sign1.to_vec().expect("serialize COSE_Sign1")
-        }
-
-        /// Happy-path envelope: signer commits to `wasm_bytes` actual
-        /// sha256, expected ABI version, matching outer/inner kid,
-        /// under the correct AAD.
-        pub fn happy_envelope(wasm_bytes: &[u8]) -> Vec<u8> {
-            let payload = ClassifierSigPayload {
-                sha256: sha256_of(wasm_bytes).to_vec(),
-                abi_version: CLASSIFIER_ABI_VERSION,
-                signer_kid: CLASSIFIER_TEST_KID.to_string(),
-            };
-            sign_envelope(
-                cbor_encode(&payload),
-                CLASSIFIER_TEST_KID,
-                CLASSIFIER_AAD,
-            )
-        }
+    /// Build the JSON array the tariff vector uses for
+    /// `trust_anchor_keys_classifier`.  The `role` string is omitted so
+    /// tariff step 9.5 supplies `AnchorRole::ClassifierSigner` as the
+    /// default (role-mismatch tests pass a different override explicitly).
+    fn classifier_anchor_def_json(kid: &str) -> serde_json::Value {
+        json!([{
+            "kid": kid,
+            "alg": "ed25519",
+            "pk_hex": cft::fixture_verifying_key_hex(),
+        }])
     }
 
     /// Minimal "classifier WASM" blob used throughout the step-9.5
@@ -1337,12 +1266,12 @@ mod tests {
 
     #[test]
     fn step_9_5_accepts_valid_classifier_envelope() {
-        let cose = step_9_5_fixtures::happy_envelope(STEP_9_5_WASM);
+        let cose = cft::happy_envelope(STEP_9_5_WASM);
         let input = step_9_5_base_input(
             Some(hex::encode(&cose)),
             Some(hex::encode(STEP_9_5_WASM)),
-            Some(step_9_5_fixtures::classifier_anchor_def_json(
-                step_9_5_fixtures::CLASSIFIER_TEST_KID,
+            Some(classifier_anchor_def_json(
+                cft::FIXTURE_CLASSIFIER_KID,
             )),
             None,
         );
@@ -1358,14 +1287,14 @@ mod tests {
 
     #[test]
     fn step_9_5_rejects_signature_invalid_on_tampered_cose() {
-        let mut cose = step_9_5_fixtures::happy_envelope(STEP_9_5_WASM);
+        let mut cose = cft::happy_envelope(STEP_9_5_WASM);
         // Flip the final byte (signature region) — ed25519 verify must fail.
         *cose.last_mut().unwrap() ^= 0xff;
         let input = step_9_5_base_input(
             Some(hex::encode(&cose)),
             Some(hex::encode(STEP_9_5_WASM)),
-            Some(step_9_5_fixtures::classifier_anchor_def_json(
-                step_9_5_fixtures::CLASSIFIER_TEST_KID,
+            Some(classifier_anchor_def_json(
+                cft::FIXTURE_CLASSIFIER_KID,
             )),
             None,
         );
@@ -1380,16 +1309,17 @@ mod tests {
     fn step_9_5_rejects_payload_malformed_on_non_cbor() {
         // Inner payload is valid UTF-8 but not CBOR — outer signature verifies,
         // inner decode must surface as payload-malformed.
-        let cose = step_9_5_fixtures::sign_envelope(
+        let cose = cft::sign_envelope_raw(
             b"this-is-not-cbor".to_vec(),
-            step_9_5_fixtures::CLASSIFIER_TEST_KID,
+            cft::FIXTURE_CLASSIFIER_KID,
             CLASSIFIER_AAD,
+            &cft::fixture_signing_key(),
         );
         let input = step_9_5_base_input(
             Some(hex::encode(&cose)),
             Some(hex::encode(STEP_9_5_WASM)),
-            Some(step_9_5_fixtures::classifier_anchor_def_json(
-                step_9_5_fixtures::CLASSIFIER_TEST_KID,
+            Some(classifier_anchor_def_json(
+                cft::FIXTURE_CLASSIFIER_KID,
             )),
             None,
         );
@@ -1403,20 +1333,21 @@ mod tests {
     #[test]
     fn step_9_5_rejects_abi_version_mismatch() {
         let payload = ClassifierSigPayload {
-            sha256: step_9_5_fixtures::sha256_of(STEP_9_5_WASM).to_vec(),
+            sha256: cft::sha256_of(STEP_9_5_WASM).to_vec(),
             abi_version: 99,
-            signer_kid: step_9_5_fixtures::CLASSIFIER_TEST_KID.to_string(),
+            signer_kid: cft::FIXTURE_CLASSIFIER_KID.to_string(),
         };
-        let cose = step_9_5_fixtures::sign_envelope(
-            step_9_5_fixtures::cbor_encode(&payload),
-            step_9_5_fixtures::CLASSIFIER_TEST_KID,
+        let cose = cft::sign_envelope_raw(
+            cft::cbor_encode_payload(&payload),
+            cft::FIXTURE_CLASSIFIER_KID,
             CLASSIFIER_AAD,
+            &cft::fixture_signing_key(),
         );
         let input = step_9_5_base_input(
             Some(hex::encode(&cose)),
             Some(hex::encode(STEP_9_5_WASM)),
-            Some(step_9_5_fixtures::classifier_anchor_def_json(
-                step_9_5_fixtures::CLASSIFIER_TEST_KID,
+            Some(classifier_anchor_def_json(
+                cft::FIXTURE_CLASSIFIER_KID,
             )),
             None,
         );
@@ -1432,21 +1363,22 @@ mod tests {
         // Sign over the *wrong* wasm hash (off-by-one-byte blob).
         let other_wasm: &[u8] = b"other-wasm-bytes";
         let payload = ClassifierSigPayload {
-            sha256: step_9_5_fixtures::sha256_of(other_wasm).to_vec(),
+            sha256: cft::sha256_of(other_wasm).to_vec(),
             abi_version: CLASSIFIER_ABI_VERSION,
-            signer_kid: step_9_5_fixtures::CLASSIFIER_TEST_KID.to_string(),
+            signer_kid: cft::FIXTURE_CLASSIFIER_KID.to_string(),
         };
-        let cose = step_9_5_fixtures::sign_envelope(
-            step_9_5_fixtures::cbor_encode(&payload),
-            step_9_5_fixtures::CLASSIFIER_TEST_KID,
+        let cose = cft::sign_envelope_raw(
+            cft::cbor_encode_payload(&payload),
+            cft::FIXTURE_CLASSIFIER_KID,
             CLASSIFIER_AAD,
+            &cft::fixture_signing_key(),
         );
         // Vector supplies STEP_9_5_WASM, payload committed to other_wasm.
         let input = step_9_5_base_input(
             Some(hex::encode(&cose)),
             Some(hex::encode(STEP_9_5_WASM)),
-            Some(step_9_5_fixtures::classifier_anchor_def_json(
-                step_9_5_fixtures::CLASSIFIER_TEST_KID,
+            Some(classifier_anchor_def_json(
+                cft::FIXTURE_CLASSIFIER_KID,
             )),
             None,
         );
@@ -1462,20 +1394,21 @@ mod tests {
         // Outer kid = CLASSIFIER_TEST_KID (resolves anchor),
         // Inner payload.signer_kid = "other-kid" → consistency-check fails.
         let payload = ClassifierSigPayload {
-            sha256: step_9_5_fixtures::sha256_of(STEP_9_5_WASM).to_vec(),
+            sha256: cft::sha256_of(STEP_9_5_WASM).to_vec(),
             abi_version: CLASSIFIER_ABI_VERSION,
             signer_kid: "K_other_classifier_pk_TEST".to_string(),
         };
-        let cose = step_9_5_fixtures::sign_envelope(
-            step_9_5_fixtures::cbor_encode(&payload),
-            step_9_5_fixtures::CLASSIFIER_TEST_KID,
+        let cose = cft::sign_envelope_raw(
+            cft::cbor_encode_payload(&payload),
+            cft::FIXTURE_CLASSIFIER_KID,
             CLASSIFIER_AAD,
+            &cft::fixture_signing_key(),
         );
         let input = step_9_5_base_input(
             Some(hex::encode(&cose)),
             Some(hex::encode(STEP_9_5_WASM)),
-            Some(step_9_5_fixtures::classifier_anchor_def_json(
-                step_9_5_fixtures::CLASSIFIER_TEST_KID,
+            Some(classifier_anchor_def_json(
+                cft::FIXTURE_CLASSIFIER_KID,
             )),
             None,
         );
@@ -1490,7 +1423,7 @@ mod tests {
     fn step_9_5_partial_triple_rejects_as_invalid() {
         // Only cose_sign1_bytes_classifier present — wasm and anchors absent.
         // Authoring error: surface as classifier-signature-invalid.
-        let cose = step_9_5_fixtures::happy_envelope(STEP_9_5_WASM);
+        let cose = cft::happy_envelope(STEP_9_5_WASM);
         let input = step_9_5_base_input(Some(hex::encode(&cose)), None, None, None);
         let input: TariffInput = serde_json::from_value(input).unwrap();
         assert_eq!(
@@ -1508,22 +1441,23 @@ mod tests {
         assert!(matches!(classify(&input, ""), Ok(())));
     }
 
-    /// ARCH-1 drift guard: the envelope-signing helpers are duplicated
-    /// across `ephemeral_classifier::signature::tests` and
-    /// `step_9_5_fixtures` here (Session 1 deliberate duplication).
-    /// Until Session 2 consolidates both into a shared
-    /// `ephemeral-classifier::test_fixtures` feature, this fixture
-    /// locks the `step_9_5_fixtures::happy_envelope` output byte-for-
-    /// byte against a committed reference. Any drift — ciborium /
-    /// coset / ed25519-dalek version bump changing canonicalization,
-    /// or a helper refactor silently altering the signed TBS shape —
-    /// surfaces here before it leaks into conformance vectors.
+    /// ARCH-1 drift guard: since Session 2 consolidated all envelope-
+    /// signing helpers into `ephemeral_classifier::test_fixtures`, the
+    /// classifier crate's own unit tests, this tariff integration
+    /// suite, and the vector-signer tool now all call `cft::happy_envelope`
+    /// directly.  This fixture locks the `cft::happy_envelope` output
+    /// byte-for-byte against a committed reference so any drift
+    /// (ciborium / coset / ed25519-dalek version bump changing
+    /// canonicalisation, or a refactor in `sign_classifier_envelope`
+    /// itself silently altering the signed TBS shape) surfaces here
+    /// before it leaks into conformance vectors.
     ///
     /// Fixture regeneration: if an intentional change shifts the
-    /// bytes, re-run the (removed-in-prod) dump test at the top of
-    /// this module's git history OR temporarily panic-print
-    /// `step_9_5_fixtures::happy_envelope(ARCH_1_PROBE_WASM)` and
-    /// paste the hex into `ARCH_1_COMMITTED_ENVELOPE_HEX`.
+    /// bytes, temporarily replace the `assert_eq!` below with
+    /// `panic!("produced = {}", hex::encode(&produced))`, run the
+    /// test once to dump the new bytes, paste them into
+    /// `ARCH_1_COMMITTED_ENVELOPE_HEX`, revert the panic, and regen
+    /// any downstream conformance vectors that embed envelopes.
     ///
     /// Locks three axes simultaneously:
     ///   1. Byte equality against committed fixture (drift).
@@ -1536,27 +1470,28 @@ mod tests {
         /// fixture doesn't accidentally alias one of them.
         const ARCH_1_PROBE_WASM: &[u8] = b"ARCH-1-byte-probe-v1";
 
-        /// Committed byte shape of `happy_envelope(ARCH_1_PROBE_WASM)`
-        /// under the classifier test seed (`CLASSIFIER_SEED`), AAD
+        /// Committed byte shape of
+        /// `cft::happy_envelope(ARCH_1_PROBE_WASM)` under the fixture
+        /// signing key (`cft::FIXTURE_CLASSIFIER_SEED`), AAD
         /// `b"ephemeral/classifier/v1"`, alg EdDSA (-8), and inner
         /// payload `ClassifierSigPayload { sha256(ARCH_1_PROBE_WASM),
         /// abi_version = CLASSIFIER_ABI_VERSION, signer_kid =
-        /// CLASSIFIER_TEST_KID }`.
+        /// cft::FIXTURE_CLASSIFIER_KID }`.
         const ARCH_1_COMMITTED_ENVELOPE_HEX: &str = "\
-            84581fa201270458194b5f637573745f636c61737369666965725f706b\
-            5f54455354a0585da3667368613235365820\
+            84581ca2012704574b5f666978747572655f636c61737369666965725f706b\
+            a0585aa3667368613235365820\
             6447ece714140cf177c55550fa78aba1dbed4d01867dc6d7b3de124f98287d66\
             6b6162695f76657273696f6e01\
-            6a7369676e65725f6b696478194b5f637573745f636c61737369666965725f706b5f54455354\
+            6a7369676e65725f6b6964774b5f666978747572655f636c61737369666965725f706b\
             5840\
-            4931f652e475c8a4b102b345f258c8fd58d3558b79f91128f7535ce9fe79f11c\
-            d0e99a519ef1e04d466df4b793461c555e6d2a6a3ef8ec25c66afc61bb8dbc01";
+            6084a46c4ca7dbd056bb2f3366a3a28954f70e8ec2cd033e824660fa50996bcb\
+            deeb9a2a5f542fbb099bb1f216d6a46c53eacdd2d40efaba4529752bc14a2c0b";
 
         let committed = hex::decode(ARCH_1_COMMITTED_ENVELOPE_HEX.replace(char::is_whitespace, ""))
             .expect("committed fixture hex is malformed — repair const");
 
         // Axis 1: byte equality.
-        let produced = step_9_5_fixtures::happy_envelope(ARCH_1_PROBE_WASM);
+        let produced = cft::happy_envelope(ARCH_1_PROBE_WASM);
         assert_eq!(
             produced, committed,
             "classifier envelope byte shape drifted from committed \
@@ -1572,8 +1507,8 @@ mod tests {
         let input = step_9_5_base_input(
             Some(hex::encode(&committed)),
             Some(hex::encode(ARCH_1_PROBE_WASM)),
-            Some(step_9_5_fixtures::classifier_anchor_def_json(
-                step_9_5_fixtures::CLASSIFIER_TEST_KID,
+            Some(classifier_anchor_def_json(
+                cft::FIXTURE_CLASSIFIER_KID,
             )),
             None,
         );
@@ -1588,7 +1523,7 @@ mod tests {
         // Axis 3: intra-run determinism. Two fresh productions must be
         // byte-identical even without the committed reference (guards
         // against any sub-layer silently introducing randomness).
-        let produced_again = step_9_5_fixtures::happy_envelope(ARCH_1_PROBE_WASM);
+        let produced_again = cft::happy_envelope(ARCH_1_PROBE_WASM);
         assert_eq!(
             produced, produced_again,
             "envelope production is not byte-deterministic across calls"
@@ -1601,11 +1536,11 @@ mod tests {
         // are hex-decoded at dispatch; a non-hex string in either must
         // reject as ClassifierSignatureInvalid (authoring error) rather
         // than leak a raw hex-decode error code upstream.
-        let cose = step_9_5_fixtures::happy_envelope(STEP_9_5_WASM);
+        let cose = cft::happy_envelope(STEP_9_5_WASM);
         let good_cose_hex = hex::encode(&cose);
         let good_wasm_hex = hex::encode(STEP_9_5_WASM);
-        let anchors = step_9_5_fixtures::classifier_anchor_def_json(
-            step_9_5_fixtures::CLASSIFIER_TEST_KID,
+        let anchors = classifier_anchor_def_json(
+            cft::FIXTURE_CLASSIFIER_KID,
         );
 
         // Case A: cose hex malformed.
@@ -1646,11 +1581,11 @@ mod tests {
         // partial shapes total — this test locks the remaining five so
         // a future refactor that accidentally accepts `(None, Some, Some)`
         // as "skip with stale anchors" is caught here.
-        let cose = step_9_5_fixtures::happy_envelope(STEP_9_5_WASM);
+        let cose = cft::happy_envelope(STEP_9_5_WASM);
         let cose_hex = hex::encode(&cose);
         let wasm_hex = hex::encode(STEP_9_5_WASM);
-        let anchors = step_9_5_fixtures::classifier_anchor_def_json(
-            step_9_5_fixtures::CLASSIFIER_TEST_KID,
+        let anchors = classifier_anchor_def_json(
+            cft::FIXTURE_CLASSIFIER_KID,
         );
 
         let cases: [(Option<String>, Option<String>, Option<serde_json::Value>, &str); 5] = [
@@ -1692,14 +1627,10 @@ mod tests {
         // by the classifier crate, then mapped to ClassifierSignatureInvalid
         // by the tariff step 9.5 mapper. Role confusion shut at the
         // vector-JSON parse seam.
-        let cose = step_9_5_fixtures::happy_envelope(STEP_9_5_WASM);
-        let pk_hex = hex::encode(
-            ed25519_dalek::SigningKey::from_bytes(&step_9_5_fixtures::CLASSIFIER_SEED)
-                .verifying_key()
-                .as_bytes(),
-        );
+        let cose = cft::happy_envelope(STEP_9_5_WASM);
+        let pk_hex = cft::fixture_verifying_key_hex();
         let wrong_role_anchors = json!([{
-            "kid": step_9_5_fixtures::CLASSIFIER_TEST_KID,
+            "kid": cft::FIXTURE_CLASSIFIER_KID,
             "alg": "ed25519",
             "pk_hex": pk_hex,
             "role": "tariff-signer",
@@ -1726,7 +1657,7 @@ mod tests {
         // classifier signature (step 9.5) must surface the step-9 fault
         // first — and a tariff with BOTH a version-too-old fault (step 10)
         // AND a broken classifier signature must surface the 9.5 fault.
-        let mut bad_cose = step_9_5_fixtures::happy_envelope(STEP_9_5_WASM);
+        let mut bad_cose = cft::happy_envelope(STEP_9_5_WASM);
         *bad_cose.last_mut().unwrap() ^= 0xff;
 
         // Case A: step 9 (duplicate keys) wins over 9.5.
@@ -1743,8 +1674,8 @@ mod tests {
         );
         map_a.insert(
             "trust_anchor_keys_classifier".into(),
-            step_9_5_fixtures::classifier_anchor_def_json(
-                step_9_5_fixtures::CLASSIFIER_TEST_KID,
+            classifier_anchor_def_json(
+                cft::FIXTURE_CLASSIFIER_KID,
             ),
         );
         let input_a: TariffInput = serde_json::from_value(inp_a).unwrap();
@@ -1770,8 +1701,8 @@ mod tests {
         );
         map_b.insert(
             "trust_anchor_keys_classifier".into(),
-            step_9_5_fixtures::classifier_anchor_def_json(
-                step_9_5_fixtures::CLASSIFIER_TEST_KID,
+            classifier_anchor_def_json(
+                cft::FIXTURE_CLASSIFIER_KID,
             ),
         );
         let input_b: TariffInput = serde_json::from_value(inp_b).unwrap();

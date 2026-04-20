@@ -297,7 +297,58 @@ pub fn sha256_of(bytes: &[u8]) -> [u8; 32] {
     h.finalize().into()
 }
 
-/// Build a `COSE_Sign1` classifier envelope.
+/// CBOR-encode a [`ClassifierSigPayload`] with the same `ciborium`
+/// encoder the live verifier decodes against, so round-trip bytes are
+/// canonical by construction.
+///
+/// Exposed so negative-path tests can craft payloads with individually
+/// tampered fields (`sha256` off-by-one, wrong `abi_version`, mismatched
+/// inner `signer_kid`) without re-implementing the encoder contract.
+#[must_use]
+pub fn cbor_encode_payload(payload: &ClassifierSigPayload) -> Vec<u8> {
+    let mut out = Vec::new();
+    ciborium::into_writer(payload, &mut out).expect("ciborium serialize ClassifierSigPayload");
+    out
+}
+
+/// Build a `COSE_Sign1` envelope over pre-encoded inner bytes with full
+/// control over the outer header `kid` and the external AAD.
+///
+/// Lower-level than [`sign_classifier_envelope`]. Use this when a test
+/// needs the inner payload, outer kid, or AAD to deliberately diverge
+/// from the happy-path convention — for example:
+///
+/// - Non-CBOR inner bytes to exercise the payload-decode branch.
+/// - Wrong AAD to replay a tariff-domain envelope into the classifier
+///   verifier.
+/// - Outer `kid` that deliberately differs from the inner
+///   `ClassifierSigPayload.signer_kid` to exercise the inner/outer-kid
+///   consistency check.
+///
+/// The signature is over the canonical `Sig_structure` defined by
+/// RFC 9052 §4.4 with `external_aad = aad`.
+#[must_use]
+pub fn sign_envelope_raw(
+    inner_payload_bytes: Vec<u8>,
+    outer_kid: &str,
+    aad: &[u8],
+    key: &SigningKey,
+) -> Vec<u8> {
+    let protected = HeaderBuilder::new()
+        .algorithm(iana::Algorithm::EdDSA)
+        .key_id(outer_kid.as_bytes().to_vec())
+        .build();
+    let sign1 = CoseSign1Builder::new()
+        .protected(protected)
+        .payload(inner_payload_bytes)
+        .create_signature(aad, |tbs| key.sign(tbs).to_bytes().to_vec())
+        .build();
+    sign1.to_vec().expect("serialize COSE_Sign1")
+}
+
+/// Build a `COSE_Sign1` classifier envelope over a commit-to-WASM
+/// payload.  Happy-path convenience wrapper on top of
+/// [`cbor_encode_payload`] + [`sign_envelope_raw`].
 ///
 /// Lifecycle:
 ///
@@ -326,19 +377,12 @@ pub fn sign_classifier_envelope(
         abi_version,
         signer_kid: signer_kid.to_string(),
     };
-    let mut inner = Vec::new();
-    ciborium::into_writer(&payload, &mut inner).expect("ciborium serialize ClassifierSigPayload");
-
-    let protected = HeaderBuilder::new()
-        .algorithm(iana::Algorithm::EdDSA)
-        .key_id(signer_kid.as_bytes().to_vec())
-        .build();
-    let sign1 = CoseSign1Builder::new()
-        .protected(protected)
-        .payload(inner)
-        .create_signature(CLASSIFIER_AAD, |tbs| key.sign(tbs).to_bytes().to_vec())
-        .build();
-    sign1.to_vec().expect("serialize COSE_Sign1")
+    sign_envelope_raw(
+        cbor_encode_payload(&payload),
+        signer_kid,
+        CLASSIFIER_AAD,
+        key,
+    )
 }
 
 /// Convenience: happy-path envelope signed by [`fixture_signing_key`]
