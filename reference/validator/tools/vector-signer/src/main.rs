@@ -26,6 +26,20 @@
 //! (pcrrej-090..pcrrej-097). Appends them atomically to the target
 //! conformance JSON file. Each vector exercises a single failure mode using
 //! real ES384 COSE signatures produced by `ephemeral-attestation-test-support`.
+//!
+//! ### `gen-phase-c2-5`
+//! Generator for the eight Phase C.2.5 Rekor transparency-log live-crypto
+//! vectors (pcrrej-110..pcrrej-117). Delegates to `phase_c2_5::build_all()`
+//! — every seed, timestamp, and tree-layout choice is pinned so regeneration
+//! is byte-deterministic.
+//!
+//! ### `gen-phase-c3-c`
+//! Generator for the eight Phase C.3-C classifier-signature verification
+//! vectors (trej-120..trej-127). Delegates to `phase_c3_c::build_all()`.
+//! Covers the five `TariffRejectCode::ClassifierSignature*` / `Classifier*`
+//! reject codes plus two ABI-policy accept cases (default + override).
+//! Signing inputs flow through `ephemeral_classifier::test_fixtures`, the
+//! single source of truth also consumed by ephemeral-core's step-9.5 tests.
 
 // NOTE: This binary unconditionally activates `test-fixtures` on
 // `ephemeral-attestation`, so `insert_trusted_der_for_test` is reachable at
@@ -62,6 +76,7 @@ use serde_json::{json, Value};
 
 mod merkle;
 mod phase_c2_5;
+mod phase_c3_c;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "EPHEMERAL COSE_Sign1 vector signer")]
@@ -80,6 +95,8 @@ enum Cmd {
     GenPhaseC2(GenPhaseC2Args),
     /// Regenerate + append the eight Phase C.2.5 live-Rekor vectors.
     GenPhaseC2_5(GenPhaseC2_5Args),
+    /// Regenerate + append the eight Phase C.3-C classifier-signature vectors.
+    GenPhaseC3_C(GenPhaseC3_CArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -114,6 +131,25 @@ struct GenPhaseC2_5Args {
 }
 
 #[derive(clap::Args, Debug)]
+struct GenPhaseC3_CArgs {
+    /// Target JSON.  Created with a fresh Phase-C.3-C envelope if missing;
+    /// otherwise appended to (duplicate IDs are rejected).
+    ///
+    /// The classifier-signature vectors belong to the `tariff-reject` suite
+    /// (TariffRejectCode carries the five new classifier-* variants), so the
+    /// file joins the existing `tariff-reject.json` family.  The `-c3-c-
+    /// classifier` filename disambiguates: any T15-style router keyed on
+    /// `vector_suite` must load both `tariff-reject.json` (mock-era) and
+    /// `tariff-reject-c3-c-classifier.json` (this file) when selecting for
+    /// the `tariff-reject` suite.
+    #[arg(long, default_value = r"..\..\..\conformance\tariff-reject-c3-c-classifier.json")]
+    target: PathBuf,
+    /// Dry-run: print the 8 JSON values to stdout; do not touch the file.
+    #[arg(long)]
+    dry_run: bool,
+}
+
+#[derive(clap::Args, Debug)]
 struct SignArgs {
     /// 32-byte Ed25519 seed as hex (64 hex chars).
     #[arg(long)]
@@ -136,6 +172,7 @@ fn main() -> Result<()> {
         Cmd::GenPhaseC1 => run_gen_phase_c1(),
         Cmd::GenPhaseC2(a) => run_gen_phase_c2(&a),
         Cmd::GenPhaseC2_5(a) => run_gen_phase_c2_5(&a),
+        Cmd::GenPhaseC3_C(a) => run_gen_phase_c3_c(&a),
     }
 }
 
@@ -324,7 +361,12 @@ fn run_gen_phase_c1() -> Result<()> {
 /// We cannot simply flip an arbitrary position in the hex string because
 /// that would scramble the header; the parse-mutate-re-encode dance keeps
 /// only the inner `payload` field mutated.
-fn tamper_payload_byte(cose_hex: &str) -> Result<String> {
+///
+/// `pub(crate)` because Phase C.3-C's `build_trej_120_cose_verify_tampered`
+/// reuses exactly this byte-flip strategy against a classifier envelope —
+/// duplicating the parse-mutate-re-encode dance would be a second source of
+/// truth for "what post-signing tamper looks like at the COSE_Sign1 layer".
+pub(crate) fn tamper_payload_byte(cose_hex: &str) -> Result<String> {
     let bytes = hex::decode(cose_hex)?;
     let mut sign1 = coset::CoseSign1::from_slice(&bytes)
         .map_err(|e| anyhow!("parse CoseSign1: {e}"))?;
@@ -1131,4 +1173,65 @@ fn append_vectors_with_envelope(
     out.push('\n');
     fs::write(target, out)?;
     Ok(())
+}
+
+// ============================================================================
+// Phase C.3-C: classifier-signature verification vectors (trej-120..trej-127)
+// ============================================================================
+//
+// Delegated to `phase_c3_c::build_all()` — the eight vectors cover all five
+// TariffRejectCode::classifier-* variants plus two accept cases (default ABI
+// and ABI override), exercised against a single source-of-truth fixture
+// signing API in `ephemeral-classifier::test_fixtures`. That API is the same
+// one ephemeral-core's step-9.5 integration tests consume, so regeneration
+// here and tariff.rs's tests cannot drift.
+
+fn run_gen_phase_c3_c(args: &GenPhaseC3_CArgs) -> Result<()> {
+    let vectors = phase_c3_c::build_all();
+
+    if args.dry_run {
+        let mut stdout = std::io::stdout().lock();
+        for v in &vectors {
+            writeln!(stdout, "{}", serde_json::to_string_pretty(v)?)?;
+        }
+        return Ok(());
+    }
+
+    append_vectors_with_envelope(&args.target, vectors, build_c3_c_envelope)
+}
+
+/// Build the envelope for a fresh C.3-C suite file.
+///
+/// `vector_suite` is `"tariff-reject"` — this mirrors the C.2.5 precedent
+/// where `pcr-attestation-reject.json` (mock), `pcr-attestation-reject-c2-
+/// live.json` and `pcr-attestation-reject-c2-5-rekor.json` all share the
+/// single `pcr-attestation-reject` suite value and are disambiguated only by
+/// filename. The classifier-signature reject codes are
+/// `TariffRejectCode::ClassifierSignature*` variants — same suite, dedicated
+/// file. Any T15-style router that keys on `vector_suite` must load both
+/// `tariff-reject.json` and `tariff-reject-c3-c-classifier.json` for the
+/// `tariff-reject` selection.
+fn build_c3_c_envelope() -> Value {
+    json!({
+        "schema_version": "1.0.0",
+        "vector_suite": "tariff-reject",
+        "spec_reference": "design-final.md §4.3 (Phase C.3-C classifier signature verification)",
+        "spec_version": "round8-delta-applied + phase-c3-c-classifier-sig",
+        "generated_at": "2026-04-20T00:00:00Z",
+        // Keys MUST match each vector's `category` string byte-for-byte so
+        // any coverage checker that joins `coverage_summary` against emitted
+        // vector categories lands on a hit for every row. C.2.5 set this
+        // invariant; any drift here is a silent coverage-drop.
+        "coverage_summary": {
+            "live-classifier-sig-cose-verify-tampered": 1,
+            "live-classifier-sig-payload-sha256-wrong-length": 1,
+            "live-classifier-sig-abi-version-mismatch": 1,
+            "live-classifier-sig-wasm-hash-mismatch": 1,
+            "live-classifier-sig-inner-kid-mismatch": 1,
+            "live-classifier-sig-partial-triple-missing-anchors": 1,
+            "live-classifier-sig-happy-default-abi": 1,
+            "live-classifier-sig-happy-abi-override": 1
+        },
+        "vectors": []
+    })
 }

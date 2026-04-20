@@ -22,6 +22,23 @@ ephemeral-crypto = { path = "../../crates/ephemeral-crypto" }
 ephemeral-attestation = { path = "../../crates/ephemeral-attestation", features = ["test-fixtures", "rekor"] }
 ephemeral-attestation-test-support = { path = "../../crates/ephemeral-attestation-test-support" }
 ephemeral-core = { path = "../../crates/ephemeral-core", features = ["test-fixtures", "rekor"] }
+# Phase C.3-C — `phase_c3_c` pulls the canonical classifier fixture
+# surface (sign_classifier_envelope, sign_envelope_raw, cbor_encode_payload,
+# FIXTURE_CLASSIFIER_KID, fixture_signing_key, sha256_of) so there is
+# exactly one source of fixture-signing truth shared with ephemeral-core's
+# tariff step-9.5 tests. vector-signer is NOT a production binary (see
+# src/main.rs top-of-file note) so activating `test_fixtures` here is
+# safe — the prod-symbol-probe guard scans only ephemeral-core,
+# ephemeral-attestation and ephemeral-classifier rlibs built via a
+# separate `default-features = false` probe package.
+ephemeral-classifier = { path = "../../crates/ephemeral-classifier", features = ["test_fixtures"] }
 
 [dev-dependencies]
 proptest = { workspace = true }
+# Phase C.3-C — the inline tests in `phase_c3_c.rs` re-decode COSE_Sign1
+# inner payloads back to CBOR to assert invariants that the builder API
+# cannot express through its return type alone (e.g. "trej-121 must carry
+# a 31-byte sha256 to exercise the length gate", "trej-123 signed hash
+# differs from sha256-of-supplied-wasm").  Dev-only — never used at
+# runtime by the binary itself.
+ciborium = { workspace = true }
