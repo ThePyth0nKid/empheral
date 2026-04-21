@@ -27,9 +27,10 @@
         "fuzz-baseline",
         "tariff-reject",
         "pcr-attestation-reject",
-        "audit-replay"
+        "audit-replay",
+        "anomaly-library-reject"
       ],
-      "description": "Which of the six conformance suites this file represents (see design-final.md §15)."
+      "description": "Which of the seven conformance suites this file represents. `anomaly-library-reject` was added in Phase C.4 Session 4 for AnomalyPatternLibrary envelope verification (design-final.md §3.5)."
     },
     "spec_reference": {
       "type": "string",

@@ -49,6 +49,17 @@
 //! via the `fuel_exhausted` fixture.  Delegates vector shape to
 //! `phase_c3_c_fuzz::build_all()`; mutates the target file in-place
 //! rather than appending to an envelope.
+//!
+//! ### `gen-phase-c4-library`
+//! Generator for the seventeen Phase C.4 anomaly-library-envelope
+//! verification vectors (alrej-100..alrej-116). Delegates to
+//! `phase_c4_library::build_all()`. Covers eleven of the twelve
+//! `AnomalyLibError` top-level variants plus the four
+//! `FiringCompanionFailure` sub-variants and two accept paths
+//! (first-observation + strict-advance) that pin the replay ledger
+//! dial.  Signing inputs flow through `ephemeral_anomaly::test_fixtures`,
+//! the single source of truth also consumed by ephemeral-core's
+//! `anomaly-library-reject` suite executor.
 
 // NOTE: This binary unconditionally activates `test-fixtures` on
 // `ephemeral-attestation`, so `insert_trusted_der_for_test` is reachable at
@@ -87,6 +98,7 @@ mod merkle;
 mod phase_c2_5;
 mod phase_c3_c;
 mod phase_c3_c_fuzz;
+mod phase_c4_library;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "EPHEMERAL COSE_Sign1 vector signer")]
@@ -110,6 +122,8 @@ enum Cmd {
     /// Patch fuzz-baseline.json with the two Phase C.3-C live-classifier
     /// fuzz vectors (fuzz-190 replace, fuzz-200 insert).
     GenFuzzC3_C(GenFuzzC3_CArgs),
+    /// Regenerate + append the seventeen Phase C.4 anomaly-library vectors.
+    GenPhaseC4Library(GenPhaseC4LibraryArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -170,6 +184,34 @@ struct GenPhaseC3_CArgs {
 }
 
 #[derive(clap::Args, Debug)]
+struct GenPhaseC4LibraryArgs {
+    /// Target JSON.  Created with a fresh Phase-C.4 anomaly-library envelope
+    /// if missing; otherwise appended to (duplicate IDs are rejected).
+    ///
+    /// Unlike the tariff-reject C.3-C file which joined an existing suite,
+    /// `anomaly-library-reject` is a brand-new suite key introduced in
+    /// Session 4 (`VectorSuite::AnomalyLibraryReject`).  The filename and
+    /// the `vector_suite` field match exactly — `stem_suite_hint` in
+    /// `ephemeral-core::runner` falls back on the stem only when the body
+    /// fails to parse, so a mismatched filename would silently misroute
+    /// orphan load-errors.
+    ///
+    /// Path is relative to the canonical invocation cwd (workspace root,
+    /// i.e. `cargo run -p vector-signer -- gen-phase-c4-library`). From
+    /// there, `../../conformance/` resolves to the repo-root `conformance/`
+    /// dir.
+    #[arg(long, default_value = r"..\..\conformance\anomaly-library-reject.json")]
+    target: PathBuf,
+    /// Dry-run: print the 17 JSON values to stdout, pretty-printed and
+    /// separated by newlines (matching the C.2 / C.2.5 / C.3-C pattern, NOT
+    /// the single-array C.3-C-fuzz pattern).  The committed
+    /// `tests/determinism_c4_library.rs` tripwire pins the SHA-256 of this
+    /// dry-run output against regeneration drift.
+    #[arg(long)]
+    dry_run: bool,
+}
+
+#[derive(clap::Args, Debug)]
 struct GenFuzzC3_CArgs {
     /// Target JSON.  The fuzz-baseline file must already exist — this
     /// subcommand patches two entries (fuzz-190 replace, fuzz-200
@@ -213,6 +255,7 @@ fn main() -> Result<()> {
         Cmd::GenPhaseC2_5(a) => run_gen_phase_c2_5(&a),
         Cmd::GenPhaseC3_C(a) => run_gen_phase_c3_c(&a),
         Cmd::GenFuzzC3_C(a) => run_gen_fuzz_c3_c(&a),
+        Cmd::GenPhaseC4Library(a) => run_gen_phase_c4_library(&a),
     }
 }
 
@@ -1391,4 +1434,79 @@ fn patch_vectors_in_file(target: &Path, patches: Vec<(String, Value)>) -> Result
         inserted
     );
     Ok(())
+}
+
+// ============================================================================
+// Phase C.4 Session 4: anomaly-library envelope verification vectors
+// (alrej-100..alrej-116)
+// ============================================================================
+//
+// Delegated to `phase_c4_library::build_all()` — the seventeen vectors cover
+// eleven of the twelve `AnomalyLibError` top-level variants (excluding
+// `LedgerFailure`, which needs a custom `AnomalyLedger` impl and therefore
+// cannot be expressed through a JSON vector), the four
+// `FiringCompanionFailure` sub-variants, and two accept paths (first
+// observation + strict advance) exercising the replay ledger.  The envelope
+// is signed by `ephemeral_anomaly::test_fixtures::fixture_anomaly_signing_key`
+// — the same source of fixture truth the ephemeral-core
+// `anomaly-library-reject` suite executor reaches for via the
+// `test_fixtures` feature, so regeneration here and live-dispatch there
+// cannot drift.
+
+fn run_gen_phase_c4_library(args: &GenPhaseC4LibraryArgs) -> Result<()> {
+    let vectors = phase_c4_library::build_all();
+
+    if args.dry_run {
+        let mut stdout = std::io::stdout().lock();
+        for v in &vectors {
+            writeln!(stdout, "{}", serde_json::to_string_pretty(v)?)?;
+        }
+        return Ok(());
+    }
+
+    append_vectors_with_envelope(&args.target, vectors, build_c4_library_envelope)
+}
+
+/// Build the envelope for a fresh C.4 anomaly-library suite file.
+///
+/// `vector_suite` is `"anomaly-library-reject"` — a brand-new suite key
+/// introduced in Session 4 (`VectorSuite::AnomalyLibraryReject`).  Unlike
+/// the C.2 / C.2.5 / C.3-C generators which appended into existing suite
+/// families (`pcr-attestation-reject`, `tariff-reject`), this suite has
+/// exactly one file; any future anomaly-library expansion should append
+/// into this same file rather than introduce a second filename.
+///
+/// `coverage_summary` keys MUST match each vector's `category` string
+/// byte-for-byte so a downstream coverage checker that joins
+/// `coverage_summary` against emitted vector categories lands on a hit
+/// for every row.  The C.2.5 envelope set this invariant; any drift here
+/// is a silent coverage-drop.
+fn build_c4_library_envelope() -> Value {
+    json!({
+        "schema_version": "1.0.0",
+        "vector_suite": "anomaly-library-reject",
+        "spec_reference": "design-final.md §3.5 (Phase C.4 anomaly-library envelope verification)",
+        "spec_version": "round8-delta-applied + phase-c4-anomaly-library",
+        "generated_at": "2026-04-21T00:00:00Z",
+        "coverage_summary": {
+            "anomaly-library-cose-verify-tampered": 1,
+            "anomaly-library-payload-not-cbor": 1,
+            "anomaly-library-abi-version-mismatch": 1,
+            "anomaly-library-signer-kid-mismatch": 1,
+            "anomaly-library-not-yet-valid": 1,
+            "anomaly-library-expired": 1,
+            "anomaly-library-pattern-id-duplicate": 1,
+            "anomaly-library-severity-action-inconsistent": 1,
+            "anomaly-library-unknown-verb-family": 1,
+            "anomaly-library-companion-none-declared": 1,
+            "anomaly-library-companion-not-found": 1,
+            "anomaly-library-companion-not-cumulative": 1,
+            "anomaly-library-companion-window-too-short": 1,
+            "anomaly-library-version-replay": 1,
+            "anomaly-library-version-rollback": 1,
+            "anomaly-library-accept-first-observation": 1,
+            "anomaly-library-accept-strict-advance": 1
+        },
+        "vectors": []
+    })
 }

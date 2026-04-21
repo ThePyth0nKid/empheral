@@ -32,6 +32,15 @@ ephemeral-core = { path = "../../crates/ephemeral-core", features = ["test-fixtu
 # ephemeral-attestation and ephemeral-classifier rlibs built via a
 # separate `default-features = false` probe package.
 ephemeral-classifier = { path = "../../crates/ephemeral-classifier", features = ["test_fixtures"] }
+# Phase C.4 Session 4 — `phase_c4_library` pulls the anomaly-library fixture
+# surface (sign_minimum_library_with_version, sign_anomaly_library_envelope,
+# sign_anomaly_library_envelope_raw, cbor_encode_anomaly_payload,
+# FIXTURE_ANOMALY_KID, fixture_anomaly_signing_key,
+# fixture_anomaly_verifying_key_bytes, minimum_anomaly_library_patterns,
+# minimum_anomaly_library_payload, and the 15 MINIMUM-library pattern
+# builders).  Single source of fixture truth shared with ephemeral-core's
+# `anomaly-library-reject` suite executor.
+ephemeral-anomaly = { path = "../../crates/ephemeral-anomaly", features = ["test_fixtures"] }
 
 [dev-dependencies]
 proptest = { workspace = true }

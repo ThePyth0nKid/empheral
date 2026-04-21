@@ -575,6 +575,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "caseless",
+ "ephemeral-anomaly",
  "ephemeral-attestation",
  "ephemeral-classifier",
  "ephemeral-crypto",
@@ -1801,6 +1802,7 @@ dependencies = [
  "clap",
  "coset",
  "ed25519-dalek",
+ "ephemeral-anomaly",
  "ephemeral-attestation",
  "ephemeral-attestation-test-support",
  "ephemeral-classifier",

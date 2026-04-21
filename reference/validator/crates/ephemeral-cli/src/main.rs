@@ -356,6 +356,10 @@ fn default_inputs(dir: &Path) -> Vec<PathBuf> {
         "pcr-attestation-reject-c2-live.json",
         "pcr-attestation-reject-c2-5-rekor.json",
         "audit-replay.json",
+        // Phase C.4 Session 4 — cross-org `AnomalyPatternLibrary` envelope
+        // verification (§3.5).  Adds 17 vectors under the new
+        // `anomaly-library-reject` suite key; CLI totals climb 536→553.
+        "anomaly-library-reject.json",
     ];
     NAMES
         .iter()

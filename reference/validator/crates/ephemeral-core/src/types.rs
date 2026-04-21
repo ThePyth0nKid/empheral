@@ -47,6 +47,10 @@ pub enum VectorSuite {
     TariffReject,
     PcrAttestationReject,
     AuditReplay,
+    /// Phase C.4 Session 4 — anomaly-library envelope verification
+    /// (Stages 1–8 per §3.5).  Suite executor lives in
+    /// [`crate::suites::anomaly_library`].
+    AnomalyLibraryReject,
 }
 
 impl VectorSuite {
@@ -59,17 +63,19 @@ impl VectorSuite {
             Self::TariffReject => "tariff-reject",
             Self::PcrAttestationReject => "pcr-attestation-reject",
             Self::AuditReplay => "audit-replay",
+            Self::AnomalyLibraryReject => "anomaly-library-reject",
         }
     }
 
-    /// All six suites, in documentation order.
-    pub const ALL: [Self; 6] = [
+    /// All seven suites, in documentation order.
+    pub const ALL: [Self; 7] = [
         Self::DelegationScope,
         Self::Canonicalization,
         Self::FuzzBaseline,
         Self::TariffReject,
         Self::PcrAttestationReject,
         Self::AuditReplay,
+        Self::AnomalyLibraryReject,
     ];
 }
 

@@ -26,6 +26,20 @@ ephemeral-attestation = { path = "../ephemeral-attestation" }
 # crate itself has no reverse-dependency on ephemeral-core, so this
 # stays a one-way coupling.
 ephemeral-classifier = { path = "../ephemeral-classifier" }
+# Phase C.4 Session 4 — anomaly-library envelope verification is
+# invoked from the `anomaly-library-reject` suite executor
+# (`suites/anomaly_library.rs`), which is dispatched unconditionally
+# from `runner.rs` and is part of `ephemeral-core`'s production
+# public API.  This is therefore a runtime `[dependencies]` entry,
+# NOT a `[dev-dependencies]` / feature-gated one — moving it would
+# silently strip the anomaly-library suite from every downstream
+# binary that links `ephemeral-core`.  No `features` key: the
+# `test_fixtures` feature of `ephemeral-anomaly` MUST only be
+# activated by test/tooling crates (vector-signer), never by this
+# crate — the `ephemeral-prod-symbol-probe` tripwire guards this.
+# One-way coupling: anomaly crate has no reverse-dep on
+# `ephemeral-core`.
+ephemeral-anomaly = { path = "../ephemeral-anomaly" }
 
 [features]
 # Enables the Phase C.2 live-Nitro dispatch path (classify_live_nitro + the

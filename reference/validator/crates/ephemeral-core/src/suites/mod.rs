@@ -10,6 +10,7 @@
 //! audit-replay) stay [`crate::ValidationOutcome::Skipped`] with
 //! [`crate::SkipReason::SuiteNotImplementedThisSession`].
 
+pub mod anomaly_library;
 pub mod audit;
 pub mod canonicalization;
 mod crypto_support;
