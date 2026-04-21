@@ -1,8 +1,8 @@
 //! Anomaly-library envelope signature verification (Phase C.4 / §3.5.1).
 //!
 //! This module binds an operator-published `AnomalyPatternLibrary` to
-//! an [`AnchorRole::AnomalyLibrarySigner`]-signed metadata envelope via
-//! a six-step cryptographic pipeline that layers over
+//! an [`AnchorRole::AnomalyLibrarySigner`]-signed metadata envelope
+//! via a ten-step cryptographic pipeline that layers over
 //! [`ephemeral_crypto::verify_cose_sign1_with_cap`]:
 //!
 //! ```text
@@ -23,7 +23,22 @@
 //!                 abi_version == expected              (step 4)
 //!                 signer_kid  == outer COSE kid        (step 5)
 //!                 issued_at ≤ now ≤ expires_at         (step 6)
+//!                                   │
+//!                                   ▼
+//!                     pattern-body invariants
+//!                 pattern_id uniqueness (§4.2.1)       (step 7a)
+//!                 severity-action consistency (§3.5.2) (step 7b)
+//!                 verb-family known (§3.5.3)           (step 7c)
+//!                 anti-walk-under companion (§3.5.3)   (step 7d)
 //! ```
+//!
+//! Stage 7 is integrated here rather than exposed as a separate
+//! `validate_invariants()` fn because the caller MUST NOT be able to
+//! consume a signature-verified but structurally-broken library.
+//! The fail-close posture is symmetric with the signer side:
+//! `test_fixtures::sign_anomaly_library_envelope` performs the
+//! inverse validation before signing, so a well-formed signer can
+//! never produce bytes this verifier rejects at Stage 7.
 //!
 //! # Why the cap differs from the generic one
 //!
@@ -61,6 +76,11 @@
 use ephemeral_crypto::{verify_cose_sign1_with_cap, AnchorRole, TrustAnchorSet};
 
 use crate::errors::{sanitize_log_string, AnomalyLibError};
+use crate::invariants::{
+    check_firing_rule_companions, check_pattern_id_uniqueness,
+    check_severity_action_consistency, check_verb_families_known,
+};
+use crate::patterns::PatternEntry;
 use crate::schema::AnomalyLibraryPayload;
 
 /// Domain-separation tag for anomaly-library envelopes.
@@ -123,6 +143,22 @@ const MAX_INNER_KID_BYTES: usize = 256;
 /// legitimate namespacing scheme.
 const MAX_LIBRARY_ID_BYTES: usize = 256;
 
+// Cap coherence: both `signer_kid` and `library_id` are stored in
+// `VerifiedAnomalyLibrarySignature` AFTER passing through
+// `sanitize_log_string`, which truncates at
+// `crate::errors::MAX_LOG_STRING_BYTES`.  If either inner cap ever
+// rose above that log-cap, the stored value would be silently
+// truncated and no longer byte-equal to what the crypto layer
+// authenticated — a latent data-corruption path where the caller
+// receives a `VerifiedAnomalyLibrarySignature` whose `signer_kid` /
+// `library_id` does NOT match the bytes the signature bound.  The
+// boundary tests `signer_kid_at_max_length_accepts` and
+// `library_id_at_max_length_accepts` would still pass at runtime (the
+// stored value's length equals the cap) while silently dropping the
+// tail.  Failing at compile time closes that divergence for good.
+const _: () = assert!(MAX_INNER_KID_BYTES <= crate::errors::MAX_LOG_STRING_BYTES);
+const _: () = assert!(MAX_LIBRARY_ID_BYTES <= crate::errors::MAX_LOG_STRING_BYTES);
+
 /// Successful outcome of an anomaly-library signature verification.
 ///
 /// The authoritative signer kid (from the outer COSE header) and the
@@ -151,6 +187,23 @@ pub struct VerifiedAnomalyLibrarySignature {
     pub issued_at: i64,
     /// End of validity window (unix epoch seconds).
     pub expires_at: i64,
+    /// Structurally-validated pattern table.  Guaranteed at this
+    /// point to be:
+    ///
+    /// - pattern-id unique (§4.2.1 R7.C6 SET semantics),
+    /// - severity-action consistent (§3.5.2 R8.A2),
+    /// - all verb-family references resolvable (§3.5.3 trust-surface),
+    /// - anti-walk-under companion-pair sound (§3.5.3).
+    ///
+    /// Empty for Session-1-signed envelopes (see crate-level
+    /// forward-compat note).  The raw contents — in particular the
+    /// `pattern_id` and scope strings — are NOT sanitised here
+    /// because they are *not* attacker-surfaced to logs at this
+    /// layer; the invariant-check error variants sanitise them on
+    /// their way into `AnomalyLibError`.  Session-3+ consumers that
+    /// log pattern ids in success paths MUST apply
+    /// [`sanitize_log_string`] themselves at that log site.
+    pub patterns: Vec<PatternEntry>,
 }
 
 /// Verify an anomaly-library envelope against a set of trust anchors.
@@ -279,12 +332,32 @@ pub fn verify_anomaly_library_signature(
         });
     }
 
+    // Step 7: pattern-body invariant validation.  Ordering is
+    // documented in `invariants` module — cheapest/library-level
+    // first, cross-pattern last.  Any failure here aborts before we
+    // construct the verified struct: a signature-verified but
+    // structurally-broken library MUST be indistinguishable from an
+    // unsigned one at the caller's boundary.
+    //
+    // 7a: pattern_id SET-semantics (§4.2.1 R7.C6).
+    check_pattern_id_uniqueness(&payload.patterns)?;
+    // 7b: severity-action consistency (§3.5.2 R8.A2).
+    check_severity_action_consistency(&payload.patterns)?;
+    // 7c: verb-family references known (§3.5.3 trust-surface).
+    check_verb_families_known(&payload.patterns)?;
+    // 7d: anti-walk-under companion pair (§3.5.3).
+    check_firing_rule_companions(&payload.patterns)?;
+
     // The outer kid has been cryptographically authenticated but its
     // byte content is attacker-controlled (the signer picks their own
     // kid label).  Sanitise both outward-facing string fields before
     // storing so a rogue signer cannot smuggle control chars or ANSI
     // escapes into validator logs via these surfaces.  The raw outer
     // kid has already served its purpose in Step 5's equality check.
+    //
+    // `patterns` is moved (not cloned) into the verified struct —
+    // this crate produces exactly one verified result per call, and
+    // downstream consumers take ownership.
     Ok(VerifiedAnomalyLibrarySignature {
         signer_kid: sanitize_log_string(&verified.kid),
         abi_version: payload.abi_version,
@@ -292,6 +365,7 @@ pub fn verify_anomaly_library_signature(
         library_version: payload.library_version,
         issued_at: payload.issued_at,
         expires_at: payload.expires_at,
+        patterns: payload.patterns,
     })
 }
 
@@ -303,6 +377,9 @@ mod tests {
     use ed25519_dalek::{Signer, SigningKey};
     use ephemeral_crypto::TrustAnchor;
 
+    use crate::errors::FiringCompanionFailure;
+    use crate::patterns::{Action, FiringRule, Severity, Threshold};
+    use crate::scope::{MandateScope, ScopePredicate, VerbPredicate};
     use crate::ANOMALY_LIBRARY_ABI_VERSION;
 
     const TEST_KID: &str = "K_anomaly_pk_TEST";
@@ -383,6 +460,7 @@ mod tests {
             library_version: 1,
             issued_at: T_ISSUED,
             expires_at: T_EXPIRES,
+            patterns: Vec::new(),
         };
         build_sign1(encode_payload(&payload), TEST_KID, ANOMALY_LIBRARY_AAD, SEED)
     }
@@ -403,6 +481,10 @@ mod tests {
         assert_eq!(out.library_version, 1);
         assert_eq!(out.issued_at, T_ISSUED);
         assert_eq!(out.expires_at, T_EXPIRES);
+        // Session-1-shape happy envelope carries no patterns — Stage
+        // 7 trivially passes on the empty slice, and `patterns` is
+        // surfaced empty rather than absent.
+        assert!(out.patterns.is_empty());
     }
 
     #[test]
@@ -467,6 +549,7 @@ mod tests {
             library_version: 1,
             issued_at: T_ISSUED,
             expires_at: T_EXPIRES,
+            patterns: Vec::new(),
         };
         let inner = encode_payload(&payload);
         let cose = build_sign1(inner, ALT_KID, ANOMALY_LIBRARY_AAD, ALT_SEED);
@@ -493,6 +576,7 @@ mod tests {
             library_version: 1,
             issued_at: T_ISSUED,
             expires_at: T_EXPIRES,
+            patterns: Vec::new(),
         };
         let inner = encode_payload(&payload);
         let cose = build_sign1(inner, TEST_KID, b"tariff", SEED);
@@ -519,6 +603,7 @@ mod tests {
             library_version: 1,
             issued_at: T_ISSUED,
             expires_at: T_EXPIRES,
+            patterns: Vec::new(),
         };
         let inner = encode_payload(&payload);
         let cose = build_sign1(inner, TEST_KID, b"ephemeral/classifier/v1", SEED);
@@ -618,6 +703,7 @@ mod tests {
             library_version: 1,
             issued_at: T_ISSUED,
             expires_at: T_EXPIRES,
+            patterns: Vec::new(),
         };
         let inner = encode_payload(&payload);
         let cose = build_sign1(inner, TEST_KID, ANOMALY_LIBRARY_AAD, SEED);
@@ -650,6 +736,7 @@ mod tests {
                 library_version: 1,
                 issued_at: T_ISSUED,
                 expires_at: T_EXPIRES,
+                patterns: Vec::new(),
             };
             let inner = encode_payload(&payload);
             let cose = build_sign1(inner, TEST_KID, ANOMALY_LIBRARY_AAD, SEED);
@@ -680,6 +767,7 @@ mod tests {
             library_version: 1,
             issued_at: T_ISSUED,
             expires_at: T_EXPIRES,
+            patterns: Vec::new(),
         };
         let inner = encode_payload(&payload);
         let cose = build_sign1(inner, TEST_KID, ANOMALY_LIBRARY_AAD, SEED);
@@ -709,6 +797,7 @@ mod tests {
             library_version: 1,
             issued_at: T_ISSUED,
             expires_at: T_EXPIRES,
+            patterns: Vec::new(),
         };
         let inner = encode_payload(&payload);
         let cose = build_sign1(inner, TEST_KID, ANOMALY_LIBRARY_AAD, SEED);
@@ -763,6 +852,7 @@ mod tests {
             library_version: 1,
             issued_at: T_ISSUED,
             expires_at: T_EXPIRES,
+            patterns: Vec::new(),
         };
         let inner = encode_payload(&payload);
         let cose = build_sign1(inner, &big_kid, ANOMALY_LIBRARY_AAD, SEED);
@@ -787,6 +877,7 @@ mod tests {
             library_version: 1,
             issued_at: T_ISSUED,
             expires_at: T_EXPIRES,
+            patterns: Vec::new(),
         };
         let inner = encode_payload(&payload);
         let cose = build_sign1(inner, TEST_KID, ANOMALY_LIBRARY_AAD, SEED);
@@ -821,6 +912,7 @@ mod tests {
             library_version: 1,
             issued_at: T_ISSUED,
             expires_at: T_EXPIRES,
+            patterns: Vec::new(),
         };
         let inner = encode_payload(&payload);
         let cose = build_sign1(inner, &max_kid, ANOMALY_LIBRARY_AAD, SEED);
@@ -850,6 +942,7 @@ mod tests {
             library_version: 1,
             issued_at: T_ISSUED,
             expires_at: T_EXPIRES,
+            patterns: Vec::new(),
         };
         let inner = encode_payload(&payload);
         let cose = build_sign1(inner, TEST_KID, ANOMALY_LIBRARY_AAD, SEED);
@@ -876,6 +969,7 @@ mod tests {
             library_version: 1,
             issued_at: T_NOW + 1,
             expires_at: T_EXPIRES,
+            patterns: Vec::new(),
         };
         let inner = encode_payload(&payload);
         let cose = build_sign1(inner, TEST_KID, ANOMALY_LIBRARY_AAD, SEED);
@@ -905,6 +999,7 @@ mod tests {
             library_version: 1,
             issued_at: T_ISSUED,
             expires_at: T_NOW - 1,
+            patterns: Vec::new(),
         };
         let inner = encode_payload(&payload);
         let cose = build_sign1(inner, TEST_KID, ANOMALY_LIBRARY_AAD, SEED);
@@ -934,6 +1029,7 @@ mod tests {
             library_version: 1,
             issued_at: T_NOW,
             expires_at: T_EXPIRES,
+            patterns: Vec::new(),
         };
         let inner = encode_payload(&payload);
         let cose = build_sign1(inner, TEST_KID, ANOMALY_LIBRARY_AAD, SEED);
@@ -956,6 +1052,7 @@ mod tests {
             library_version: 1,
             issued_at: T_ISSUED,
             expires_at: T_NOW,
+            patterns: Vec::new(),
         };
         let inner = encode_payload(&payload);
         let cose = build_sign1(inner, TEST_KID, ANOMALY_LIBRARY_AAD, SEED);
@@ -984,6 +1081,7 @@ mod tests {
             library_version: 1,
             issued_at: T_NOW + 100,
             expires_at: T_NOW - 100,
+            patterns: Vec::new(),
         };
         let inner = encode_payload(&payload);
         let cose = build_sign1(inner, TEST_KID, ANOMALY_LIBRARY_AAD, SEED);
@@ -1033,6 +1131,7 @@ mod tests {
             library_version: 1,
             issued_at: T_ISSUED,
             expires_at: T_NOW - 1,
+            patterns: Vec::new(),
         };
         let inner = encode_payload(&payload);
         let cose = build_sign1(inner, TEST_KID, ANOMALY_LIBRARY_AAD, SEED);
@@ -1064,6 +1163,7 @@ mod tests {
             library_version: 1,
             issued_at: T_ISSUED,
             expires_at: T_NOW - 1,
+            patterns: Vec::new(),
         };
         let inner = encode_payload(&payload);
         let cose = build_sign1(inner, TEST_KID, ANOMALY_LIBRARY_AAD, SEED);
@@ -1115,6 +1215,7 @@ mod tests {
             library_version: 1,
             issued_at: T_ISSUED,
             expires_at: T_EXPIRES,
+            patterns: Vec::new(),
         };
         let inner = encode_payload(&payload);
         let cose = build_sign1(inner, TEST_KID, ANOMALY_LIBRARY_AAD, SEED);
@@ -1144,6 +1245,7 @@ mod tests {
             library_version: big_version,
             issued_at: T_ISSUED,
             expires_at: T_EXPIRES,
+            patterns: Vec::new(),
         };
         let inner = encode_payload(&payload);
         let cose = build_sign1(inner, TEST_KID, ANOMALY_LIBRARY_AAD, SEED);
@@ -1181,5 +1283,381 @@ mod tests {
         )
         .unwrap();
         assert_eq!(a, b);
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // Stage-7 integration — pattern-body invariants surface
+    // through the full verifier path, not only from invariants.rs
+    // unit tests.  These tests lock the wiring: every Stage-7
+    // failure MUST reach the caller as its intended variant, with
+    // ordering determined by the call sequence in
+    // `verify_anomaly_library_signature` Step 7.  If a refactor
+    // silently reshuffles the four `check_*` calls, the adjacent-
+    // pair ordering tests below fail.
+    // ──────────────────────────────────────────────────────────
+
+    /// Build a well-formed 2-row pattern table: a 300 s `FirstMatch`
+    /// primary plus a 3 000 s (= 10× primary window)
+    /// `CumulativeOverBaseline` companion.  Used by Stage-7 happy-
+    /// path and negative tests alike — each negative test mutates
+    /// one row to inject the target fault.
+    fn well_formed_patterns() -> Vec<PatternEntry> {
+        let primary = PatternEntry {
+            pattern_id: "delete-storm".into(),
+            window_seconds: Some(300),
+            threshold: Threshold::Count(5),
+            scope: ScopePredicate::VerbResourceMandate {
+                verb: VerbPredicate::AnyDestructive,
+                resource_kind: None,
+                mandate_scope: MandateScope::default(),
+            },
+            action: Action::AutoRevoke,
+            severity: Severity::High,
+            firing_rule: FiringRule::FirstMatch,
+            firing_rule_companions: vec!["delete-slow-burn".into()],
+        };
+        let companion = PatternEntry {
+            pattern_id: "delete-slow-burn".into(),
+            window_seconds: Some(3_000),
+            threshold: Threshold::Count(20),
+            scope: ScopePredicate::VerbResourceMandate {
+                verb: VerbPredicate::AnyDestructive,
+                resource_kind: None,
+                mandate_scope: MandateScope::default(),
+            },
+            action: Action::AutoRevoke,
+            severity: Severity::Medium,
+            firing_rule: FiringRule::CumulativeOverBaseline,
+            firing_rule_companions: vec![],
+        };
+        vec![primary, companion]
+    }
+
+    /// Encode an envelope carrying an explicit `Vec<PatternEntry>`
+    /// under the happy-path kid + clock fixture.  Reuses the module-
+    /// level fixture constants so each Stage-7 test differs only in
+    /// the pattern payload.
+    fn envelope_with_patterns(patterns: Vec<PatternEntry>) -> Vec<u8> {
+        let payload = AnomalyLibraryPayload {
+            abi_version: ANOMALY_LIBRARY_ABI_VERSION,
+            signer_kid: TEST_KID.to_string(),
+            library_id: "lib::default".to_string(),
+            library_version: 1,
+            issued_at: T_ISSUED,
+            expires_at: T_EXPIRES,
+            patterns,
+        };
+        build_sign1(encode_payload(&payload), TEST_KID, ANOMALY_LIBRARY_AAD, SEED)
+    }
+
+    #[test]
+    fn happy_path_with_patterns_verifies_and_returns_populated_vec() {
+        // A well-formed library passes all four Stage-7 checks and
+        // the verified struct carries the decoded pattern table
+        // through to the caller.  The table ownership is moved (not
+        // cloned) into the verified struct — see
+        // `verify_anomaly_library_signature` Step 7 docblock.
+        let cose = envelope_with_patterns(well_formed_patterns());
+        let out = verify_anomaly_library_signature(
+            &cose,
+            &anomaly_anchor_set(),
+            ANOMALY_LIBRARY_ABI_VERSION,
+            T_NOW,
+        )
+        .expect("well-formed pattern table must verify");
+        assert_eq!(out.patterns.len(), 2);
+        assert_eq!(out.patterns[0].pattern_id, "delete-storm");
+        assert_eq!(out.patterns[1].pattern_id, "delete-slow-burn");
+    }
+
+    #[test]
+    fn session_one_envelope_decodes_with_empty_patterns() {
+        // Forward-compat lock: a Session-1-signed envelope — one
+        // that does NOT include a `patterns` field in the CBOR map
+        // at all — must still decode under the Session-2 schema via
+        // the `#[serde(default)]` attribute on
+        // `AnomalyLibraryPayload.patterns`.  Distinct from the plain
+        // `happy_envelope` test: that one carries `patterns: Vec::
+        // new()` (empty but present); this one MUST omit the field
+        // from the encoded map entirely.
+        //
+        // Regression target: if a future refactor removes
+        // `serde(default)`, this test fails with PayloadDecodeFailed.
+        #[derive(serde::Serialize)]
+        struct SessionOnePayload {
+            abi_version: u32,
+            signer_kid: String,
+            library_id: String,
+            library_version: u64,
+            issued_at: i64,
+            expires_at: i64,
+        }
+        let s1 = SessionOnePayload {
+            abi_version: ANOMALY_LIBRARY_ABI_VERSION,
+            signer_kid: TEST_KID.to_string(),
+            library_id: "lib::session1".to_string(),
+            library_version: 1,
+            issued_at: T_ISSUED,
+            expires_at: T_EXPIRES,
+        };
+        let mut inner = Vec::new();
+        ciborium::into_writer(&s1, &mut inner).expect("serialize session-1 payload");
+        let cose = build_sign1(inner, TEST_KID, ANOMALY_LIBRARY_AAD, SEED);
+
+        let out = verify_anomaly_library_signature(
+            &cose,
+            &anomaly_anchor_set(),
+            ANOMALY_LIBRARY_ABI_VERSION,
+            T_NOW,
+        )
+        .expect("Session-1 envelope (no patterns field) must verify under Session-2");
+        assert!(out.patterns.is_empty());
+        assert_eq!(out.library_id, "lib::session1");
+    }
+
+    #[test]
+    fn stage7a_duplicate_pattern_id_rejects_through_full_verifier() {
+        let mut patterns = well_formed_patterns();
+        // Clone the primary to create a pattern_id collision.
+        let dup = patterns[0].clone();
+        patterns.push(dup);
+        let cose = envelope_with_patterns(patterns);
+        let err = verify_anomaly_library_signature(
+            &cose,
+            &anomaly_anchor_set(),
+            ANOMALY_LIBRARY_ABI_VERSION,
+            T_NOW,
+        )
+        .unwrap_err();
+        match err {
+            AnomalyLibError::PatternIdDuplicate { pattern_id } => {
+                assert_eq!(pattern_id, "delete-storm");
+            }
+            other => panic!("expected PatternIdDuplicate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn stage7b_severity_action_mismatch_rejects_through_full_verifier() {
+        let mut patterns = well_formed_patterns();
+        // Primary keeps `severity = High` but switches to `Alert` —
+        // §3.5.2 forbids this pair.  Also drop the companion list
+        // to isolate the 7b fault from any accidental 7d surface.
+        patterns[0].action = Action::Alert;
+        patterns[0].firing_rule = FiringRule::CumulativeOverBaseline;
+        patterns[0].firing_rule_companions = vec![];
+        let cose = envelope_with_patterns(patterns);
+        let err = verify_anomaly_library_signature(
+            &cose,
+            &anomaly_anchor_set(),
+            ANOMALY_LIBRARY_ABI_VERSION,
+            T_NOW,
+        )
+        .unwrap_err();
+        match err {
+            AnomalyLibError::SeverityActionInconsistent {
+                pattern_id,
+                severity,
+                action,
+            } => {
+                assert_eq!(pattern_id, "delete-storm");
+                assert_eq!(severity, "high");
+                assert_eq!(action, "alert");
+            }
+            other => panic!("expected SeverityActionInconsistent, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn stage7c_unknown_verb_family_rejects_through_full_verifier() {
+        let mut patterns = well_formed_patterns();
+        // Inject an unknown family reference into the primary.
+        patterns[0].scope = ScopePredicate::VerbResourceMandate {
+            verb: VerbPredicate::Family("not-a-real-family".into()),
+            resource_kind: None,
+            mandate_scope: MandateScope::default(),
+        };
+        let cose = envelope_with_patterns(patterns);
+        let err = verify_anomaly_library_signature(
+            &cose,
+            &anomaly_anchor_set(),
+            ANOMALY_LIBRARY_ABI_VERSION,
+            T_NOW,
+        )
+        .unwrap_err();
+        match err {
+            AnomalyLibError::UnknownVerbFamily { pattern_id, family } => {
+                assert_eq!(pattern_id, "delete-storm");
+                assert_eq!(family, "not-a-real-family");
+            }
+            other => panic!("expected UnknownVerbFamily, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn stage7d_missing_companion_rejects_through_full_verifier() {
+        let mut patterns = well_formed_patterns();
+        // Drop the companions list — the short-window FirstMatch
+        // primary now has no anti-walk-under backstop.
+        patterns[0].firing_rule_companions = vec![];
+        // Drop the companion row entirely — it's orphaned now and
+        // would pass on its own anyway (cumulative, any window).
+        patterns.truncate(1);
+        let cose = envelope_with_patterns(patterns);
+        let err = verify_anomaly_library_signature(
+            &cose,
+            &anomaly_anchor_set(),
+            ANOMALY_LIBRARY_ABI_VERSION,
+            T_NOW,
+        )
+        .unwrap_err();
+        match err {
+            AnomalyLibError::FiringRuleCompanionMissing {
+                pattern_id,
+                window,
+                missing_reason,
+            } => {
+                assert_eq!(pattern_id, "delete-storm");
+                assert_eq!(window, 300);
+                assert!(matches!(
+                    missing_reason,
+                    FiringCompanionFailure::NoCompanionsDeclared
+                ));
+            }
+            other => panic!("expected FiringRuleCompanionMissing, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn check_order_7a_uniqueness_wins_over_7b_severity() {
+        // Compound violation: duplicate pattern_id AND a (High,
+        // Alert) severity-action mismatch on the same rows.  7a
+        // MUST surface first per the call order in
+        // `verify_anomaly_library_signature` Step 7.
+        let mut bad = well_formed_patterns()[0].clone();
+        bad.severity = Severity::High;
+        bad.action = Action::Alert;
+        bad.firing_rule = FiringRule::CumulativeOverBaseline; // neutralise 7d
+        bad.firing_rule_companions = vec![];
+        let dup = bad.clone();
+        let cose = envelope_with_patterns(vec![bad, dup]);
+        let err = verify_anomaly_library_signature(
+            &cose,
+            &anomaly_anchor_set(),
+            ANOMALY_LIBRARY_ABI_VERSION,
+            T_NOW,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, AnomalyLibError::PatternIdDuplicate { .. }),
+            "7a (uniqueness) MUST run before 7b (severity) — got {err:?}"
+        );
+    }
+
+    #[test]
+    fn check_order_7b_severity_wins_over_7c_family() {
+        // Compound violation: (Critical, Alert) mismatch AND an
+        // unknown family reference on the same row.  7b MUST
+        // surface before 7c.
+        let mut bad = well_formed_patterns()[0].clone();
+        bad.severity = Severity::Critical;
+        bad.action = Action::Alert;
+        bad.scope = ScopePredicate::VerbResourceMandate {
+            verb: VerbPredicate::Family("unknown-x".into()),
+            resource_kind: None,
+            mandate_scope: MandateScope::default(),
+        };
+        bad.firing_rule = FiringRule::CumulativeOverBaseline; // neutralise 7d
+        bad.firing_rule_companions = vec![];
+        let cose = envelope_with_patterns(vec![bad]);
+        let err = verify_anomaly_library_signature(
+            &cose,
+            &anomaly_anchor_set(),
+            ANOMALY_LIBRARY_ABI_VERSION,
+            T_NOW,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, AnomalyLibError::SeverityActionInconsistent { .. }),
+            "7b (severity) MUST run before 7c (family) — got {err:?}"
+        );
+    }
+
+    #[test]
+    fn check_order_7c_family_wins_over_7d_companion() {
+        // Compound violation: unknown family reference AND missing
+        // anti-walk-under companion on the same row.  Severity is
+        // (Low, Alert) so 7b does not trigger.  7c MUST surface
+        // before 7d.
+        let mut bad = well_formed_patterns()[0].clone();
+        bad.severity = Severity::Low;
+        bad.action = Action::Alert;
+        bad.scope = ScopePredicate::VerbResourceMandate {
+            verb: VerbPredicate::Family("unknown-y".into()),
+            resource_kind: None,
+            mandate_scope: MandateScope::default(),
+        };
+        bad.firing_rule = FiringRule::FirstMatch;
+        bad.firing_rule_companions = vec![]; // 7d fault
+        let cose = envelope_with_patterns(vec![bad]);
+        let err = verify_anomaly_library_signature(
+            &cose,
+            &anomaly_anchor_set(),
+            ANOMALY_LIBRARY_ABI_VERSION,
+            T_NOW,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, AnomalyLibError::UnknownVerbFamily { .. }),
+            "7c (family) MUST run before 7d (companion) — got {err:?}"
+        );
+    }
+
+    #[test]
+    fn check_order_full_chain_7a_wins_over_all_downstream_stages() {
+        // Compound 4-fault library: duplicate `pattern_id` (7a),
+        // (High, Alert) severity-action mismatch (7b), unknown verb
+        // family (7c), AND FirstMatch + short window + no companions
+        // (7d) all triggered simultaneously on the same rows.
+        //
+        // The adjacent pairwise tests above
+        // (check_order_7a_wins_over_7b, …_7b_wins_over_7c,
+        // …_7c_wins_over_7d) only lock each neighbouring transition.
+        // A regression that re-ordered 7a and 7c (but left 7a>7b and
+        // 7c>7d intact) would still pass the three pairwise tests
+        // while silently inverting the full chain.  Locking the
+        // 4-fault compound forces the `Step 7` call order in
+        // `verify_anomaly_library_signature` to remain 7a → 7b → 7c
+        // → 7d, not just adjacent-consistent.
+        //
+        // 7a MUST surface because the uniqueness check runs first.
+        let mut bad = well_formed_patterns()[0].clone();
+        bad.severity = Severity::High; // 7b upper half
+        bad.action = Action::Alert; // 7b lower half
+        bad.scope = ScopePredicate::VerbResourceMandate {
+            verb: VerbPredicate::Family("chain-proof-unknown".into()), // 7c
+            resource_kind: None,
+            mandate_scope: MandateScope::default(),
+        };
+        bad.firing_rule = FiringRule::FirstMatch; // 7d upper half
+        bad.window_seconds = Some(300); // short window → needs companion
+        bad.firing_rule_companions = vec![]; // 7d lower half
+        // Duplicate the row to synthesise 7a on top of the other
+        // three faults.  Both rows carry identical `pattern_id`
+        // "delete-storm", so uniqueness fails on the second insert.
+        let dup = bad.clone();
+        let cose = envelope_with_patterns(vec![bad, dup]);
+        let err = verify_anomaly_library_signature(
+            &cose,
+            &anomaly_anchor_set(),
+            ANOMALY_LIBRARY_ABI_VERSION,
+            T_NOW,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, AnomalyLibError::PatternIdDuplicate { .. }),
+            "full chain 7a→7b→7c→7d: 7a MUST surface when all four \
+             faults are present — got {err:?}"
+        );
     }
 }

@@ -52,6 +52,14 @@ ciborium = "0.2"
 # of uints — wrong shape for our 32-byte hash payload).
 serde_bytes = "0.11"
 zeroize = "1.8"
+# `sha2` ships both as a runtime dep (classifier WASM-hash verifier,
+# attestation PCR fingerprinting) and as a dev-dep (anomaly byte-
+# equality tripwire in `tests/minimum_library.rs`, vector-signer
+# conformance-vector hashing).  Promoted to a workspace dep so every
+# consumer resolves the same version — two copies of the hash crate
+# in the dep graph would hash-compare byte-equal but produce a
+# double-inclusion lockfile-resolver surprise at version-bump time.
+sha2 = "0.10"
 
 [profile.release]
 lto = "thin"

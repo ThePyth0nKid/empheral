@@ -141,6 +141,122 @@ pub enum AnomalyLibError {
         "anomaly-library has expired: expires_at={expires_at}, now={now} (unix seconds)"
     )]
     Expired { expires_at: i64, now: i64 },
+
+    // ──────────────────────────────────────────────────────────────
+    // Stage 7 — pattern-body invariant failures (Session 2+).
+    //
+    // At this point the crypto signature has already succeeded and
+    // the library-level metadata has passed Stages 1-6, so role
+    // leakage is no longer a concern.  These variants surface
+    // structural contradictions inside the pattern table that the
+    // signer MUST fix before a retry.
+    // ──────────────────────────────────────────────────────────────
+
+    /// Two or more pattern entries share the same `pattern_id`.  Per
+    /// §4.2.1 R7.C6 the pattern table has SET semantics — dispatch
+    /// keyed by `pattern_id` must be unambiguous, so duplicates
+    /// reject at verification time rather than at first match.  The
+    /// duplicate id is sanitised via [`sanitize_log_string`] before
+    /// storage, so adversarial CBOR cannot inject control characters
+    /// through this path.
+    #[error("anomaly library contains duplicate pattern_id `{pattern_id}`")]
+    PatternIdDuplicate { pattern_id: String },
+
+    /// A pattern's `severity` implies auto-revoke per §3.5.2 but its
+    /// declared `action` does not.  Specifically: `severity` ∈
+    /// {`high`, `critical`} MUST map to `action = auto-revoke`;
+    /// `severity` = `low` or `medium` MAY map to any action.  Both
+    /// fields are enum discriminants, so they are rendered as
+    /// `&'static str` — no sanitisation required.
+    #[error(
+        "pattern `{pattern_id}` declares severity `{severity}` but action `{action}` \
+         (severity high/critical MUST imply action auto-revoke per §3.5.2)"
+    )]
+    SeverityActionInconsistent {
+        pattern_id: String,
+        severity: &'static str,
+        action: &'static str,
+    },
+
+    /// A pattern's scope predicate references a verb-family name that
+    /// is not in the hardcoded family table (see
+    /// `crate::families`).  Per §3.5.3 verb families are part of the
+    /// validator's trust surface and cannot be operator-defined:
+    /// allowing an envelope to rename `iam-attach` to `[noop]` would
+    /// defeat the anti-walk-under invariant.  Both `pattern_id` and
+    /// `family` are sanitised via [`sanitize_log_string`].
+    #[error("pattern `{pattern_id}` references unknown verb family `{family}`")]
+    UnknownVerbFamily { pattern_id: String, family: String },
+
+    /// A pattern with `firing_rule = FirstMatch` and a window short
+    /// enough to qualify as "ephemeral" (≤
+    /// `crate::invariants::ANTI_WALK_UNDER_WINDOW_SECONDS`) must
+    /// declare one or more companion patterns with firing rule
+    /// `CumulativeOverBaseline` and a window at least
+    /// `ANTI_WALK_UNDER_COMPANION_MULTIPLIER × window_seconds`.  This
+    /// is the §3.5.3 anti-walk-under invariant: a narrow first-match
+    /// window alone lets a patient adversary pace their actions to
+    /// stay under it indefinitely.  `missing_reason` pinpoints which
+    /// sub-check failed so the signer can fix the table without
+    /// trial and error.
+    #[error(
+        "pattern `{pattern_id}` has firing_rule=first-match with window {window}s \
+         (≤ anti-walk-under threshold) but {missing_reason}"
+    )]
+    FiringRuleCompanionMissing {
+        pattern_id: String,
+        window: u32,
+        missing_reason: FiringCompanionFailure,
+    },
+}
+
+/// Sub-enum surfacing the specific anti-walk-under companion check
+/// that rejected a pattern.  Carried inside
+/// [`AnomalyLibError::FiringRuleCompanionMissing`] so the failure
+/// message points the signer at the exact fix — "declare at least
+/// one companion", "rename the referenced companion", "widen the
+/// companion window" — without requiring the signer to re-derive
+/// the §3.5.3 rules from scratch.
+///
+/// All string fields are sanitised at construction time so Display
+/// cannot re-leak control characters.
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FiringCompanionFailure {
+    /// `firing_rule_companions` is empty — the pattern declares no
+    /// long-window backstop at all.
+    #[error("no firing_rule_companions are declared")]
+    NoCompanionsDeclared,
+
+    /// A named companion references a `pattern_id` that does not
+    /// exist in this library.  Name is sanitised via
+    /// [`sanitize_log_string`].
+    #[error("companion `{name}` is not a known pattern_id in this library")]
+    CompanionNotFound { name: String },
+
+    /// The referenced companion exists but its `firing_rule` is not
+    /// `CumulativeOverBaseline`.  Per §3.5.3 only a cumulative-over-
+    /// baseline companion closes the walk-under gap — a companion
+    /// that is itself a FirstMatch provides no long-window backstop.
+    #[error(
+        "companion `{name}` exists but its firing_rule is not CumulativeOverBaseline"
+    )]
+    CompanionNotCumulative { name: String },
+
+    /// The companion is cumulative but its `window_seconds` is
+    /// shorter than the required multiplier of the first-match
+    /// window.  Carries both values so the signer knows exactly how
+    /// much to widen.
+    #[error(
+        "companion `{name}` window {companion_window}s is shorter than required \
+         minimum {required_minimum}s ({multiplier}× the first-match window)",
+        multiplier = crate::invariants::ANTI_WALK_UNDER_COMPANION_MULTIPLIER
+    )]
+    CompanionWindowTooShort {
+        name: String,
+        companion_window: u32,
+        required_minimum: u32,
+    },
 }
 
 #[cfg(test)]
@@ -231,5 +347,88 @@ mod tests {
         assert!(!display.contains('\r'));
         assert!(display.contains("K_out?INJ"));
         assert!(display.contains("K_in?INJ"));
+    }
+
+    #[test]
+    fn pattern_id_duplicate_display_stays_single_line() {
+        let err = AnomalyLibError::PatternIdDuplicate {
+            pattern_id: sanitize_log_string("pat::dup\nINJ"),
+        };
+        let display = format!("{err}");
+        assert!(!display.contains('\n'));
+        assert!(display.contains("pat::dup?INJ"));
+    }
+
+    #[test]
+    fn severity_action_inconsistent_display_uses_static_discriminants() {
+        let err = AnomalyLibError::SeverityActionInconsistent {
+            pattern_id: sanitize_log_string("pat::ok"),
+            severity: "critical",
+            action: "require-human-approval",
+        };
+        let display = format!("{err}");
+        assert!(display.contains("severity `critical`"));
+        assert!(display.contains("action `require-human-approval`"));
+        assert!(display.contains("§3.5.2"));
+    }
+
+    #[test]
+    fn unknown_verb_family_display_sanitises_both_fields() {
+        let err = AnomalyLibError::UnknownVerbFamily {
+            pattern_id: sanitize_log_string("pat::x\tINJ"),
+            family: sanitize_log_string("not-a-family\x00INJ"),
+        };
+        let display = format!("{err}");
+        assert!(!display.contains('\n'));
+        assert!(!display.contains('\t'));
+        assert!(!display.contains('\0'));
+        assert!(display.contains("pat::x?INJ"));
+        assert!(display.contains("not-a-family?INJ"));
+    }
+
+    #[test]
+    fn firing_companion_failure_variants_render_distinctly() {
+        let none = FiringCompanionFailure::NoCompanionsDeclared;
+        assert!(format!("{none}").contains("no firing_rule_companions"));
+
+        let missing = FiringCompanionFailure::CompanionNotFound {
+            name: sanitize_log_string("pat::missing\nINJ"),
+        };
+        let missing_d = format!("{missing}");
+        assert!(!missing_d.contains('\n'));
+        assert!(missing_d.contains("pat::missing?INJ"));
+
+        let not_cum = FiringCompanionFailure::CompanionNotCumulative {
+            name: sanitize_log_string("pat::wrong-rule"),
+        };
+        assert!(format!("{not_cum}").contains("CumulativeOverBaseline"));
+
+        let too_short = FiringCompanionFailure::CompanionWindowTooShort {
+            name: sanitize_log_string("pat::short"),
+            companion_window: 1800,
+            required_minimum: 18_000,
+        };
+        let too_short_d = format!("{too_short}");
+        assert!(too_short_d.contains("1800s"));
+        assert!(too_short_d.contains("18000s"));
+        // The multiplier is injected from the invariants module const
+        // so the message stays in sync if the constant moves.
+        assert!(too_short_d.contains(&format!(
+            "{}×",
+            crate::invariants::ANTI_WALK_UNDER_COMPANION_MULTIPLIER
+        )));
+    }
+
+    #[test]
+    fn firing_rule_companion_missing_nests_sub_variant_cleanly() {
+        let err = AnomalyLibError::FiringRuleCompanionMissing {
+            pattern_id: sanitize_log_string("pat::ephemeral"),
+            window: 300,
+            missing_reason: FiringCompanionFailure::NoCompanionsDeclared,
+        };
+        let display = format!("{err}");
+        assert!(display.contains("pat::ephemeral"));
+        assert!(display.contains("300s"));
+        assert!(display.contains("no firing_rule_companions"));
     }
 }

@@ -25,11 +25,15 @@
 //!   PRESENT — proving the check is not trivially empty.
 //!
 //! If you add new feature-gated items to any of the four crates,
-//! extend the assertions in `tests/no_leak.rs` to include them.  In
-//! particular, Phase C.4 Session 2 will introduce a `test_fixtures`
-//! module in `ephemeral-anomaly` whose signing helpers (e.g.
-//! `sign_anomaly_library_envelope`, `fixture_anomaly_signing_key`)
-//! MUST be added to the forbidden list at that time.
+//! extend the assertions in `tests/no_leak.rs` to include them.
+//!
+//! Phase C.4 Session 2 populated the anomaly forbidden list with
+//! `fixture_anomaly_signing_key`, `fixture_anomaly_verifying_key`,
+//! `sign_anomaly_library_envelope`, `shared_anomaly_artifacts`,
+//! `cbor_encode_anomaly_payload`, and `minimum_anomaly_library`.
+//! Any later addition to `ephemeral-anomaly::test_fixtures` that
+//! is not strictly a trivial `PatternEntry` constructor should
+//! extend that list to preserve the coverage floor.
 
 use std::hint::black_box;
 

@@ -505,7 +505,9 @@ dependencies = [
  "coset",
  "ed25519-dalek",
  "ephemeral-crypto",
+ "hex",
  "serde",
+ "sha2",
  "thiserror",
 ]
 

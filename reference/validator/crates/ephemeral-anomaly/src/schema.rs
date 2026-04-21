@@ -1,17 +1,25 @@
 //! CBOR schema for the `AnomalyPatternLibrary` envelope payload.
 //!
-//! # Session 1 subset
+//! # Session 2 slice
 //!
-//! This initial slice carries only the envelope header fields — enough
-//! to authenticate the library and its validity window, not yet its
-//! body of patterns.  The pattern list lands in Session 2+; forward
-//! compatibility is preserved because ciborium's deserializer silently
-//! ignores unknown fields on decode, so a Session-2-signed envelope
-//! carrying a `patterns` array decodes cleanly in Session-1 code (the
-//! `patterns` array is simply dropped).  The outer Ed25519 signature
-//! commits to the full CBOR bytes, so forward-compat is structural:
-//! extending the schema does not break signatures on already-signed
-//! envelopes that only use the Session-1 subset.
+//! This slice carries the envelope header fields AND the pattern
+//! body — enough to authenticate the library, its validity window,
+//! and the structurally-validated pattern table.  Session 2+
+//! forward-compat is preserved at two layers:
+//!
+//! 1. Ciborium's deserializer silently ignores unknown top-level
+//!    fields (future Session 3+ additions decode cleanly here).
+//! 2. The `patterns` field carries `#[serde(default)]`, so a
+//!    Session-1-signed envelope (which did NOT declare a `patterns`
+//!    field at all) decodes to an empty `Vec<PatternEntry>` — the
+//!    forward-compat regression test
+//!    `session_one_envelope_decodes_with_empty_patterns` pins this
+//!    invariant.
+//!
+//! The outer Ed25519 signature commits to the full CBOR bytes, so
+//! forward-compat is structural: extending the schema does not
+//! break signatures on already-signed envelopes that only use the
+//! Session-1 subset.
 //!
 //! # Field validation
 //!
@@ -98,4 +106,20 @@ pub struct AnomalyLibraryPayload {
     pub issued_at: i64,
     /// End of validity window (unix epoch seconds).
     pub expires_at: i64,
+    /// SET-typed pattern table (§4.2.1 R7.C6 keyed by `pattern_id`).
+    ///
+    /// `#[serde(default)]` is load-bearing for forward-compat with
+    /// Session-1-signed envelopes that did not carry this field at
+    /// all: those decode to an empty `Vec`, preserving the
+    /// semantic that a Session-1 library has no patterns under
+    /// Session-2's lens (the verifier still accepts them; Stage 7
+    /// invariant checks all trivially pass on the empty case).
+    ///
+    /// SET semantics are NOT applied at the schema layer — the
+    /// field is `Vec` to preserve signer-declared order for
+    /// deterministic error reporting.  Uniqueness is enforced by
+    /// [`crate::invariants::check_pattern_id_uniqueness`] at
+    /// Stage 7a.
+    #[serde(default)]
+    pub patterns: Vec<crate::patterns::PatternEntry>,
 }

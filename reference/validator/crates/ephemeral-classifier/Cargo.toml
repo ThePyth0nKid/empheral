@@ -34,7 +34,7 @@ test_fixtures = ["dep:wat", "dep:ed25519-dalek", "dep:coset"]
 # `default-features = false` drops the `wat` dev-capability from the
 # production build; WAT compilation stays a test-only dev-dependency.
 wasmi = { version = "=0.47.2", default-features = false, features = ["std"] }
-sha2 = "0.10"
+sha2 = { workspace = true }
 ciborium = { workspace = true }
 serde = { workspace = true }
 serde_bytes = { workspace = true }

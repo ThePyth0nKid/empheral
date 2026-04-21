@@ -37,15 +37,29 @@
 //! a new AAD so v1 and v2 envelopes cannot be replayed interchangeably
 //! even if both share the same signer key.
 //!
-//! # Scope of Session 1
+//! # Scope of Session 2
 //!
-//! This initial slice lands the envelope + 6-step verification
-//! pipeline only: outer COSE verify, CBOR decode, shape check, ABI
-//! pinning, signer-kid consistency, and time-bounds.  The pattern body
-//! (Session 2+) is an opaque forward-compatibility zone: unknown
-//! payload fields are silently ignored by serde/ciborium, so a
-//! Session-2-signed envelope decodes cleanly in Session-1 code (with
-//! patterns dropped).
+//! Extends the Session-1 envelope + 6-step verifier with Stage 7 —
+//! pattern-body invariant validation.  After Session 2 a verified
+//! library carries a decoded, structurally-validated
+//! `Vec<PatternEntry>`; Session 3+ can rely on the pattern table
+//! being unique, severity-action consistent, verb-family resolved,
+//! and companion-pair sound per §3.5.3.
+//!
+//! Session-1-signed envelopes (no `patterns` field) continue to
+//! verify successfully — they decode to `patterns = Vec::new()` via
+//! the `#[serde(default)]` attribute on
+//! [`schema::AnomalyLibraryPayload::patterns`], and all four Stage-7
+//! invariant checks trivially pass on an empty slice.  This
+//! forward-compat is pinned by the regression test
+//! `session_one_envelope_decodes_with_empty_patterns`.
+//!
+//! # Scope-out: stateful checks (Session 5+)
+//!
+//! This crate remains **stateless**.  Monotonic `library_version`
+//! enforcement, per-pattern high-water-mark tracking, and the
+//! `PatternRelaxationException` flow (§3.5.1) require state across
+//! library verifications and are deferred to Session 5.
 
 #![forbid(unsafe_code)]
 #![warn(missing_debug_implementations)]
@@ -68,11 +82,20 @@
 pub const ANOMALY_LIBRARY_ABI_VERSION: u32 = 1;
 
 pub mod errors;
+pub mod families;
+pub mod invariants;
+pub mod patterns;
 pub mod schema;
+pub mod scope;
 pub mod signature;
 
-pub use errors::AnomalyLibError;
+#[cfg(feature = "test_fixtures")]
+pub mod test_fixtures;
+
+pub use errors::{AnomalyLibError, FiringCompanionFailure};
+pub use patterns::{Action, FiringRule, PatternEntry, Severity, Threshold};
 pub use schema::AnomalyLibraryPayload;
+pub use scope::{MandateScope, ScopePredicate, VerbPredicate};
 pub use signature::{
     verify_anomaly_library_signature, VerifiedAnomalyLibrarySignature, ANOMALY_LIBRARY_AAD,
     MAX_ANOMALY_LIBRARY_BYTES,

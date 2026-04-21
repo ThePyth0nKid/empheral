@@ -14,13 +14,22 @@
 //! | `sign_classifier_envelope`      | ephemeral-classifier  | C.3-C       |
 //! | `fixture_signing_key`           | ephemeral-classifier  | C.3-C       |
 //! | `build_classifier_wat`          | ephemeral-classifier  | C.3-C       |
+//! | `cbor_encode_payload`           | ephemeral-classifier  | C.3-C Sess2 |
+//! | `sign_envelope_raw`             | ephemeral-classifier  | C.3-C Sess2 |
+//! | `fixture_anomaly_signing_key`   | ephemeral-anomaly     | C.4 Sess2   |
+//! | `fixture_anomaly_verifying_key` | ephemeral-anomaly     | C.4 Sess2   |
+//! | `sign_anomaly_library_envelope` | ephemeral-anomaly     | C.4 Sess2   |
+//! | `shared_anomaly_artifacts`      | ephemeral-anomaly     | C.4 Sess2   |
+//! | `cbor_encode_anomaly_payload`   | ephemeral-anomaly     | C.4 Sess2   |
+//! | `minimum_anomaly_library`       | ephemeral-anomaly     | C.4 Sess2   |
 //!
-//! Phase C.4 Session 1 registers `ephemeral-anomaly` as WATCHED so a
-//! future Session 2 addition of a `test_fixtures` module cannot land
-//! symbols into a production rlib without this test failing.  The
-//! forbidden list stays unchanged for Session 1 (no anomaly-side
-//! fixture symbols exist yet); when Session 2 introduces the fixture
-//! helpers, extend the list below at that point.
+//! Phase C.4 Session 1 registered `ephemeral-anomaly` as WATCHED in
+//! anticipation of Session 2's `test_fixtures` module.  Session 2
+//! populated the forbidden list above with the six anomaly-side
+//! fixture primitives: their names must stay absent from the
+//! `default-features = false` anomaly rlib.  The
+//! `verify_anomaly_library_signature` positive control is retained
+//! so the negative checks are not trivially empty.
 //!
 //! Why a rlib, not a final binary:
 //!
@@ -228,16 +237,50 @@ fn test_fixtures_symbols_do_not_leak_into_prod_rlibs() {
         // MUST NOT appear in a `default-features = false` build.
         "cbor_encode_payload",
         "sign_envelope_raw",
-        // Phase C.4 Session 2 — EXTENSION POINT.  When ephemeral-anomaly
-        // gains a `test_fixtures` module (likely with symbols such as
-        // `sign_anomaly_library_envelope`, `fixture_anomaly_signing_key`,
-        // `build_anomaly_library_payload`), add them here so the probe-
-        // profile rlib is scanned for them.  Do NOT leave this as a
-        // pure comment: once the Session-2 signing helpers land, the
-        // forbidden entries MUST be present in the same PR that
-        // introduces them.  See module-level doc above for the
-        // watched-vs-forbidden-list design rationale.
-        // TODO(C.4 Session 2): extend with anomaly fixture symbols.
+        // Phase C.4 Session 2 — ephemeral-anomaly `test_fixtures`
+        // module.  Any of these substrings appearing in a
+        // `default-features = false` rlib means the feature gate on
+        // `pub mod test_fixtures;` in `crates/ephemeral-anomaly/src/
+        // lib.rs` is broken OR an optional dep (ed25519-dalek, coset)
+        // leaked past its `test_fixtures`-only activation in
+        // `crates/ephemeral-anomaly/Cargo.toml`.  Choice of substrings:
+        //
+        // - `fixture_anomaly_signing_key` covers the Ed25519 signer
+        //   derivation entry point.
+        // - `fixture_anomaly_verifying_key` covers both the `VerifyingKey`
+        //   accessor and its `_bytes` sibling via substring.
+        // - `sign_anomaly_library_envelope` covers both the high-level
+        //   signer and its `_raw` lower-level sibling via substring.
+        // - `shared_anomaly_artifacts` covers the OnceLock-backed pool.
+        // - `cbor_encode_anomaly_payload` covers the exposed CBOR
+        //   encoder primitive (test consumers use it to craft tampered
+        //   inner-payload bytes; prod must never emit CBOR).
+        // - `minimum_anomaly_library` covers both `_payload` and
+        //   `_patterns` assembler helpers via substring.
+        //
+        // Pattern-builder functions (`delete_storm_pattern`, …) are
+        // INTENTIONALLY omitted: they construct `PatternEntry` values
+        // (a public type) and are low-risk even if leaked, while
+        // listing all 15 would noise-up the forbidden set.  The six
+        // signing / payload / pool primitives above are the minimum
+        // set that makes it impossible to USE the fixture pipeline
+        // from a default-features consumer.
+        "fixture_anomaly_signing_key",
+        "fixture_anomaly_verifying_key",
+        "sign_anomaly_library_envelope",
+        "shared_anomaly_artifacts",
+        "cbor_encode_anomaly_payload",
+        "minimum_anomaly_library",
+        // Sentinel from the pattern-builder family (15 builders, not
+        // listed exhaustively — see the commentary above).  This one
+        // string suffices: if ANY `#[cfg(feature = "test_fixtures")]`
+        // gate on the whole pattern-builder block ever breaks, this
+        // name WILL leak, and we hear about it without polluting the
+        // forbidden list with 14 other `_pattern` variants.  Chosen
+        // over its siblings because the name — `delete_storm_pattern`
+        // — is sufficiently unique that a substring hit cannot
+        // collide with unrelated code.
+        "delete_storm_pattern",
     ];
     // Positive control per rlib: at least one unconditionally public,
     // non-generic symbol that MUST be monomorphized into the rlib. If

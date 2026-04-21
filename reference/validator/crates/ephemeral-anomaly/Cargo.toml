@@ -44,3 +44,9 @@ coset = { workspace = true, optional = true }
 # do not opt into `test_fixtures`.
 ed25519-dalek = { workspace = true }
 coset = { workspace = true }
+# Byte-equality tripwire in `tests/minimum_library.rs` hashes the
+# MINIMUM-library envelope with SHA-256 and pins the hex digest.  Stays
+# a dev-dep: production code never hashes fixtures.  Routed through the
+# workspace dep so classifier and anomaly share one resolver node.
+sha2 = { workspace = true }
+hex = { workspace = true }
