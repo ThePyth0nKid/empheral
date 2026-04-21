@@ -29,7 +29,7 @@ use crate::alg::Alg;
 use crate::anchors::{AnchorRole, TrustAnchorSet};
 use crate::cose::{extract_alg_label, extract_kid, parse_cose_sign1};
 use crate::error::{CoseError, Ed25519Source};
-use crate::size_guard::size_depth_check;
+use crate::size_guard::{size_depth_check_with_cap, MAX_COSE_BYTES};
 
 /// The verified outcome of a COSE_Sign1 envelope: kid, declared alg,
 /// and the inner `payload` bytes (opaque to this crate — downstream
@@ -61,7 +61,31 @@ pub fn verify_cose_sign1(
     aad: &[u8],
     expected_role: AnchorRole,
 ) -> Result<VerifiedPayload, CoseError> {
-    size_depth_check(cose_bytes)?;
+    verify_cose_sign1_with_cap(cose_bytes, anchors, aad, expected_role, MAX_COSE_BYTES)
+}
+
+/// Role-aware COSE_Sign1 verification with an explicit byte cap.
+///
+/// Identical pipeline to [`verify_cose_sign1`]; the only difference is
+/// that the caller supplies the maximum envelope size.  Phase C.4 uses
+/// this path so the anomaly-library envelope can carry a full pattern
+/// set (up to 128 KiB) while the classic Tariff / classifier /
+/// delegation envelopes continue to enforce the tighter default
+/// [`MAX_COSE_BYTES`] (64 KiB).
+///
+/// The caller is expected to pick a cap no smaller than their smallest
+/// legitimate envelope and no larger than the byte budget they can
+/// afford to hand to the CBOR parser.  The depth cap is fixed at
+/// [`crate::MAX_CBOR_DEPTH`] regardless of the byte cap: nesting depth
+/// is structural and does not grow with payload size.
+pub fn verify_cose_sign1_with_cap(
+    cose_bytes: &[u8],
+    anchors: &TrustAnchorSet,
+    aad: &[u8],
+    expected_role: AnchorRole,
+    max_bytes: usize,
+) -> Result<VerifiedPayload, CoseError> {
+    size_depth_check_with_cap(cose_bytes, max_bytes)?;
     let sign1 = parse_cose_sign1(cose_bytes)?;
 
     let alg_label = extract_alg_label(&sign1)?;

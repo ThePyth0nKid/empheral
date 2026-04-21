@@ -1,0 +1,46 @@
+[package]
+name = "ephemeral-anomaly"
+description = "EPHEMERAL Anomaly Pattern Library — signed COSE_Sign1 envelope verification (Phase C.4, §3.5.1 / R8.A1)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# `test_fixtures` gates the `src/test_fixtures.rs` module (added in
+# Session 2+): canned library payloads and a fixed-seed signing helper
+# used by downstream dev-deps.  Intentionally analog to
+# `ephemeral-classifier`'s feature of the same name.  MUST NOT appear
+# in a production dependency spec; the `ephemeral-prod-symbol-probe`
+# rlib-scan invariant fails if the Session-2 fixture symbols land in a
+# build that did not opt in.
+test_fixtures = ["dep:ed25519-dalek", "dep:coset"]
+
+[dependencies]
+# Cross-crate: anomaly verification layers on top of the Ed25519 /
+# COSE_Sign1 primitive exposed by ephemeral-crypto.  One-way edge:
+# ephemeral-anomaly depends on ephemeral-crypto, never the reverse.
+ephemeral-crypto = { path = "../ephemeral-crypto" }
+
+ciborium = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+# Optional deps activated only by `test_fixtures`.  Kept distinct from
+# [dev-dependencies]: dev-deps are crate-private (used only by this
+# crate's own #[cfg(test)] code), whereas an optional dep with a
+# matching feature is reachable when a *downstream* crate opts in.
+ed25519-dalek = { workspace = true, optional = true }
+coset = { workspace = true, optional = true }
+
+[dev-dependencies]
+# Dev-only Ed25519 sign path for this crate's inline signature-
+# verification tests.  Production code never signs — only verifies —
+# so these stay out of the release dependency graph for consumers who
+# do not opt into `test_fixtures`.
+ed25519-dalek = { workspace = true }
+coset = { workspace = true }

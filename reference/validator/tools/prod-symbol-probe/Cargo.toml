@@ -30,6 +30,18 @@ ephemeral-core = { path = "../../crates/ephemeral-core", default-features = fals
 # `test-fixtures` leak check, applied at the classifier layer.  Do NOT
 # add `features = ["test_fixtures"]`.
 ephemeral-classifier = { path = "../../crates/ephemeral-classifier", default-features = false }
+# Phase C.4 Session 1 extension: the anomaly-library crate declares a
+# `test_fixtures` feature gate (reserved for Session 2+ signing
+# helpers).  Linking its rlib here under `default-features = false`
+# and NO feature opt-in lets `no_leak.rs` scan it for Session-2
+# fixture symbols once they exist.  Do NOT add
+# `features = ["test_fixtures"]`.
+ephemeral-anomaly = { path = "../../crates/ephemeral-anomaly", default-features = false }
+# Required as a direct dep for the anomaly-probe type signature below
+# (`TrustAnchorSet` is argument-position for `verify_anomaly_library_signature`).
+# Has no test-only features in its production API so `default-features = false`
+# is redundant here; kept explicit to match the probe's defensive posture.
+ephemeral-crypto = { path = "../../crates/ephemeral-crypto", default-features = false }
 
 [dev-dependencies]
 # `object` parses the symbol tables of PE/ELF/Mach-O binaries. We need

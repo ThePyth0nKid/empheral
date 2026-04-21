@@ -1,18 +1,26 @@
 //! Task D-2 local guard — assert that `ephemeral-core`,
-//! `ephemeral-attestation`, and `ephemeral-classifier` built without
-//! their respective `test-fixtures` / `test_fixtures` features do NOT
-//! leak any of the test-only surfaces into the compiled library:
+//! `ephemeral-attestation`, `ephemeral-classifier`, and
+//! `ephemeral-anomaly` built without their respective
+//! `test-fixtures` / `test_fixtures` features do NOT leak any of the
+//! test-only surfaces into the compiled library:
 //!
-//! | Surface                         | Crate                 | Phase |
-//! |---------------------------------|-----------------------|-------|
-//! | `insert_trusted_der_for_test`   | ephemeral-attestation | C.2   |
-//! | `classify_live_nitro`           | ephemeral-core        | C.2   |
-//! | `insert_trusted_key_for_test`   | ephemeral-attestation | C.2.5 |
-//! | `classify_live_rekor`           | ephemeral-core        | C.2.5 |
-//! | `shared_wasm_artifacts`         | ephemeral-classifier  | C.3-C |
-//! | `sign_classifier_envelope`      | ephemeral-classifier  | C.3-C |
-//! | `fixture_signing_key`           | ephemeral-classifier  | C.3-C |
-//! | `build_classifier_wat`          | ephemeral-classifier  | C.3-C |
+//! | Surface                         | Crate                 | Phase       |
+//! |---------------------------------|-----------------------|-------------|
+//! | `insert_trusted_der_for_test`   | ephemeral-attestation | C.2         |
+//! | `classify_live_nitro`           | ephemeral-core        | C.2         |
+//! | `insert_trusted_key_for_test`   | ephemeral-attestation | C.2.5       |
+//! | `classify_live_rekor`           | ephemeral-core        | C.2.5       |
+//! | `shared_wasm_artifacts`         | ephemeral-classifier  | C.3-C       |
+//! | `sign_classifier_envelope`      | ephemeral-classifier  | C.3-C       |
+//! | `fixture_signing_key`           | ephemeral-classifier  | C.3-C       |
+//! | `build_classifier_wat`          | ephemeral-classifier  | C.3-C       |
+//!
+//! Phase C.4 Session 1 registers `ephemeral-anomaly` as WATCHED so a
+//! future Session 2 addition of a `test_fixtures` module cannot land
+//! symbols into a production rlib without this test failing.  The
+//! forbidden list stays unchanged for Session 1 (no anomaly-side
+//! fixture symbols exist yet); when Session 2 introduces the fixture
+//! helpers, extend the list below at that point.
 //!
 //! Why a rlib, not a final binary:
 //!
@@ -71,6 +79,7 @@ fn build_and_locate_relevant_rlibs() -> Vec<PathBuf> {
         "ephemeral_core",
         "ephemeral_attestation",
         "ephemeral_classifier",
+        "ephemeral_anomaly",
     ];
 
     let output = Command::new(cargo())
@@ -219,6 +228,16 @@ fn test_fixtures_symbols_do_not_leak_into_prod_rlibs() {
         // MUST NOT appear in a `default-features = false` build.
         "cbor_encode_payload",
         "sign_envelope_raw",
+        // Phase C.4 Session 2 — EXTENSION POINT.  When ephemeral-anomaly
+        // gains a `test_fixtures` module (likely with symbols such as
+        // `sign_anomaly_library_envelope`, `fixture_anomaly_signing_key`,
+        // `build_anomaly_library_payload`), add them here so the probe-
+        // profile rlib is scanned for them.  Do NOT leave this as a
+        // pure comment: once the Session-2 signing helpers land, the
+        // forbidden entries MUST be present in the same PR that
+        // introduces them.  See module-level doc above for the
+        // watched-vs-forbidden-list design rationale.
+        // TODO(C.4 Session 2): extend with anomaly fixture symbols.
     ];
     // Positive control per rlib: at least one unconditionally public,
     // non-generic symbol that MUST be monomorphized into the rlib. If
@@ -234,6 +253,13 @@ fn test_fixtures_symbols_do_not_leak_into_prod_rlibs() {
         // it through `black_box` in `main.rs`, guaranteeing it survives
         // dead-code elimination under the `symbol-probe` profile.
         ("ephemeral_classifier", "verify_classifier_hash"),
+        // `verify_anomaly_library_signature` is unconditionally public
+        // (no feature gate, no generics); the probe binary references
+        // it through `black_box` in `main.rs`.  Establishing this
+        // positive control now guarantees that the Session-2 extensions
+        // of the forbidden list below will land on a rlib that actually
+        // contains the anomaly crate's compiled code.
+        ("ephemeral_anomaly", "verify_anomaly_library_signature"),
     ];
 
     for rlib in &rlibs {

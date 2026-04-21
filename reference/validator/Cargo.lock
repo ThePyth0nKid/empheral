@@ -498,6 +498,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ephemeral-anomaly"
+version = "0.1.0"
+dependencies = [
+ "ciborium",
+ "coset",
+ "ed25519-dalek",
+ "ephemeral-crypto",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
 name = "ephemeral-attestation"
 version = "0.1.0"
 dependencies = [
@@ -598,8 +610,10 @@ dependencies = [
 name = "ephemeral-prod-symbol-probe"
 version = "0.1.0"
 dependencies = [
+ "ephemeral-anomaly",
  "ephemeral-classifier",
  "ephemeral-core",
+ "ephemeral-crypto",
  "object",
  "serde_json",
 ]

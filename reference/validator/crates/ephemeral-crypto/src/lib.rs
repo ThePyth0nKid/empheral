@@ -36,5 +36,5 @@ pub use alg::{Alg, COSE_ALG_EDDSA};
 pub use anchors::{AnchorRole, TrustAnchor, TrustAnchorSet};
 pub use chain::{verify_chain_link, MAX_CHAIN_DEPTH};
 pub use error::CoseError;
-pub use size_guard::{MAX_CBOR_DEPTH, MAX_COSE_BYTES};
-pub use verify::{verify_cose_sign1, VerifiedPayload};
+pub use size_guard::{size_depth_check, size_depth_check_with_cap, MAX_CBOR_DEPTH, MAX_COSE_BYTES};
+pub use verify::{verify_cose_sign1, verify_cose_sign1_with_cap, VerifiedPayload};

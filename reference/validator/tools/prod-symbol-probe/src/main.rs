@@ -2,11 +2,12 @@
 //!
 //! This binary is built by CI (`feature-leak-guard` job) and by the
 //! local integration test `tests/no_leak.rs`. Its sole job is to link
-//! against `ephemeral-core` AND `ephemeral-classifier` with
-//! `default-features = false` and to reference enough of each crate's
-//! public API that the linker keeps real code in the final binary
-//! (otherwise dead-code elimination would produce an empty binary and
-//! the no-leak assertion would be trivially true).
+//! against `ephemeral-core`, `ephemeral-classifier`, AND
+//! `ephemeral-anomaly` with `default-features = false` and to
+//! reference enough of each crate's public API that the linker keeps
+//! real code in the final binary (otherwise dead-code elimination
+//! would produce an empty binary and the no-leak assertion would be
+//! trivially true).
 //!
 //! What the downstream check asserts:
 //! - The symbols `insert_trusted_der_for_test`, `classify_live_nitro`,
@@ -14,18 +15,25 @@
 //!   behind `ephemeral-core` / `ephemeral-attestation`'s `test-fixtures`
 //!   feature) are ABSENT.
 //! - The symbols `shared_wasm_artifacts`, `sign_classifier_envelope`,
-//!   `fixture_signing_key`, `build_classifier_wat` (all gated behind
+//!   `fixture_signing_key`, `build_classifier_wat`,
+//!   `cbor_encode_payload`, `sign_envelope_raw` (all gated behind
 //!   `ephemeral-classifier`'s `test_fixtures` feature) are ABSENT.
-//! - The controls `run_many` (ephemeral-core), `sha256_fingerprint`
-//!   (ephemeral-attestation), and `verify_classifier_hash`
-//!   (ephemeral-classifier) are PRESENT — proving the check is not
-//!   trivially empty.
+//! - The controls `total_failing` (ephemeral-core),
+//!   `sha256_fingerprint` (ephemeral-attestation),
+//!   `verify_classifier_hash` (ephemeral-classifier), and
+//!   `verify_anomaly_library_signature` (ephemeral-anomaly) are
+//!   PRESENT — proving the check is not trivially empty.
 //!
-//! If you add new feature-gated items to any of the three crates,
-//! extend the assertions in `tests/no_leak.rs` to include them.
+//! If you add new feature-gated items to any of the four crates,
+//! extend the assertions in `tests/no_leak.rs` to include them.  In
+//! particular, Phase C.4 Session 2 will introduce a `test_fixtures`
+//! module in `ephemeral-anomaly` whose signing helpers (e.g.
+//! `sign_anomaly_library_envelope`, `fixture_anomaly_signing_key`)
+//! MUST be added to the forbidden list at that time.
 
 use std::hint::black_box;
 
+use ephemeral_anomaly::{verify_anomaly_library_signature, MAX_ANOMALY_LIBRARY_BYTES};
 use ephemeral_classifier::{execute_classifier, verify_classifier_hash, ClassifierConfig};
 use ephemeral_core::{run_many, schema::CompiledSchema, RunConfig, VectorSuite};
 
@@ -49,10 +57,21 @@ fn main() {
     let _ = black_box(verify_ptr);
     let _ = black_box(exec_ptr);
 
+    // Anomaly-crate positive control: `verify_anomaly_library_signature`
+    // is unconditionally public (no feature gate); black-boxing its
+    // address guarantees the function survives DCE under the
+    // `symbol-probe` profile so the negative checks against future
+    // Session-2 test_fixtures symbols have meaning.  The const
+    // reference prevents the whole crate from being treated as unused.
+    let anomaly_ptr: fn(&[u8], &ephemeral_crypto::TrustAnchorSet, u32, i64) -> _ =
+        verify_anomaly_library_signature;
+    let _ = black_box(anomaly_ptr);
+    let _ = black_box(MAX_ANOMALY_LIBRARY_BYTES);
+
     eprintln!(
-        "ephemeral-prod-symbol-probe: built with ephemeral-core \
-         and ephemeral-classifier default-features = false; this \
-         binary exists only to be inspected by the feature-leak-guard \
-         check."
+        "ephemeral-prod-symbol-probe: built with ephemeral-core, \
+         ephemeral-classifier, and ephemeral-anomaly under \
+         default-features = false; this binary exists only to be \
+         inspected by the feature-leak-guard check."
     );
 }

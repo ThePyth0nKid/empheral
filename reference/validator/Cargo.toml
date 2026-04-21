@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/ephemeral-anomaly",
     "crates/ephemeral-attestation",
     "crates/ephemeral-attestation-test-support",
     "crates/ephemeral-classifier",

@@ -52,6 +52,13 @@ pub enum AnchorRole {
     /// Authorised to sign classifier-WASM metadata envelopes
     /// (AAD = `b"ephemeral/classifier/v1"`, Phase C.3-C).
     ClassifierSigner,
+    /// Authorised to sign `AnomalyPatternLibrary` envelopes
+    /// (AAD = `b"ephemeral/anomaly-library/v1"`, Phase C.4).
+    /// Distinct terminal role under `K_cust_ops` (§3.5.1 / §7.2 /
+    /// §7.3.0): a `TariffSigner`- or `ClassifierSigner`-authorised key
+    /// MUST NOT validate an anomaly library even when the `kid`
+    /// collides.  Resolves B-2.
+    AnomalyLibrarySigner,
 }
 
 impl AnchorRole {
@@ -64,6 +71,7 @@ impl AnchorRole {
             Self::TariffSigner => "tariff-signer",
             Self::DelegationSigner => "delegation-signer",
             Self::ClassifierSigner => "classifier-signer",
+            Self::AnomalyLibrarySigner => "anomaly-library-signer",
         }
     }
 
@@ -85,6 +93,8 @@ impl AnchorRole {
             Ok(Self::DelegationSigner)
         } else if s.eq_ignore_ascii_case("classifier-signer") {
             Ok(Self::ClassifierSigner)
+        } else if s.eq_ignore_ascii_case("anomaly-library-signer") {
+            Ok(Self::AnomalyLibrarySigner)
         } else {
             // Char-boundary-safe truncation to ≤ 64 bytes so an
             // adversarial vector supplying a megabyte role string
@@ -326,6 +336,9 @@ mod tests {
         assert!(set
             .lookup_with_role("K_shared_kid", AnchorRole::ClassifierSigner)
             .is_none());
+        assert!(set
+            .lookup_with_role("K_shared_kid", AnchorRole::AnomalyLibrarySigner)
+            .is_none());
     }
 
     #[test]
@@ -376,6 +389,7 @@ mod tests {
             AnchorRole::TariffSigner,
             AnchorRole::DelegationSigner,
             AnchorRole::ClassifierSigner,
+            AnchorRole::AnomalyLibrarySigner,
         ] {
             let s = role.as_wire_str();
             let parsed = AnchorRole::from_wire_str(s).unwrap();
@@ -396,6 +410,10 @@ mod tests {
         assert_eq!(
             AnchorRole::from_wire_str("classifier-SIGNER").unwrap(),
             AnchorRole::ClassifierSigner,
+        );
+        assert_eq!(
+            AnchorRole::from_wire_str("Anomaly-Library-Signer").unwrap(),
+            AnchorRole::AnomalyLibrarySigner,
         );
     }
 
