@@ -2,7 +2,7 @@
 //!
 //! This module binds an operator-published `AnomalyPatternLibrary` to
 //! an [`AnchorRole::AnomalyLibrarySigner`]-signed metadata envelope
-//! via a ten-step cryptographic pipeline that layers over
+//! via a cryptographic pipeline that layers over
 //! [`ephemeral_crypto::verify_cose_sign1_with_cap`]:
 //!
 //! ```text
@@ -30,6 +30,11 @@
 //!                 severity-action consistency (§3.5.2) (step 7b)
 //!                 verb-family known (§3.5.3)           (step 7c)
 //!                 anti-walk-under companion (§3.5.3)   (step 7d)
+//!                                   │
+//!                                   ▼
+//!                     replay-ledger observation
+//!                 library_version strictly greater    (step 8,
+//!                   than per-library_id HWM (§3.5.1)    _with_ledger only)
 //! ```
 //!
 //! Stage 7 is integrated here rather than exposed as a separate
@@ -39,6 +44,20 @@
 //! `test_fixtures::sign_anomaly_library_envelope` performs the
 //! inverse validation before signing, so a well-formed signer can
 //! never produce bytes this verifier rejects at Stage 7.
+//!
+//! # Two public entry points
+//!
+//! - [`verify_anomaly_library_signature`] runs Stages 1-7 and is
+//!   stateless.  Suitable for bootstrap flows, fuzz harnesses, and
+//!   vector-generation where replay is not a concern.
+//! - [`verify_anomaly_library_signature_with_ledger`] additionally
+//!   threads a mutable [`AnomalyLedger`] through Stage 8 to enforce
+//!   monotonic `library_version` per `library_id` (§3.5.1 reject
+//!   code `pattern-library-version-too-old`).  Production callers
+//!   should prefer this entry.  The two entry points share an
+//!   internal helper (`verify_anomaly_library_signature_internal`)
+//!   so Stages 1-7 behaviour and failure precedence are identical
+//!   between them.
 //!
 //! # Why the cap differs from the generic one
 //!
@@ -80,6 +99,7 @@ use crate::invariants::{
     check_firing_rule_companions, check_pattern_id_uniqueness,
     check_severity_action_consistency, check_verb_families_known,
 };
+use crate::ledger::{AnomalyLedger, LedgerError};
 use crate::patterns::PatternEntry;
 use crate::schema::AnomalyLibraryPayload;
 
@@ -206,57 +226,32 @@ pub struct VerifiedAnomalyLibrarySignature {
     pub patterns: Vec<PatternEntry>,
 }
 
-/// Verify an anomaly-library envelope against a set of trust anchors.
+/// Internal helper: run Stages 1-7 and return the decoded CBOR
+/// payload plus the cryptographically authoritative outer kid from
+/// the `COSE_Sign1` protected header.  Sanitisation is deferred to
+/// the caller.
 ///
-/// # Arguments
+/// Both public entry points ([`verify_anomaly_library_signature`] and
+/// [`verify_anomaly_library_signature_with_ledger`]) route through
+/// this so their Stage 1-7 semantics and failure precedence are
+/// byte-for-byte identical.
 ///
-/// * `cose_sign1_bytes` — a `COSE_Sign1` envelope (RFC 9052 §4.2)
-///   carrying a CBOR-encoded [`AnomalyLibraryPayload`] as its payload,
-///   with Ed25519 signature (`alg = -8`).
-/// * `anchors` — trust-anchor set.  The anchor matching the envelope's
-///   `kid` must be registered under
-///   [`AnchorRole::AnomalyLibrarySigner`]; any other role fails the
-///   verification at the crypto layer.
-/// * `expected_abi_version` — the ABI version this validator was
-///   built against.  Production callers pass
-///   [`crate::ANOMALY_LIBRARY_ABI_VERSION`].
-/// * `now_unix_seconds` — caller-supplied clock for the time-bounds
-///   check in Step 6.  Production callers pass
-///   `SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64`;
-///   tests inject a fixed value.  Passing the clock rather than
-///   reading it internally keeps this crate pure (no `std::time`
-///   side-effects) and makes the verdict deterministic for vector
-///   generation.
-///
-/// # Returns
-///
-/// On success, a [`VerifiedAnomalyLibrarySignature`] with the
-/// authoritative signer kid, ABI version, library identity, version
-/// counter, and validity window.
-///
-/// # Errors
-///
-/// See [`AnomalyLibError`] for the full taxonomy.  In short:
-///
-/// - [`AnomalyLibError::CoseVerifyFailed`] — outer envelope fails any
-///   check (size, parse, role, kid, alg, signature).  Role leakage is
-///   contained in this single variant.
-/// - [`AnomalyLibError::PayloadDecodeFailed`] — inner CBOR is
-///   malformed or a structural string-length cap was exceeded.
-/// - [`AnomalyLibError::AbiVersionMismatch`] — payload version ≠
-///   `expected_abi_version`.
-/// - [`AnomalyLibError::SignerKidMismatch`] — inner `signer_kid` ≠
-///   outer COSE header `kid`.
-/// - [`AnomalyLibError::NotYetValid`] — `now_unix_seconds <
-///   issued_at`.
-/// - [`AnomalyLibError::Expired`] — `now_unix_seconds > expires_at`.
-#[must_use = "an unchecked anomaly-library signature is indistinguishable from an unsigned one"]
-pub fn verify_anomaly_library_signature(
+/// Surfacing the raw `library_id` here (rather than the sanitised
+/// form) is load-bearing for the with-ledger entry point:
+/// [`sanitize_log_string`] is non-injective on UTF-8 multi-byte bytes
+/// (every byte outside `0x20..=0x7E` maps to `'?'`), so using the
+/// sanitised form as the ledger key would collide two legitimate but
+/// non-ASCII library_ids — e.g. `"lib::foö"` (`0xC3 0xB6`) and
+/// `"lib::foÖ"` (`0xC3 0x96`) both reduce to `"lib::fo??"` — and the
+/// second library's first load would mis-reject as a stale replay.
+/// Keeping the raw bytes out of the `VerifiedAnomalyLibrarySignature`
+/// surface but available to the ledger caller closes that divergence.
+fn verify_anomaly_library_signature_internal(
     cose_sign1_bytes: &[u8],
     anchors: &TrustAnchorSet,
     expected_abi_version: u32,
     now_unix_seconds: i64,
-) -> Result<VerifiedAnomalyLibrarySignature, AnomalyLibError> {
+) -> Result<(AnomalyLibraryPayload, String), AnomalyLibError> {
     // Step 1: outer COSE_Sign1 verify with AAD + role + raised byte
     // cap.  The crypto layer enforces size/depth caps, parse, alg
     // allowlist, role-aware kid resolution, alg/anchor consistency,
@@ -348,25 +343,212 @@ pub fn verify_anomaly_library_signature(
     // 7d: anti-walk-under companion pair (§3.5.3).
     check_firing_rule_companions(&payload.patterns)?;
 
-    // The outer kid has been cryptographically authenticated but its
-    // byte content is attacker-controlled (the signer picks their own
-    // kid label).  Sanitise both outward-facing string fields before
-    // storing so a rogue signer cannot smuggle control chars or ANSI
-    // escapes into validator logs via these surfaces.  The raw outer
-    // kid has already served its purpose in Step 5's equality check.
+    // Return raw outer kid + raw payload.  `VerifiedAnomalyLibrarySignature`
+    // construction (with sanitisation) happens in `build_verified`.
+    Ok((payload, verified.kid))
+}
+
+/// Build the public [`VerifiedAnomalyLibrarySignature`] from a
+/// validated payload + the cryptographically authoritative outer kid.
+///
+/// Kept as a named helper so both public entry points share exactly
+/// one sanitisation + field-mapping site.  Any future field addition
+/// to `VerifiedAnomalyLibrarySignature` touches only this function,
+/// not every caller.
+fn build_verified(
+    payload: AnomalyLibraryPayload,
+    raw_outer_kid: &str,
+) -> VerifiedAnomalyLibrarySignature {
+    // Both outward-facing string fields pass through `sanitize_log_string`
+    // so a rogue signer cannot smuggle control chars or ANSI escapes
+    // into validator logs via the `VerifiedAnomalyLibrarySignature`
+    // surface.  Raw values have already served their equality-check
+    // and ledger-key purposes upstream.
     //
     // `patterns` is moved (not cloned) into the verified struct —
     // this crate produces exactly one verified result per call, and
     // downstream consumers take ownership.
-    Ok(VerifiedAnomalyLibrarySignature {
-        signer_kid: sanitize_log_string(&verified.kid),
+    VerifiedAnomalyLibrarySignature {
+        signer_kid: sanitize_log_string(raw_outer_kid),
         abi_version: payload.abi_version,
         library_id: sanitize_log_string(&payload.library_id),
         library_version: payload.library_version,
         issued_at: payload.issued_at,
         expires_at: payload.expires_at,
         patterns: payload.patterns,
-    })
+    }
+}
+
+/// Verify an anomaly-library envelope against a set of trust anchors
+/// (stateless — no replay protection).
+///
+/// Prefer [`verify_anomaly_library_signature_with_ledger`] for
+/// production verifiers: the stateless form accepts replayed or
+/// rolled-back libraries and is kept only for bootstrap, fuzz, and
+/// vector-generation flows that have no ledger to thread through.
+///
+/// # Arguments
+///
+/// * `cose_sign1_bytes` — a `COSE_Sign1` envelope (RFC 9052 §4.2)
+///   carrying a CBOR-encoded [`AnomalyLibraryPayload`] as its payload,
+///   with Ed25519 signature (`alg = -8`).
+/// * `anchors` — trust-anchor set.  The anchor matching the envelope's
+///   `kid` must be registered under
+///   [`AnchorRole::AnomalyLibrarySigner`]; any other role fails the
+///   verification at the crypto layer.
+/// * `expected_abi_version` — the ABI version this validator was
+///   built against.  Production callers pass
+///   [`crate::ANOMALY_LIBRARY_ABI_VERSION`].
+/// * `now_unix_seconds` — caller-supplied clock for the time-bounds
+///   check in Step 6.  Production callers pass
+///   `SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64`;
+///   tests inject a fixed value.  Passing the clock rather than
+///   reading it internally keeps this crate pure (no `std::time`
+///   side-effects) and makes the verdict deterministic for vector
+///   generation.
+///
+/// # Returns
+///
+/// On success, a [`VerifiedAnomalyLibrarySignature`] with the
+/// authoritative signer kid, ABI version, library identity, version
+/// counter, and validity window.
+///
+/// # Errors
+///
+/// See [`AnomalyLibError`] for the full taxonomy.  In short:
+///
+/// - [`AnomalyLibError::CoseVerifyFailed`] — outer envelope fails any
+///   check (size, parse, role, kid, alg, signature).  Role leakage is
+///   contained in this single variant.
+/// - [`AnomalyLibError::PayloadDecodeFailed`] — inner CBOR is
+///   malformed or a structural string-length cap was exceeded.
+/// - [`AnomalyLibError::AbiVersionMismatch`] — payload version ≠
+///   `expected_abi_version`.
+/// - [`AnomalyLibError::SignerKidMismatch`] — inner `signer_kid` ≠
+///   outer COSE header `kid`.
+/// - [`AnomalyLibError::NotYetValid`] — `now_unix_seconds <
+///   issued_at`.
+/// - [`AnomalyLibError::Expired`] — `now_unix_seconds > expires_at`.
+#[must_use = "an unchecked anomaly-library signature is indistinguishable from an unsigned one"]
+pub fn verify_anomaly_library_signature(
+    cose_sign1_bytes: &[u8],
+    anchors: &TrustAnchorSet,
+    expected_abi_version: u32,
+    now_unix_seconds: i64,
+) -> Result<VerifiedAnomalyLibrarySignature, AnomalyLibError> {
+    let (payload, raw_outer_kid) = verify_anomaly_library_signature_internal(
+        cose_sign1_bytes,
+        anchors,
+        expected_abi_version,
+        now_unix_seconds,
+    )?;
+    Ok(build_verified(payload, &raw_outer_kid))
+}
+
+/// Verify an anomaly-library envelope AND observe its
+/// `library_version` against a replay-protection ledger (Stage 8 per
+/// §3.5.1).  Prefer this entry point for production verifiers — the
+/// stateless [`verify_anomaly_library_signature`] accepts replayed or
+/// rolled-back libraries.
+///
+/// # Failure precedence (Stages 1-8)
+///
+/// 1. Outer COSE envelope failures → [`AnomalyLibError::CoseVerifyFailed`]
+/// 2. Inner CBOR decode / field caps → [`AnomalyLibError::PayloadDecodeFailed`]
+/// 3. ABI version mismatch → [`AnomalyLibError::AbiVersionMismatch`]
+/// 4. Signer kid inner/outer mismatch → [`AnomalyLibError::SignerKidMismatch`]
+/// 5. Time bounds (not-yet-valid / expired) → [`AnomalyLibError::NotYetValid`] /
+///    [`AnomalyLibError::Expired`]
+/// 6. Pattern-body invariants (§§3.5.2, 3.5.3, 4.2.1) → the respective
+///    `Pattern*` / `FiringRule*` / `SeverityAction*` / `UnknownVerbFamily`
+///    variants.
+/// 7. **Stage 8 (this entry only):** ledger monotonicity → [`AnomalyLibError::LibraryVersionTooOld`]
+///    on replay or rollback; [`AnomalyLibError::LedgerFailure`] on
+///    future-backend infrastructure failure.
+///
+/// **Stage 7 fails before Stage 8.**  A signed envelope that declares
+/// a stale `library_version` for a structurally-broken library
+/// surfaces the pattern-body error (§3.5.3 anti-walk-under, etc.)
+/// rather than the stale-version error — the signer's actionable fix
+/// is to repair the body, not bump the version.  Co-occurrent-fault
+/// test `tests::stage7_body_failure_short_circuits_before_stage8_ledger`
+/// locks this ordering globally.
+///
+/// # Arguments
+///
+/// Arguments 1-4 match [`verify_anomaly_library_signature`].  The
+/// additional `ledger` argument carries the per-library_id
+/// high-water-mark state.
+///
+/// * `ledger` — mutable reference to an [`AnomalyLedger`].  The
+///   [`crate::ledger::InMemoryAnomalyLedger`] default is process-local;
+///   production callers supply a persistent backend.  The trait is
+///   object-safe, so `&mut dyn AnomalyLedger` works transparently.
+///
+/// # State mutation discipline
+///
+/// The ledger is advanced only if every prior stage succeeds.  A
+/// failed envelope (wrong role, stale time, broken patterns) leaves
+/// the ledger untouched — the HWM for the envelope's `library_id`
+/// stays at whatever a prior successful load placed there.  This
+/// matches the Tariff-Step-10 precedent and ensures a failed re-load
+/// attempt cannot bump the HWM past a legitimate upcoming envelope.
+#[must_use = "an unchecked anomaly-library signature is indistinguishable from an unsigned one"]
+pub fn verify_anomaly_library_signature_with_ledger<L: AnomalyLedger + ?Sized>(
+    cose_sign1_bytes: &[u8],
+    anchors: &TrustAnchorSet,
+    expected_abi_version: u32,
+    now_unix_seconds: i64,
+    ledger: &mut L,
+) -> Result<VerifiedAnomalyLibrarySignature, AnomalyLibError> {
+    let (payload, raw_outer_kid) = verify_anomaly_library_signature_internal(
+        cose_sign1_bytes,
+        anchors,
+        expected_abi_version,
+        now_unix_seconds,
+    )?;
+
+    // Stage 8: replay-ledger observation.  Runs AFTER internal Stages
+    // 1-7 so body failures win over ledger failures on co-occurrent
+    // faults — the signer's actionable fix is "repair the body", not
+    // "bump the version".
+    //
+    // Raw `library_id` (not the sanitised form) goes to `observe`:
+    // `sanitize_log_string` is lossy on non-ASCII bytes and would
+    // collide legitimate distinct ids.  Sanitisation applies only
+    // when mapping `LedgerError` into the outward `AnomalyLibError`
+    // below, so the log-surface stays safe.
+    ledger
+        .observe(&payload.library_id, payload.library_version)
+        .map_err(|e| {
+            // `LedgerError` is `#[non_exhaustive]` for external-crate
+            // forward-compat.  Within this crate the compiler sees
+            // only one variant today, so the wildcard arm looks
+            // unreachable — but removing it would defeat the purpose
+            // of `#[non_exhaustive]` the moment a future backend adds
+            // an I/O-failure variant (disk, DB).  The arm MUST stay
+            // so a new LedgerError variant lands safely in
+            // `LedgerFailure` instead of silently folding into
+            // `CoseVerifyFailed` (wrong semantic: that variant exists
+            // for anti-enumeration of anchor roles).
+            #[allow(unreachable_patterns)]
+            match e {
+                LedgerError::VersionNotStrictlyGreater {
+                    library_id,
+                    current_hwm,
+                    attempted,
+                } => AnomalyLibError::LibraryVersionTooOld {
+                    library_id: sanitize_log_string(&library_id),
+                    current_hwm,
+                    attempted,
+                },
+                other => AnomalyLibError::LedgerFailure {
+                    reason: sanitize_log_string(&other.to_string()),
+                },
+            }
+        })?;
+
+    Ok(build_verified(payload, &raw_outer_kid))
 }
 
 #[cfg(test)]
@@ -1659,5 +1841,462 @@ mod tests {
             "full chain 7a→7b→7c→7d: 7a MUST surface when all four \
              faults are present — got {err:?}"
         );
+    }
+
+    // ==============================================================
+    // Stage 8 — replay-ledger tests (Session 3+).
+    //
+    // Exercise `verify_anomaly_library_signature_with_ledger` against
+    // the in-memory ledger.  Covers the happy path, the three
+    // monotonicity reject cases, cross-library isolation, failure
+    // precedence (Stages 1/6/7 short-circuit before Stage 8), dyn-
+    // trait dispatch, and the "failed envelope leaves ledger
+    // unchanged" discipline.
+    // ==============================================================
+
+    use crate::ledger::{AnomalyLedger, InMemoryAnomalyLedger};
+
+    /// Sign an empty-patterns envelope under the happy-path kid +
+    /// clock fixture with caller-specified `library_id` and
+    /// `library_version`.  Used by Stage-8 tests that need to vary
+    /// only these two fields; pattern-body is empty so Stages 7a-7d
+    /// trivially pass.
+    fn envelope_with_id_and_version(library_id: &str, library_version: u64) -> Vec<u8> {
+        let payload = AnomalyLibraryPayload {
+            abi_version: ANOMALY_LIBRARY_ABI_VERSION,
+            signer_kid: TEST_KID.to_string(),
+            library_id: library_id.to_string(),
+            library_version,
+            issued_at: T_ISSUED,
+            expires_at: T_EXPIRES,
+            patterns: Vec::new(),
+        };
+        build_sign1(encode_payload(&payload), TEST_KID, ANOMALY_LIBRARY_AAD, SEED)
+    }
+
+    #[test]
+    fn with_ledger_happy_path_first_observation_verifies() {
+        // Empty ledger + fresh envelope → verifies.  The first load
+        // is FirstObservation (consumed internally), returning the
+        // same VerifiedAnomalyLibrarySignature shape as the stateless
+        // entry point.
+        let cose = envelope_with_id_and_version("lib::alpha", 1);
+        let mut ledger = InMemoryAnomalyLedger::new();
+        let out = verify_anomaly_library_signature_with_ledger(
+            &cose,
+            &anomaly_anchor_set(),
+            ANOMALY_LIBRARY_ABI_VERSION,
+            T_NOW,
+            &mut ledger,
+        )
+        .expect("first observation must verify");
+        assert_eq!(out.library_id, "lib::alpha");
+        assert_eq!(out.library_version, 1);
+    }
+
+    #[test]
+    fn with_ledger_advancing_version_verifies_and_updates_hwm() {
+        // Pre-seed the ledger at lib::alpha=1 then verify the same
+        // library at version 2.  Must succeed (AdvancedFrom(1)) and
+        // the internal HWM must advance so a subsequent v2 re-load
+        // rejects.
+        let mut ledger = InMemoryAnomalyLedger::new();
+        let cose_v1 = envelope_with_id_and_version("lib::alpha", 1);
+        verify_anomaly_library_signature_with_ledger(
+            &cose_v1,
+            &anomaly_anchor_set(),
+            ANOMALY_LIBRARY_ABI_VERSION,
+            T_NOW,
+            &mut ledger,
+        )
+        .expect("seed v1 must verify");
+
+        let cose_v2 = envelope_with_id_and_version("lib::alpha", 2);
+        verify_anomaly_library_signature_with_ledger(
+            &cose_v2,
+            &anomaly_anchor_set(),
+            ANOMALY_LIBRARY_ABI_VERSION,
+            T_NOW,
+            &mut ledger,
+        )
+        .expect("advance v1→v2 must verify");
+
+        // Re-loading v2 now rejects as replay — proves the HWM moved.
+        let err = verify_anomaly_library_signature_with_ledger(
+            &cose_v2,
+            &anomaly_anchor_set(),
+            ANOMALY_LIBRARY_ABI_VERSION,
+            T_NOW,
+            &mut ledger,
+        )
+        .expect_err("replay of v2 must reject");
+        assert!(matches!(
+            err,
+            AnomalyLibError::LibraryVersionTooOld {
+                ref library_id,
+                current_hwm: 2,
+                attempted: 2,
+            } if library_id == "lib::alpha"
+        ));
+    }
+
+    #[test]
+    fn with_ledger_equal_version_rejects_with_library_version_too_old() {
+        let mut ledger = InMemoryAnomalyLedger::new();
+        let cose_v5 = envelope_with_id_and_version("lib::alpha", 5);
+        verify_anomaly_library_signature_with_ledger(
+            &cose_v5,
+            &anomaly_anchor_set(),
+            ANOMALY_LIBRARY_ABI_VERSION,
+            T_NOW,
+            &mut ledger,
+        )
+        .expect("seed v5 must verify");
+
+        // Replay the same envelope — equal version rejects.
+        let err = verify_anomaly_library_signature_with_ledger(
+            &cose_v5,
+            &anomaly_anchor_set(),
+            ANOMALY_LIBRARY_ABI_VERSION,
+            T_NOW,
+            &mut ledger,
+        )
+        .expect_err("equal version must reject as replay");
+        assert!(
+            matches!(
+                err,
+                AnomalyLibError::LibraryVersionTooOld {
+                    current_hwm: 5,
+                    attempted: 5,
+                    ..
+                }
+            ),
+            "expected LibraryVersionTooOld{{5, 5}}, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn with_ledger_lower_version_rejects_with_library_version_too_old() {
+        let mut ledger = InMemoryAnomalyLedger::new();
+        let cose_v5 = envelope_with_id_and_version("lib::alpha", 5);
+        verify_anomaly_library_signature_with_ledger(
+            &cose_v5,
+            &anomaly_anchor_set(),
+            ANOMALY_LIBRARY_ABI_VERSION,
+            T_NOW,
+            &mut ledger,
+        )
+        .expect("seed v5 must verify");
+
+        let cose_v3 = envelope_with_id_and_version("lib::alpha", 3);
+        let err = verify_anomaly_library_signature_with_ledger(
+            &cose_v3,
+            &anomaly_anchor_set(),
+            ANOMALY_LIBRARY_ABI_VERSION,
+            T_NOW,
+            &mut ledger,
+        )
+        .expect_err("lower version must reject as rollback");
+        assert!(
+            matches!(
+                err,
+                AnomalyLibError::LibraryVersionTooOld {
+                    current_hwm: 5,
+                    attempted: 3,
+                    ..
+                }
+            ),
+            "expected LibraryVersionTooOld{{5, 3}}, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn with_ledger_error_carries_sanitised_library_id() {
+        // The signature module sanitises the library_id before
+        // constructing the outward error.  Pin that the stored id is
+        // the sanitised ASCII-only form, not the raw bytes — the log
+        // surface MUST be injection-safe even though the ledger key
+        // uses the raw form internally.  This happy-path library_id
+        // is ASCII, so sanitised == raw; the separate injection-path
+        // test in `errors.rs` covers the control-char branch.
+        let mut ledger = InMemoryAnomalyLedger::new();
+        let cose = envelope_with_id_and_version("lib::prod-v1", 5);
+        verify_anomaly_library_signature_with_ledger(
+            &cose,
+            &anomaly_anchor_set(),
+            ANOMALY_LIBRARY_ABI_VERSION,
+            T_NOW,
+            &mut ledger,
+        )
+        .unwrap();
+        let err = verify_anomaly_library_signature_with_ledger(
+            &cose,
+            &anomaly_anchor_set(),
+            ANOMALY_LIBRARY_ABI_VERSION,
+            T_NOW,
+            &mut ledger,
+        )
+        .unwrap_err();
+        match err {
+            AnomalyLibError::LibraryVersionTooOld {
+                library_id,
+                current_hwm,
+                attempted,
+            } => {
+                assert_eq!(library_id, "lib::prod-v1");
+                assert_eq!(current_hwm, 5);
+                assert_eq!(attempted, 5);
+            }
+            other => panic!("expected LibraryVersionTooOld, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn with_ledger_two_distinct_library_ids_do_not_cross_contaminate() {
+        // Loading lib::alpha at a high version MUST NOT inhibit a
+        // first-ever load of lib::beta at a low version — the HWM is
+        // per-library_id.  Proves the ledger key space is correctly
+        // scoped at the signature-module boundary.
+        let mut ledger = InMemoryAnomalyLedger::new();
+        let cose_alpha = envelope_with_id_and_version("lib::alpha", 100);
+        verify_anomaly_library_signature_with_ledger(
+            &cose_alpha,
+            &anomaly_anchor_set(),
+            ANOMALY_LIBRARY_ABI_VERSION,
+            T_NOW,
+            &mut ledger,
+        )
+        .expect("alpha@100 first-observation must verify");
+
+        let cose_beta = envelope_with_id_and_version("lib::beta", 1);
+        verify_anomaly_library_signature_with_ledger(
+            &cose_beta,
+            &anomaly_anchor_set(),
+            ANOMALY_LIBRARY_ABI_VERSION,
+            T_NOW,
+            &mut ledger,
+        )
+        .expect("beta@1 first-observation must verify despite alpha at 100");
+    }
+
+    #[test]
+    fn stage7_body_failure_short_circuits_before_stage8_ledger() {
+        // T20 fail-order test.  Co-occurrent fault: a library with
+        // duplicate pattern_ids (Stage 7a) AND a stale
+        // library_version that would separately fail Stage 8.
+        //
+        // Expected: Stage 7a wins because pattern-body invariants run
+        // before the ledger observation.  The signer's actionable fix
+        // is "repair the body"; bumping the version on a broken body
+        // would leak a broken library into the ledger HWM.
+        let mut ledger = InMemoryAnomalyLedger::new();
+
+        // Seed the ledger at version 5 so v1 envelope would be stale.
+        let cose_seed = envelope_with_id_and_version("lib::default", 5);
+        verify_anomaly_library_signature_with_ledger(
+            &cose_seed,
+            &anomaly_anchor_set(),
+            ANOMALY_LIBRARY_ABI_VERSION,
+            T_NOW,
+            &mut ledger,
+        )
+        .expect("seed must verify");
+
+        // Build a broken-body envelope at version 1 (stale).  The
+        // envelope_with_patterns helper hardcodes library_version=1,
+        // which is now stale w.r.t. HWM=5.
+        let mut bad_primary = well_formed_patterns()[0].clone();
+        let bad_dup = bad_primary.clone(); // duplicate pattern_id
+        bad_primary.pattern_id = "delete-storm".into();
+        let cose_broken_stale = envelope_with_patterns(vec![bad_primary, bad_dup]);
+
+        let err = verify_anomaly_library_signature_with_ledger(
+            &cose_broken_stale,
+            &anomaly_anchor_set(),
+            ANOMALY_LIBRARY_ABI_VERSION,
+            T_NOW,
+            &mut ledger,
+        )
+        .expect_err("broken-body + stale-version must reject");
+
+        // Stage 7 MUST win over Stage 8.
+        assert!(
+            matches!(err, AnomalyLibError::PatternIdDuplicate { .. }),
+            "Stage 7 (pattern-body) MUST short-circuit before Stage 8 \
+             (ledger) — got {err:?}"
+        );
+    }
+
+    #[test]
+    fn stage6_time_failure_short_circuits_before_stage8_ledger() {
+        // An expired envelope that also declares a stale version must
+        // surface the Expired error, not LibraryVersionTooOld.  Stage 6
+        // runs before Stage 8 for the same fail-order reason: the
+        // signer's fix is "re-sign with a fresh window", not "bump".
+        let mut ledger = InMemoryAnomalyLedger::new();
+        let cose_seed = envelope_with_id_and_version("lib::alpha", 5);
+        verify_anomaly_library_signature_with_ledger(
+            &cose_seed,
+            &anomaly_anchor_set(),
+            ANOMALY_LIBRARY_ABI_VERSION,
+            T_NOW,
+            &mut ledger,
+        )
+        .expect("seed must verify");
+
+        // Construct a v1 envelope with a past-expiry window.  Signed
+        // at T_ISSUED, expires well before T_NOW → Expired.
+        let past_expiry = T_ISSUED + 1;
+        let expired_payload = AnomalyLibraryPayload {
+            abi_version: ANOMALY_LIBRARY_ABI_VERSION,
+            signer_kid: TEST_KID.to_string(),
+            library_id: "lib::alpha".to_string(),
+            library_version: 1,
+            issued_at: T_ISSUED,
+            expires_at: past_expiry,
+            patterns: Vec::new(),
+        };
+        let cose_expired = build_sign1(
+            encode_payload(&expired_payload),
+            TEST_KID,
+            ANOMALY_LIBRARY_AAD,
+            SEED,
+        );
+
+        let err = verify_anomaly_library_signature_with_ledger(
+            &cose_expired,
+            &anomaly_anchor_set(),
+            ANOMALY_LIBRARY_ABI_VERSION,
+            T_NOW,
+            &mut ledger,
+        )
+        .expect_err("expired + stale-version must reject");
+        assert!(
+            matches!(err, AnomalyLibError::Expired { .. }),
+            "Stage 6 (time-bounds) MUST short-circuit before Stage 8 \
+             (ledger) — got {err:?}"
+        );
+    }
+
+    #[test]
+    fn stage1_cose_failure_short_circuits_before_stage8_ledger() {
+        // A wrong-role anchor produces CoseVerifyFailed at Stage 1 —
+        // Stage 8 must not run.  If the ledger observed a
+        // CoseVerifyFailed envelope, an attacker could DoS the HWM
+        // by submitting rogue envelopes with high declared versions.
+        // Proving no-observation-on-Stage-1-failure is the anti-DoS
+        // guarantee.
+        let pk = signing_key(SEED).verifying_key();
+        let wrong_role_anchor = TrustAnchor::new_ed25519(
+            TEST_KID.to_string(),
+            pk.as_bytes(),
+            AnchorRole::TariffSigner,
+        )
+        .expect("fixed seed yields non-weak pk");
+        let mut anchors = TrustAnchorSet::new();
+        anchors
+            .insert(wrong_role_anchor)
+            .expect("fresh set has no dup kid");
+
+        let mut ledger = InMemoryAnomalyLedger::new();
+        // Envelope declares a high version — if Stage 8 ran, it would
+        // pollute the HWM.
+        let cose = envelope_with_id_and_version("lib::alpha", 999);
+        let err = verify_anomaly_library_signature_with_ledger(
+            &cose,
+            &anchors,
+            ANOMALY_LIBRARY_ABI_VERSION,
+            T_NOW,
+            &mut ledger,
+        )
+        .expect_err("wrong-role anchor must reject at Stage 1");
+        assert!(
+            matches!(err, AnomalyLibError::CoseVerifyFailed),
+            "Stage 1 (COSE) MUST short-circuit before Stage 8 (ledger) — \
+             got {err:?}"
+        );
+
+        // Post-hoc proof: a legitimate v1 envelope under the correct
+        // anchor MUST still be acceptable as a first observation —
+        // i.e., Stage 1's failure did not leak into the ledger state.
+        verify_anomaly_library_signature_with_ledger(
+            &envelope_with_id_and_version("lib::alpha", 1),
+            &anomaly_anchor_set(),
+            ANOMALY_LIBRARY_ABI_VERSION,
+            T_NOW,
+            &mut ledger,
+        )
+        .expect("post-failure first-observation must still succeed");
+    }
+
+    #[test]
+    fn with_ledger_dispatches_through_dyn_trait_object() {
+        // Compile- and runtime-check that the trait is object-safe
+        // and the `?Sized` bound on L lets callers thread
+        // `&mut dyn AnomalyLedger` through the public API.  Exercises
+        // the intended extensibility vector: a caller holding a
+        // boxed or trait-object ledger swaps backends without
+        // re-generating the verifier.
+        let cose = envelope_with_id_and_version("lib::dyn", 1);
+        let mut ledger: Box<dyn AnomalyLedger> = Box::new(InMemoryAnomalyLedger::new());
+        verify_anomaly_library_signature_with_ledger(
+            &cose,
+            &anomaly_anchor_set(),
+            ANOMALY_LIBRARY_ABI_VERSION,
+            T_NOW,
+            ledger.as_mut(),
+        )
+        .expect("dyn-dispatch first observation must verify");
+    }
+
+    #[test]
+    fn with_ledger_failed_envelope_leaves_ledger_untouched() {
+        // A failed verification (here: wrong ABI version) MUST leave
+        // the ledger state untouched.  Proof: after a failed attempt
+        // at a high version under the wrong ABI, a legitimate v1
+        // load of the same library_id still succeeds as a
+        // FirstObservation (the HWM was never seeded).
+        let mut ledger = InMemoryAnomalyLedger::new();
+
+        // First attempt: envelope with wrong ABI (validator expects
+        // version 1, envelope claims version 42).  Pre-Stage-8 fail.
+        let wrong_abi_payload = AnomalyLibraryPayload {
+            abi_version: 42,
+            signer_kid: TEST_KID.to_string(),
+            library_id: "lib::alpha".to_string(),
+            library_version: 999, // would bump HWM if Stage 8 ran
+            issued_at: T_ISSUED,
+            expires_at: T_EXPIRES,
+            patterns: Vec::new(),
+        };
+        let cose_wrong_abi = build_sign1(
+            encode_payload(&wrong_abi_payload),
+            TEST_KID,
+            ANOMALY_LIBRARY_AAD,
+            SEED,
+        );
+        let err = verify_anomaly_library_signature_with_ledger(
+            &cose_wrong_abi,
+            &anomaly_anchor_set(),
+            ANOMALY_LIBRARY_ABI_VERSION,
+            T_NOW,
+            &mut ledger,
+        )
+        .expect_err("wrong ABI must reject");
+        assert!(matches!(err, AnomalyLibError::AbiVersionMismatch { .. }));
+
+        // Second attempt: legitimate v1 envelope.  If Stage 8 had
+        // observed the earlier v999 attempt, this would mis-reject as
+        // stale.  FirstObservation success proves no observation
+        // leaked.
+        let cose_v1 = envelope_with_id_and_version("lib::alpha", 1);
+        verify_anomaly_library_signature_with_ledger(
+            &cose_v1,
+            &anomaly_anchor_set(),
+            ANOMALY_LIBRARY_ABI_VERSION,
+            T_NOW,
+            &mut ledger,
+        )
+        .expect("legitimate v1 must still be FirstObservation");
     }
 }

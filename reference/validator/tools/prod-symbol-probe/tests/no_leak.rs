@@ -22,13 +22,22 @@
 //! | `shared_anomaly_artifacts`      | ephemeral-anomaly     | C.4 Sess2   |
 //! | `cbor_encode_anomaly_payload`   | ephemeral-anomaly     | C.4 Sess2   |
 //! | `minimum_anomaly_library`       | ephemeral-anomaly     | C.4 Sess2   |
+//! | `sign_minimum_library_with_version` | ephemeral-anomaly | C.4 Sess3   |
+//! | `seeded_ledger_at_version`      | ephemeral-anomaly     | C.4 Sess3   |
 //!
 //! Phase C.4 Session 1 registered `ephemeral-anomaly` as WATCHED in
 //! anticipation of Session 2's `test_fixtures` module.  Session 2
 //! populated the forbidden list above with the six anomaly-side
 //! fixture primitives: their names must stay absent from the
-//! `default-features = false` anomaly rlib.  The
-//! `verify_anomaly_library_signature` positive control is retained
+//! `default-features = false` anomaly rlib.  Session 3 extends the
+//! list with two replay-ledger-oriented helpers
+//! (`sign_minimum_library_with_version`, `seeded_ledger_at_version`);
+//! the production ledger API itself (`AnomalyLedger`,
+//! `InMemoryAnomalyLedger`, `LedgerError`, `LedgerObservation`,
+//! `verify_anomaly_library_signature_with_ledger`) is intentionally
+//! NOT on the forbidden list — those are unconditional public
+//! symbols that MUST appear in a `default-features = false` rlib.
+//! The `verify_anomaly_library_signature` positive control is retained
 //! so the negative checks are not trivially empty.
 //!
 //! Why a rlib, not a final binary:
@@ -281,6 +290,29 @@ fn test_fixtures_symbols_do_not_leak_into_prod_rlibs() {
         // — is sufficiently unique that a substring hit cannot
         // collide with unrelated code.
         "delete_storm_pattern",
+        // Phase C.4 Session 3 — replay-ledger fixture helpers.  Both
+        // live behind `#[cfg(feature = "test_fixtures")]` in
+        // `crates/ephemeral-anomaly/src/test_fixtures.rs` and MUST
+        // NOT appear in a `default-features = false` anomaly rlib:
+        //
+        // - `sign_minimum_library_with_version` exposes the ability
+        //   to re-sign the MINIMUM library at an arbitrary
+        //   `library_version`.  A production consumer that could
+        //   call this would be able to forge monotonic ratchets
+        //   using the fixture signing key.
+        // - `seeded_ledger_at_version` pre-seeds an
+        //   `InMemoryAnomalyLedger` HWM via a single observation.
+        //   Leaking it would not forge signatures, but it would
+        //   publish a test-only convenience mutator that callers
+        //   could use to populate replay state off the happy path.
+        //
+        // Note: the `AnomalyLedger` trait, `InMemoryAnomalyLedger`
+        // impl, `LedgerError`, `LedgerObservation`, and
+        // `verify_anomaly_library_signature_with_ledger` are
+        // unconditional production API — they MUST appear in the
+        // default-features rlib and are therefore NOT forbidden.
+        "sign_minimum_library_with_version",
+        "seeded_ledger_at_version",
     ];
     // Positive control per rlib: at least one unconditionally public,
     // non-generic symbol that MUST be monomorphized into the rlib. If

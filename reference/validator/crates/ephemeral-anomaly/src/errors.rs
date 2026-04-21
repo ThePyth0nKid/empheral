@@ -208,6 +208,59 @@ pub enum AnomalyLibError {
         window: u32,
         missing_reason: FiringCompanionFailure,
     },
+
+    // ──────────────────────────────────────────────────────────────
+    // Stage 8 — replay-ledger monotonicity (Session 3+).
+    //
+    // Surfaces the spec-named reject code `pattern-library-version-
+    // too-old` (§3.5.1).  The ledger lives in
+    // [`crate::ledger`]; the signature-verification entry point
+    // `verify_anomaly_library_signature_with_ledger` threads a mutable
+    // ledger through Stage 8 after Stage 7's pattern-body invariants
+    // succeed.  The stateless `verify_anomaly_library_signature` never
+    // raises this variant (no ledger → no HWM check).
+    //
+    // The ledger module carries raw `library_id` bytes; this variant
+    // sanitises them via [`sanitize_log_string`] at the call site to
+    // keep error display log-safe.
+    // ──────────────────────────────────────────────────────────────
+
+    /// The declared `library_version` did not strictly exceed the
+    /// ledger's stored high-water-mark for this `library_id`.  Covers
+    /// both replay (equal version) and rollback (lower version).  The
+    /// operator fix is to sign a new library with a strictly higher
+    /// version; the validator does NOT accept the envelope even if it
+    /// is otherwise signature- and body-valid.
+    ///
+    /// `library_id` has been passed through [`sanitize_log_string`] at
+    /// the call site — the raw form stays inside
+    /// [`crate::ledger::LedgerError`].
+    #[error(
+        "anomaly library `{library_id}` declares library_version {attempted} \
+         but ledger HWM is {current_hwm} (pattern-library-version-too-old per §3.5.1)"
+    )]
+    LibraryVersionTooOld {
+        library_id: String,
+        current_hwm: u64,
+        attempted: u64,
+    },
+
+    /// The replay ledger raised a non-monotonicity failure the
+    /// signature verifier cannot interpret semantically (e.g. a disk-
+    /// or database-backed ledger reporting an I/O error).  V1's
+    /// [`crate::ledger::InMemoryAnomalyLedger`] never triggers this
+    /// path — it is reserved for future backends whose additional
+    /// [`crate::ledger::LedgerError`] variants MUST NOT be silently
+    /// bucketed into [`AnomalyLibError::CoseVerifyFailed`] (wrong
+    /// semantic: that variant exists for anti-enumeration of role
+    /// assignments, not for backend infrastructure failure).
+    ///
+    /// `reason` carries the backend's own `Display` message and is
+    /// sanitised at the call site via [`sanitize_log_string`].  No
+    /// role-leakage concern applies here because the crypto signature
+    /// already succeeded before Stage 8 ran.
+    #[error("anomaly library replay ledger failed: {reason}")]
+    LedgerFailure { reason: String },
 }
 
 /// Sub-enum surfacing the specific anti-walk-under companion check
@@ -430,5 +483,45 @@ mod tests {
         assert!(display.contains("pat::ephemeral"));
         assert!(display.contains("300s"));
         assert!(display.contains("no firing_rule_companions"));
+    }
+
+    #[test]
+    fn library_version_too_old_display_contains_all_fields_and_spec_ref() {
+        // The variant surfaces the §3.5.1 reject code
+        // `pattern-library-version-too-old` plus the three values an
+        // operator needs to produce a valid re-signed envelope:
+        // which library, what HWM, what they attempted.  Pin every
+        // field in the rendered Display so a future format change
+        // cannot silently drop one.
+        let err = AnomalyLibError::LibraryVersionTooOld {
+            library_id: sanitize_log_string("lib::prod-v1"),
+            current_hwm: 42,
+            attempted: 41,
+        };
+        let display = format!("{err}");
+        assert!(display.contains("lib::prod-v1"));
+        assert!(display.contains("42"));
+        assert!(display.contains("41"));
+        assert!(display.contains("pattern-library-version-too-old"));
+        assert!(display.contains("§3.5.1"));
+    }
+
+    #[test]
+    fn library_version_too_old_display_stays_single_line_with_sanitised_id() {
+        // The variant stores a String `library_id` that the signature
+        // module sanitises before construction, but Display is the
+        // last rendering step — defense-in-depth: even a direct
+        // construction with control chars pre-baked into the field
+        // MUST NOT re-leak newlines or ANSI escapes.  Sanitised
+        // injection attempts collapse control bytes to '?'.
+        let err = AnomalyLibError::LibraryVersionTooOld {
+            library_id: sanitize_log_string("lib::inj\nINJ"),
+            current_hwm: 1,
+            attempted: 0,
+        };
+        let display = format!("{err}");
+        assert!(!display.contains('\n'));
+        assert!(!display.contains('\r'));
+        assert!(display.contains("lib::inj?INJ"));
     }
 }

@@ -54,12 +54,30 @@
 //! forward-compat is pinned by the regression test
 //! `session_one_envelope_decodes_with_empty_patterns`.
 //!
-//! # Scope-out: stateful checks (Session 5+)
+//! # Scope of Session 3
 //!
-//! This crate remains **stateless**.  Monotonic `library_version`
-//! enforcement, per-pattern high-water-mark tracking, and the
-//! `PatternRelaxationException` flow (§3.5.1) require state across
-//! library verifications and are deferred to Session 5.
+//! Adds Stage 8 — replay protection via an external
+//! [`AnomalyLedger`].  The stateless
+//! [`verify_anomaly_library_signature`] entry point is preserved
+//! unchanged for bootstrap and fuzz flows; production verifiers
+//! should switch to
+//! [`verify_anomaly_library_signature_with_ledger`] so monotonic
+//! `library_version` is enforced per `library_id` (§3.5.1 reject
+//! code `pattern-library-version-too-old`).  V1 of the ledger is
+//! first-observation-wins; seed-from-ceremony bootstrap (V2+) is
+//! additive and can land without breaking existing callers.
+//!
+//! # Scope-out: remaining stateful checks (Session 5+)
+//!
+//! - Per-pattern high-water-mark tracking and the
+//!   `PatternRelaxationException` flow (§3.5.1 threshold-HWM ratchet).
+//!   Session 3 solves `library_version` monotonicity only; the
+//!   per-threshold ratchet with `ceremony_quorum` is a separate
+//!   protection surface that remains scoped to Session 5.
+//! - Bootstrap-from-ceremony seeding of the replay ledger.  V1
+//!   accepts a library_id's first observation at whatever version
+//!   the envelope declares; V2 can add `with_bootstrap_hwm` without
+//!   breaking the V1 API.
 
 #![forbid(unsafe_code)]
 #![warn(missing_debug_implementations)]
@@ -84,6 +102,7 @@ pub const ANOMALY_LIBRARY_ABI_VERSION: u32 = 1;
 pub mod errors;
 pub mod families;
 pub mod invariants;
+pub mod ledger;
 pub mod patterns;
 pub mod schema;
 pub mod scope;
@@ -93,10 +112,11 @@ pub mod signature;
 pub mod test_fixtures;
 
 pub use errors::{AnomalyLibError, FiringCompanionFailure};
+pub use ledger::{AnomalyLedger, InMemoryAnomalyLedger, LedgerError, LedgerObservation};
 pub use patterns::{Action, FiringRule, PatternEntry, Severity, Threshold};
 pub use schema::AnomalyLibraryPayload;
 pub use scope::{MandateScope, ScopePredicate, VerbPredicate};
 pub use signature::{
-    verify_anomaly_library_signature, VerifiedAnomalyLibrarySignature, ANOMALY_LIBRARY_AAD,
-    MAX_ANOMALY_LIBRARY_BYTES,
+    verify_anomaly_library_signature, verify_anomaly_library_signature_with_ledger,
+    VerifiedAnomalyLibrarySignature, ANOMALY_LIBRARY_AAD, MAX_ANOMALY_LIBRARY_BYTES,
 };

@@ -49,6 +49,7 @@ use std::sync::OnceLock;
 use coset::{iana, CborSerializable, CoseSign1Builder, HeaderBuilder};
 use ed25519_dalek::{Signer as _, SigningKey, VerifyingKey};
 
+use crate::ledger::{AnomalyLedger as _, InMemoryAnomalyLedger};
 use crate::patterns::{Action, FiringRule, PatternEntry, Severity, Threshold};
 use crate::schema::AnomalyLibraryPayload;
 use crate::scope::{MandateScope, ScopePredicate, VerbPredicate};
@@ -577,6 +578,72 @@ pub fn sign_anomaly_library_envelope(
 }
 
 // ============================================================================
+// Session-3 versioned-envelope + ledger helpers
+// ============================================================================
+//
+// These helpers support downstream dev-deps (`tests/ledger_behavior.rs`,
+// the future `vector-signer` tool, and a Phase C.5+ conformance
+// harness) that need to construct MINIMUM-library envelopes at
+// arbitrary `library_version` values and pre-seeded in-memory
+// ledgers.  Both are gated behind the `test_fixtures` feature so
+// production builds never link these symbols.
+
+/// Sign the §3.5.4 MINIMUM library with a caller-specified
+/// `library_version`.
+///
+/// Re-uses the canonical fixture constants for `signer_kid`,
+/// `library_id`, `issued_at`, `expires_at`, and the pattern set —
+/// only `library_version` varies.  Bytes are deterministic for the
+/// same input version (Ed25519 is deterministic + ciborium encoding
+/// is byte-stable + coset's CoseSign1 serialisation is byte-stable
+/// for a fixed protected header).
+///
+/// Two envelopes with different `library_version` values MUST differ
+/// byte-for-byte: the version is part of the CBOR-encoded signed
+/// payload, so any change flows through the Ed25519 signature.  The
+/// self-test
+/// `sign_minimum_library_with_version_overrides_only_version_field`
+/// pins this.
+#[must_use]
+pub fn sign_minimum_library_with_version(library_version: u64) -> Vec<u8> {
+    // Struct-update syntax rather than post-construct mutation: the
+    // project-wide immutability rule applies even to test-only code so
+    // the "build new value, don't mutate" discipline is visible at
+    // every site.  The base payload's `library_version` is discarded by
+    // the `..` tail because the explicit field shadows it.
+    let payload = AnomalyLibraryPayload {
+        library_version,
+        ..minimum_anomaly_library_payload()
+    };
+    sign_anomaly_library_envelope(&payload, &fixture_anomaly_signing_key())
+}
+
+/// Construct an [`InMemoryAnomalyLedger`] pre-seeded so that
+/// `library_id` has HWM = `library_version`.
+///
+/// After this call, a subsequent `observe(library_id, library_version)`
+/// rejects as replay (equal HWM) and any lower version rejects as
+/// rollback.  Strictly-greater versions advance.  Implementation
+/// detail: a single first-observation is performed to install the
+/// HWM — the returned ledger is behaviourally equivalent to one that
+/// has already accepted a legitimate load at `library_version`.
+///
+/// `library_id` is passed raw.  The ledger uses raw bytes as its
+/// keyspace by design (sanitisation would collide UTF-8 multi-byte
+/// ids via `sanitize_log_string`), so callers seeding a ledger
+/// intended to interact with a real verifier-supplied `library_id`
+/// MUST pass the same raw bytes that will appear in the envelope's
+/// signed payload.
+#[must_use]
+pub fn seeded_ledger_at_version(library_id: &str, library_version: u64) -> InMemoryAnomalyLedger {
+    let mut ledger = InMemoryAnomalyLedger::new();
+    ledger
+        .observe(library_id, library_version)
+        .expect("fresh ledger accepts first observation for any version");
+    ledger
+}
+
+// ============================================================================
 // Shared pre-signed envelope pool
 // ============================================================================
 
@@ -800,5 +867,86 @@ mod self_test {
         // assert verification here (it MUST fail because of the
         // mismatched AAD and kid) but the bytes MUST be non-empty.
         assert!(!env.is_empty());
+    }
+
+    #[test]
+    fn sign_minimum_library_with_version_overrides_only_version_field() {
+        // Different library_versions produce different envelopes
+        // (the version is part of the signed payload → flows through
+        // the Ed25519 signature → byte-level difference).  Same
+        // library_version produces byte-identical envelopes (full
+        // determinism pipeline).  And the v1 envelope equals the
+        // MINIMUM-library pool envelope byte-for-byte — both reuse
+        // the canonical fixture payload with library_version=1.
+        let env_v1 = sign_minimum_library_with_version(1);
+        let env_v2 = sign_minimum_library_with_version(2);
+        assert_ne!(env_v1, env_v2, "different versions must change bytes");
+
+        let env_v1_again = sign_minimum_library_with_version(1);
+        assert_eq!(env_v1, env_v1_again, "same version must be deterministic");
+
+        // Round-trip: the v1 envelope MUST verify as the MINIMUM
+        // library with the expected 15 patterns.
+        let out = crate::signature::verify_anomaly_library_signature(
+            &env_v1,
+            &fixture_anchor_set(),
+            ANOMALY_LIBRARY_ABI_VERSION,
+            TEST_NOW,
+        )
+        .expect("versioned MINIMUM envelope must verify");
+        assert_eq!(out.library_version, 1);
+        assert_eq!(out.library_id, FIXTURE_ANOMALY_LIBRARY_ID);
+        assert_eq!(out.patterns.len(), 15);
+
+        // Pool's minimum_library envelope is also library_version=1
+        // with the same payload — the two MUST be byte-equal.
+        let pool = shared_anomaly_artifacts();
+        assert_eq!(
+            env_v1, pool.minimum_library,
+            "v1 override must byte-match the shared MINIMUM pool entry"
+        );
+    }
+
+    #[test]
+    fn seeded_ledger_at_version_rejects_replay_and_allows_strict_advance() {
+        use crate::ledger::{LedgerError, LedgerObservation};
+
+        let mut ledger = seeded_ledger_at_version("lib::seed", 7);
+
+        // Replay of the seeded version rejects with current_hwm=7,
+        // attempted=7.
+        let err = ledger
+            .observe("lib::seed", 7)
+            .expect_err("equal version after seeding must reject");
+        assert!(
+            matches!(
+                err,
+                LedgerError::VersionNotStrictlyGreater {
+                    current_hwm: 7,
+                    attempted: 7,
+                    ..
+                }
+            ),
+            "expected VersionNotStrictlyGreater{{7,7}}, got {err:?}"
+        );
+
+        // Rollback rejects analogously.
+        let err = ledger
+            .observe("lib::seed", 3)
+            .expect_err("lower version after seeding must reject");
+        assert!(matches!(
+            err,
+            LedgerError::VersionNotStrictlyGreater {
+                current_hwm: 7,
+                attempted: 3,
+                ..
+            }
+        ));
+
+        // Strictly-greater advance succeeds, carrying the seeded HWM.
+        let obs = ledger
+            .observe("lib::seed", 8)
+            .expect("advance from seeded HWM must succeed");
+        assert_eq!(obs, LedgerObservation::AdvancedFrom(7));
     }
 }
