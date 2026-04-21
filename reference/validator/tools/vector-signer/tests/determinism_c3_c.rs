@@ -3,7 +3,7 @@
 //!
 //! Also pins the SHA-256 of the dry-run output so any accidental source of
 //! non-determinism in the classifier-signature vector generator (Ed25519
-//! nonce derivation, ciborium map ordering, COSE_Sign1 header serialisation,
+//! nonce derivation, ciborium map ordering, `COSE_Sign1` header serialisation,
 //! …) is caught immediately.
 //!
 //! Mirrors `determinism_c2_5.rs` — same three invariants applied to the

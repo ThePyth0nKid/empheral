@@ -241,7 +241,7 @@ pub(crate) fn wire_code(err: &AnomalyLibError) -> &'static str {
 
 fn parse_iso_seconds(s: &str) -> Result<i64, time::error::Parse> {
     OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339)
-        .map(|dt| dt.unix_timestamp())
+        .map(OffsetDateTime::unix_timestamp)
 }
 
 fn render_outcome(

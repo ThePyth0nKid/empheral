@@ -79,7 +79,13 @@
     clippy::doc_markdown,
     clippy::too_many_arguments,
     clippy::needless_pass_by_value,
-    clippy::unreadable_literal
+    clippy::unreadable_literal,
+    // Phase identifiers like `C2_5`, `C3_C`, `C4_Library` reflect the
+    // normative plan's section nomenclature (Phase C.2.5, C.3-C, C.4
+    // etc.).  The `_N` / `_C` suffixes read as section subdivisions
+    // for reviewers comparing CLI subcommands against plan sections;
+    // renaming to `C25`, `C3C` would silently erase that mapping.
+    non_camel_case_types
 )]
 
 use std::collections::HashSet;

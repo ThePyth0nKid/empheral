@@ -100,18 +100,32 @@
 pub const ANOMALY_LIBRARY_ABI_VERSION: u32 = 1;
 
 pub mod errors;
+pub mod event;
 pub mod families;
+pub mod fire;
 pub mod invariants;
 pub mod ledger;
 pub mod patterns;
 pub mod schema;
 pub mod scope;
+// `scope_match` only adds `impl` blocks to types already re-exported via
+// `pub use scope::{...}`; it contributes no items that a downstream
+// consumer would import directly.  Keeping the module `pub(crate)` avoids
+// widening the crate's public path surface with an impl-only path that
+// Session 5-B callers could inadvertently bind to.
+pub(crate) mod scope_match;
 pub mod signature;
+pub mod state;
 
 #[cfg(feature = "test_fixtures")]
 pub mod test_fixtures;
 
-pub use errors::{AnomalyLibError, FiringCompanionFailure};
+pub use errors::{AnomalyLibError, FiringCompanionFailure, StreamError};
+pub use event::{
+    AuditStreamInput, CanonicalizedEvent, Outcome, PatternDescription, TemplateEvent,
+    MAX_EXPANDED_EVENTS,
+};
+pub use fire::{AnomalyFire, MatchScope};
 pub use ledger::{AnomalyLedger, InMemoryAnomalyLedger, LedgerError, LedgerObservation};
 pub use patterns::{Action, FiringRule, PatternEntry, Severity, Threshold};
 pub use schema::AnomalyLibraryPayload;
@@ -119,4 +133,8 @@ pub use scope::{MandateScope, ScopePredicate, VerbPredicate};
 pub use signature::{
     verify_anomaly_library_signature, verify_anomaly_library_signature_with_ledger,
     VerifiedAnomalyLibrarySignature, ANOMALY_LIBRARY_AAD, MAX_ANOMALY_LIBRARY_BYTES,
+};
+pub use state::{
+    DetectorState, PatternBuffer, ScopeBucketKey, SequenceTracker, MAX_CLOCK_SKEW_SECONDS,
+    MAX_EVENTS_PER_BUFFER, MAX_EVENTS_PER_MANDATE,
 };

@@ -312,6 +312,166 @@ pub enum FiringCompanionFailure {
     },
 }
 
+// ════════════════════════════════════════════════════════════════════
+// Session 5-A — Runtime stream-normalization errors.
+//
+// `StreamError` is a SEPARATE error surface from `AnomalyLibError` by
+// design (plan §15.2):
+//
+// - `AnomalyLibError` models envelope-verification failures (COSE,
+//   ABI, kid, replay ledger).  Its collapse posture protects anchor-
+//   set role assignments from enumeration.
+// - `StreamError` models runtime-stream normalization failures
+//   (expansion cap, clock skew, pattern parse).  The crypto signature
+//   of the producing audit-service has already been verified upstream
+//   by the time a `StreamError` fires, so role-leakage is no longer a
+//   concern here.  Attacker-controlled fields (event_id) ARE sanitised
+//   via [`sanitize_log_string`] at construction time because audit-
+//   stream records carry customer-supplied identifiers.
+//
+// Keeping them separate also matches the ownership boundary: Sessions
+// 1-4 hardened the verification pipeline and must not be perturbed by
+// Session 5's new runtime layer.  A Session-5-C union wrapper (for
+// `audit.rs`) can fold both surfaces without either crate's public
+// enum absorbing the other's variants.
+// ════════════════════════════════════════════════════════════════════
+
+/// Failure surface for audit-event stream normalization and runtime
+/// ingest.
+///
+/// Returned by:
+/// - [`crate::event::AuditStreamInput::normalize`] — pattern-description
+///   expansion, RFC-3339 parse, and structural-reject paths.
+/// - [`crate::state::DetectorState::ingest_event`] — clock-skew-reject
+///   path (see [`crate::state::MAX_CLOCK_SKEW_SECONDS`]).
+///
+/// Every variant carries enough structured data for an operator to fix
+/// the offending stream without log-parsing.  Attacker-controlled
+/// string fields (currently only `event_id` on
+/// [`StreamError::ClockSkewRejected`]) are sanitised via
+/// [`sanitize_log_string`] at construction time so `Display` output
+/// stays single-line even if the stream tried to inject control
+/// characters.
+///
+/// The enum is `#[non_exhaustive]` so Session 5-B (firing-rule
+/// evaluation) can surface additional structural-reject paths without
+/// breaking downstream exhaustive matches.
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum StreamError {
+    /// A `PatternDescription` normalisation request would allocate more
+    /// than [`crate::event::MAX_EXPANDED_EVENTS`] canonicalised events.
+    /// Carries both the requested count and the enforced cap so the
+    /// operator can split the description into multiple shorter windows.
+    ///
+    /// `u64` widths avoid silent truncation: a malicious pattern-
+    /// description can claim `count: u32::MAX` paired with a large
+    /// `interval_seconds`, pushing the product past `u32` range.  We
+    /// reject in that regime rather than wrapping.
+    #[error(
+        "pattern-description expansion would produce {requested} events \
+         but cap is {cap} (MAX_EXPANDED_EVENTS)"
+    )]
+    ExpansionExceeded { requested: u64, cap: u64 },
+
+    /// An event's declared `timestamp` is more than
+    /// [`crate::state::MAX_CLOCK_SKEW_SECONDS`] ahead of the caller-
+    /// supplied `current_time`.  Past-dated events are naturally
+    /// evicted by the sliding window and do NOT surface this variant;
+    /// only the future-dated direction requires active reject to
+    /// prevent buffer inflation and deferred-fire attacks.
+    ///
+    /// `event_id` is attacker-controlled (audit-service forwards
+    /// whatever the Router signed) and MUST be passed through
+    /// [`sanitize_log_string`] at construction.  `skew_seconds` is the
+    /// positive number of seconds the event is ahead of the clock.
+    #[error(
+        "event `{event_id}` timestamp is {skew_seconds}s ahead of current_time \
+         (cap: MAX_CLOCK_SKEW_SECONDS)"
+    )]
+    ClockSkewRejected {
+        event_id: String,
+        skew_seconds: i64,
+    },
+
+    /// An RFC-3339 timestamp string in a `PatternDescription` (either
+    /// `start_time` or `end_time`) failed to parse.  `reason` is a
+    /// `&'static str` describing the failure CLASS (not echoing the
+    /// offending bytes) — this keeps the surface deterministic and
+    /// prevents attacker-crafted timestamp strings from leaking into
+    /// logs via the error path.
+    #[error("pattern-description timestamp parse failed: {reason}")]
+    TimestampParseFailed { reason: &'static str },
+
+    /// A `PatternDescription` declares `count > 1` but its
+    /// `resource_ref_pattern` contains no `{i}` placeholder.  Without
+    /// the placeholder, all expanded events collapse to the same
+    /// `resource_ref`, defeating the fanout / enumeration semantics
+    /// that patterns like `fanout-distinct-resources` depend on.
+    ///
+    /// Rejecting at normalisation time is kinder to the signer than
+    /// letting the collision propagate into the state-machine where
+    /// the symptom (a buffer with repeated events) is harder to
+    /// diagnose.
+    #[error(
+        "pattern-description with count > 1 requires `{{i}}` placeholder in \
+         resource_ref_pattern"
+    )]
+    PatternMissingIndexPlaceholder,
+
+    /// A `PatternDescription` declares `interval_seconds = 0` with
+    /// `count > 1`.  A zero-interval stream collapses every expanded
+    /// event to the same timestamp, which is ambiguous: the signer
+    /// either meant "one event at start_time" (`count = 1`) or a
+    /// non-zero cadence.  We reject the degenerate case so the signer
+    /// must state intent.
+    #[error(
+        "pattern-description with count > 1 requires interval_seconds > 0 \
+         (zero interval collides all expanded events onto start_time)"
+    )]
+    ZeroIntervalWithMultipleEvents,
+
+    /// A `PatternDescription` declares `count = 0`.  An empty stream is
+    /// idiomatically expressed as `events: []` (the `Literal` variant of
+    /// `AuditStreamInput`); accepting `count = 0` here would create two
+    /// syntactically-distinct encodings of the same semantic object,
+    /// widening the parse surface for no expressive gain (plan §14.4).
+    #[error(
+        "pattern-description requires count > 0 (use literal `events: []` \
+         for an empty stream)"
+    )]
+    PatternDescriptionCountZero,
+
+    /// A `DetectorState::ingest_event` call would push the target
+    /// mandate's live-event counter past
+    /// [`crate::state::MAX_EVENTS_PER_MANDATE`].  The cap bounds the
+    /// detector's memory footprint when an attacker controls a single
+    /// mandate and tries to drown the state machine in events.
+    ///
+    /// `mandate_id` is attacker-controlled (signed upstream in the
+    /// audit-service but originally minted per tenant) and MUST be
+    /// passed through [`sanitize_log_string`] at construction.
+    #[error(
+        "mandate `{mandate_id}` already holds {cap} live events (cap: MAX_EVENTS_PER_MANDATE); \
+         new event rejected"
+    )]
+    PerMandateCapReached { mandate_id: String, cap: u64 },
+
+    /// A `DetectorState::advance_clock` call supplied a `new_time`
+    /// earlier than the already-observed `current_time`.  Clock
+    /// regression violates the state machine's monotonic-time
+    /// invariant; sliding-window eviction and per-pattern timing
+    /// decisions assume `current_time` only moves forward.  Rather
+    /// than silently clamp (which would mask a producer bug), we
+    /// reject and let the caller decide — typically, the caller
+    /// re-routes the regressing event through the signer's error
+    /// channel.
+    #[error(
+        "advance_clock rejected: from={from}s to={to}s (time must move forward monotonically)"
+    )]
+    ClockRegression { from: i64, to: i64 },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -523,5 +683,125 @@ mod tests {
         assert!(!display.contains('\n'));
         assert!(!display.contains('\r'));
         assert!(display.contains("lib::inj?INJ"));
+    }
+
+    // ────────────────────────────────────────────────────────────
+    // Session 5-A — `StreamError` display-contract tests.
+    //
+    // Every variant's Display output is pinned here because the
+    // error messages are the primary surface operators see when
+    // debugging an audit stream.  A refactor that accidentally
+    // drops a field or reformats a message would silently regress
+    // the operator-facing contract; these tests catch it.
+    // ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn stream_error_expansion_exceeded_surfaces_both_bounds() {
+        let err = StreamError::ExpansionExceeded {
+            requested: 200_000,
+            cap: 100_000,
+        };
+        let display = format!("{err}");
+        assert!(display.contains("200000"));
+        assert!(display.contains("100000"));
+        assert!(display.contains("MAX_EXPANDED_EVENTS"));
+    }
+
+    #[test]
+    fn stream_error_clock_skew_sanitises_event_id_in_display() {
+        // `event_id` is attacker-controlled; the construction site is
+        // responsible for wrapping it through sanitize_log_string so
+        // the Display output cannot re-leak injected control bytes
+        // into log sinks.
+        let err = StreamError::ClockSkewRejected {
+            event_id: sanitize_log_string("evt::forged\nINJ\x1b[31m"),
+            skew_seconds: 3600,
+        };
+        let display = format!("{err}");
+        assert!(!display.contains('\n'));
+        assert!(!display.contains('\x1b'));
+        assert!(display.contains("evt::forged?INJ?[31m"));
+        assert!(display.contains("3600"));
+    }
+
+    #[test]
+    fn stream_error_timestamp_parse_reason_is_static_str() {
+        // `reason` is `&'static str` by design — it classifies the
+        // failure without echoing the offending bytes.  The
+        // assertion also pins the `&'static str` type: a refactor to
+        // `String` would force changing this test.
+        const REASON: &str = "missing 'T' separator";
+        let err = StreamError::TimestampParseFailed { reason: REASON };
+        let display = format!("{err}");
+        assert!(display.contains(REASON));
+    }
+
+    #[test]
+    fn stream_error_missing_index_placeholder_mentions_required_token() {
+        let err = StreamError::PatternMissingIndexPlaceholder;
+        let display = format!("{err}");
+        assert!(display.contains("{i}"));
+        assert!(display.contains("resource_ref_pattern"));
+    }
+
+    #[test]
+    fn stream_error_zero_interval_mentions_start_time_collapse() {
+        let err = StreamError::ZeroIntervalWithMultipleEvents;
+        let display = format!("{err}");
+        assert!(display.contains("interval_seconds"));
+        assert!(display.contains("start_time"));
+    }
+
+    #[test]
+    fn stream_error_count_zero_suggests_literal_empty_events() {
+        // The error message must point the signer at the idiomatic
+        // empty-stream encoding so they do not re-file the same
+        // degenerate pattern-description.
+        let err = StreamError::PatternDescriptionCountZero;
+        let display = format!("{err}");
+        assert!(display.contains("count > 0"));
+        assert!(display.contains("events: []"));
+    }
+
+    #[test]
+    fn stream_error_is_debug_clone_eq() {
+        // Debug/Clone/PartialEq/Eq are required by integration tests
+        // that match on variants and by fixture builders that reuse
+        // error instances across assertions.  This pin fails loudly
+        // if a future refactor drops one of the derives.
+        fn assert_bounds<T: std::fmt::Debug + Clone + PartialEq + Eq>() {}
+        assert_bounds::<StreamError>();
+    }
+
+    #[test]
+    fn stream_error_per_mandate_cap_sanitises_mandate_id_in_display() {
+        // The constructor at state::ingest_event passes mandate_id
+        // through sanitize_log_string; pin that the Display surface
+        // preserves the sanitised form without re-injecting control
+        // bytes.
+        let err = StreamError::PerMandateCapReached {
+            mandate_id: sanitize_log_string("m-42\nINJ"),
+            cap: 10_000,
+        };
+        let display = format!("{err}");
+        assert!(display.contains("m-42?INJ"));
+        assert!(display.contains("10000"));
+        assert!(display.contains("MAX_EVENTS_PER_MANDATE"));
+        assert!(!display.contains('\n'));
+    }
+
+    #[test]
+    fn stream_error_clock_regression_surfaces_both_bounds() {
+        // Operator-facing message must name both the previous clock
+        // and the regressed candidate so the operator can locate the
+        // producer bug without cross-referencing metrics.
+        let err = StreamError::ClockRegression {
+            from: 1_700_000_120,
+            to: 1_699_999_000,
+        };
+        let display = format!("{err}");
+        assert!(display.contains("1700000120"));
+        assert!(display.contains("1699999000"));
+        assert!(display.contains("monotonically"));
     }
 }

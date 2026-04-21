@@ -4,7 +4,7 @@
 //! Also pins the SHA-256 of the dry-run output so any accidental source of
 //! non-determinism in the anomaly-library vector generator (Ed25519 nonce
 //! derivation, ciborium map ordering, `BTreeMap` iteration drift in
-//! `MandateScope`, COSE_Sign1 header serialisation, `build_custom_payload`
+//! `MandateScope`, `COSE_Sign1` header serialisation, `build_custom_payload`
 //! mutation sequencing, …) is caught immediately.
 //!
 //! Mirrors `determinism_c3_c.rs` — same three invariants applied to the

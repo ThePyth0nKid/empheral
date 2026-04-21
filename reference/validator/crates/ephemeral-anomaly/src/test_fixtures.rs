@@ -49,12 +49,16 @@ use std::sync::OnceLock;
 use coset::{iana, CborSerializable, CoseSign1Builder, HeaderBuilder};
 use ed25519_dalek::{Signer as _, SigningKey, VerifyingKey};
 
+use crate::event::{
+    AuditStreamInput, CanonicalizedEvent, Outcome, PatternDescription, TemplateEvent,
+};
 use crate::ledger::{AnomalyLedger as _, InMemoryAnomalyLedger};
 use crate::patterns::{Action, FiringRule, PatternEntry, Severity, Threshold};
 use crate::schema::AnomalyLibraryPayload;
 use crate::scope::{MandateScope, ScopePredicate, VerbPredicate};
-use crate::signature::ANOMALY_LIBRARY_AAD;
+use crate::signature::{VerifiedAnomalyLibrarySignature, ANOMALY_LIBRARY_AAD};
 use crate::ANOMALY_LIBRARY_ABI_VERSION;
+use std::sync::Arc;
 
 // ============================================================================
 // Deterministic signing infrastructure
@@ -714,6 +718,175 @@ pub fn shared_anomaly_artifacts() -> &'static SharedAnomalyArtifacts {
 }
 
 // ============================================================================
+// Session 5-A audit-stream fixture builders
+// ============================================================================
+//
+// Session 5-A integration tests (`tests/stream_normalization.rs`,
+// `tests/state_machine_skeleton.rs`) need two canonical audit-stream
+// shapes:
+//
+// - A `PatternDescription`-driven delete-storm (exercises the
+//   normaliser's expansion path).
+// - A literal canary-window stream (exercises the pass-through path
+//   and the state-machine's high-tier branch).
+//
+// Both fixtures return `AuditStreamInput` values so consumers can
+// either call `normalize()` directly (normalisation tests) or pass
+// the raw input shape into a state-machine ingestion loop (state-
+// machine tests).
+
+/// Canonical RFC-3339 start timestamp used by
+/// [`fixture_delete_storm_stream`].  Fixed so conformance tests can
+/// pin byte-exact expansion output.  Unix-seconds equivalent is
+/// [`FIXTURE_STORM_START_UNIX`].
+pub const FIXTURE_STORM_START_TIME: &str = "2026-05-01T12:00:00Z";
+
+/// Unix-seconds form of [`FIXTURE_STORM_START_TIME`].  Kept as a
+/// separate constant so integration tests can assert against the
+/// post-normalisation `i64` without re-parsing.
+pub const FIXTURE_STORM_START_UNIX: i64 = 1_777_636_800;
+
+/// Build a canonical `AuditStreamInput::PatternDescription` fixture
+/// for a 10-event delete-storm inside a 60-second window.
+///
+/// Expansion shape (pinned by `fixture_delete_storm_stream_expands_
+/// to_ten_events_at_six_second_intervals`):
+///
+/// - 10 events
+/// - 6-second interval (spans 54 seconds end-to-end)
+/// - All attributed to mandate `m-storm`
+/// - `verb=delete`, `resource_kind=pod`, `tier=2`, integration
+///   `kubernetes`, outcome `Executed`
+/// - `resource_ref = ns/storm/pod-{i}` (distinct per event)
+///
+/// # Why 10 events, 6 seconds apart
+///
+/// The §3.5.4 `delete-storm` threshold is `Count(5)` in a 60-second
+/// window.  10 events 6 s apart cross the threshold twice over — a
+/// comfortable margin against off-by-one errors in Session 5-B's
+/// sliding-window evaluator while still fitting inside one window.
+#[must_use]
+pub fn fixture_delete_storm_stream() -> AuditStreamInput {
+    AuditStreamInput::PatternDescription(PatternDescription {
+        start_time: FIXTURE_STORM_START_TIME.to_string(),
+        end_time: "2026-05-01T12:00:54Z".to_string(),
+        count: 10,
+        interval_seconds: 6,
+        template_event: TemplateEvent {
+            mandate_id: "m-storm".to_string(),
+            tier: 2,
+            integration: "kubernetes".to_string(),
+            verb: "delete".to_string(),
+            resource_kind: "pod".to_string(),
+            outcome: Outcome::Executed,
+        },
+        resource_ref_pattern: "ns/storm/pod-{i}".to_string(),
+    })
+}
+
+/// Build a canonical `AuditStreamInput::Literal` fixture for a
+/// three-event tier-3 canary stream.
+///
+/// Events share `integration=canary-signers` and `tier=3` so
+/// state-machine ingestion can route them into a tier-3 pattern
+/// bucket.  Distinct `resource_ref` per event so Session 5-B's
+/// distinct-count evaluators see non-trivial data.
+///
+/// Used by both:
+/// - `tests/stream_normalization.rs` — pass-through / order
+///   preservation.
+/// - `tests/state_machine_skeleton.rs` — high-tier routing +
+///   clock-skew skew-free ingestion path.
+#[must_use]
+pub fn fixture_canary_stream() -> AuditStreamInput {
+    AuditStreamInput::Literal {
+        events: vec![
+            CanonicalizedEvent {
+                event_id: "canary-1".to_string(),
+                timestamp: FIXTURE_STORM_START_UNIX,
+                mandate_id: "m-canary".to_string(),
+                tier: 3,
+                integration: "canary-signers".to_string(),
+                verb: "sign".to_string(),
+                resource_kind: "attestation".to_string(),
+                resource_ref: "pcr/canary-tier-3/obs-1".to_string(),
+                outcome: Outcome::Executed,
+            },
+            CanonicalizedEvent {
+                event_id: "canary-2".to_string(),
+                timestamp: FIXTURE_STORM_START_UNIX + 5,
+                mandate_id: "m-canary".to_string(),
+                tier: 3,
+                integration: "canary-signers".to_string(),
+                verb: "sign".to_string(),
+                resource_kind: "attestation".to_string(),
+                resource_ref: "pcr/canary-tier-3/obs-2".to_string(),
+                outcome: Outcome::Executed,
+            },
+            CanonicalizedEvent {
+                event_id: "canary-3".to_string(),
+                timestamp: FIXTURE_STORM_START_UNIX + 10,
+                mandate_id: "m-canary".to_string(),
+                tier: 3,
+                integration: "canary-signers".to_string(),
+                verb: "sign".to_string(),
+                resource_kind: "attestation".to_string(),
+                resource_ref: "pcr/canary-tier-3/obs-3".to_string(),
+                outcome: Outcome::Executed,
+            },
+        ],
+    }
+}
+
+/// Deterministic `library_id` for detector-state fixtures.
+///
+/// Distinct from the §3.5.4 MINIMUM library's id so the detector
+/// fixtures cannot be confused with the envelope-verification
+/// fixtures at a glance.
+pub const FIXTURE_DETECTOR_LIBRARY_ID: &str = "lib::fixture::detector";
+
+/// Deterministic `library_version` for detector-state fixtures.
+pub const FIXTURE_DETECTOR_LIBRARY_VERSION: u64 = 1;
+
+/// Issued-at timestamp for detector fixtures.
+/// Same window as [`FIXTURE_STORM_START_UNIX`]-adjacent tests so a
+/// `DetectorState::new(fixture_detector_library(...), TEST_NOW)`
+/// sits inside the library's validity window out of the box.
+pub const FIXTURE_DETECTOR_ISSUED_AT: i64 = 1_700_000_000;
+
+/// Expires-at timestamp for detector fixtures.
+pub const FIXTURE_DETECTOR_EXPIRES_AT: i64 = 1_900_000_000;
+
+/// Build an `Arc<VerifiedAnomalyLibrarySignature>` for
+/// [`crate::state::DetectorState::new`] wired with the supplied
+/// pattern table.
+///
+/// The returned library is NOT cryptographically signed — it
+/// short-circuits the envelope-verification path to give integration
+/// tests a ready-made `pinned_library` for state-machine scenarios.
+/// Callers that need a fully-signed envelope use
+/// [`shared_anomaly_artifacts`] instead.
+///
+/// Callers pass `patterns` explicitly so a single test can pin a
+/// specific subset — empty vector for the "no patterns, ingestion
+/// counter only" scenario, `vec![delete_storm_pattern()]` for the
+/// routing happy path, and so on.
+#[must_use]
+pub fn fixture_detector_library(
+    patterns: Vec<PatternEntry>,
+) -> Arc<VerifiedAnomalyLibrarySignature> {
+    Arc::new(VerifiedAnomalyLibrarySignature {
+        signer_kid: FIXTURE_ANOMALY_KID.to_string(),
+        abi_version: ANOMALY_LIBRARY_ABI_VERSION,
+        library_id: FIXTURE_DETECTOR_LIBRARY_ID.to_string(),
+        library_version: FIXTURE_DETECTOR_LIBRARY_VERSION,
+        issued_at: FIXTURE_DETECTOR_ISSUED_AT,
+        expires_at: FIXTURE_DETECTOR_EXPIRES_AT,
+        patterns,
+    })
+}
+
+// ============================================================================
 // Module-internal regression tests
 // ============================================================================
 //
@@ -905,6 +1078,45 @@ mod self_test {
             env_v1, pool.minimum_library,
             "v1 override must byte-match the shared MINIMUM pool entry"
         );
+    }
+
+    #[test]
+    fn fixture_delete_storm_stream_expands_to_ten_events_at_six_second_intervals() {
+        // Pin the storm fixture's observable shape so integration
+        // tests for stream normalisation (tests/stream_normalization.rs)
+        // and state-machine ingestion have one authoritative spec.
+        let stream = fixture_delete_storm_stream();
+        let events = stream.normalize().expect("storm fixture MUST normalise");
+        assert_eq!(events.len(), 10);
+        assert_eq!(events[0].timestamp, FIXTURE_STORM_START_UNIX);
+        assert_eq!(events[9].timestamp, FIXTURE_STORM_START_UNIX + 9 * 6);
+        for e in &events {
+            assert_eq!(e.mandate_id, "m-storm");
+            assert_eq!(e.verb, "delete");
+            assert_eq!(e.resource_kind, "pod");
+            assert_eq!(e.outcome, Outcome::Executed);
+        }
+        // Distinct event_ids: every pattern-description expansion
+        // must produce within-expansion-unique ids.
+        let mut ids: Vec<_> = events.iter().map(|e| e.event_id.clone()).collect();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), 10);
+    }
+
+    #[test]
+    fn fixture_canary_stream_contains_three_high_tier_literal_events() {
+        let stream = fixture_canary_stream();
+        let events = stream.normalize().expect("canary fixture MUST normalise");
+        assert_eq!(events.len(), 3);
+        for e in &events {
+            assert_eq!(e.tier, 3);
+            assert_eq!(e.integration, "canary-signers");
+        }
+        // Timestamps must be strictly increasing so the fixture
+        // exercises the state machine's monotonic-clock path.
+        assert!(events[0].timestamp < events[1].timestamp);
+        assert!(events[1].timestamp < events[2].timestamp);
     }
 
     #[test]

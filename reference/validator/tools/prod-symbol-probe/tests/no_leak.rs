@@ -280,16 +280,21 @@ fn test_fixtures_symbols_do_not_leak_into_prod_rlibs() {
         "shared_anomaly_artifacts",
         "cbor_encode_anomaly_payload",
         "minimum_anomaly_library",
-        // Sentinel from the pattern-builder family (15 builders, not
-        // listed exhaustively — see the commentary above).  This one
-        // string suffices: if ANY `#[cfg(feature = "test_fixtures")]`
-        // gate on the whole pattern-builder block ever breaks, this
-        // name WILL leak, and we hear about it without polluting the
-        // forbidden list with 14 other `_pattern` variants.  Chosen
-        // over its siblings because the name — `delete_storm_pattern`
-        // — is sufficiently unique that a substring hit cannot
-        // collide with unrelated code.
+        // Sentinels from the pattern-builder family (15 builders, not
+        // listed exhaustively — see the commentary above).  Three
+        // non-adjacent substrings provide independent coverage
+        // points: a feature-gate regression scoped to a sub-range of
+        // the builder block (e.g. a conditional `cfg` inside one sub-
+        // module) is unlikely to spare ALL three sentinels.  Names
+        // chosen from the storm/policy/canary families so that each
+        // substring is globally unique and cannot collide with
+        // unrelated code under an unrelated feature gate.  Earlier
+        // review noted that a single sentinel is a single-point-of-
+        // failure if that specific function is ever renamed or
+        // inlined; the three-sentinel policy eliminates that risk.
         "delete_storm_pattern",
+        "vault_rotate_storm_pattern",
+        "iam_attach_policy_storm_pattern",
         // Phase C.4 Session 3 — replay-ledger fixture helpers.  Both
         // live behind `#[cfg(feature = "test_fixtures")]` in
         // `crates/ephemeral-anomaly/src/test_fixtures.rs` and MUST
@@ -313,6 +318,51 @@ fn test_fixtures_symbols_do_not_leak_into_prod_rlibs() {
         // default-features rlib and are therefore NOT forbidden.
         "sign_minimum_library_with_version",
         "seeded_ledger_at_version",
+        // Phase C.4 Session 5-A — event-stream normaliser and
+        // state-machine-core fixtures.  All gated behind
+        // `#[cfg(feature = "test_fixtures")]` in
+        // `crates/ephemeral-anomaly/src/test_fixtures.rs`, or behind
+        // `#[cfg(any(test, feature = "test_fixtures"))]` for the
+        // `new_for_testing` constructors on `CanonicalizedEvent`,
+        // `TemplateEvent`, and `PatternDescription`.  Any of these
+        // substrings appearing in a `default-features = false` rlib
+        // means the feature gate regressed.
+        //
+        // Rationale for each addition:
+        //
+        // - `fixture_delete_storm_stream` / `fixture_canary_stream`
+        //   expose pre-baked `AuditStreamInput` values used by the
+        //   stream-normaliser and state-machine-skeleton integration
+        //   tests.  Leaking them would publish a fixture-shape
+        //   dependency that prod consumers could (ab)use to bind
+        //   themselves to test-side invariants.
+        // - `fixture_detector_library` mints an
+        //   `Arc<VerifiedAnomalyLibrarySignature>` WITHOUT a real
+        //   CBOR signature — a prod leak of this would let any caller
+        //   fabricate a "verified" library handle that bypasses the
+        //   envelope-verification path.  Highest-severity forbid on
+        //   the Session 5-A surface.
+        // - `new_for_testing` is a generic substring that covers the
+        //   three non-exhaustive constructors added to
+        //   `CanonicalizedEvent`, `TemplateEvent`, and
+        //   `PatternDescription`.  Matching by substring suffices:
+        //   any feature-gate regression on any of the three would
+        //   leak at least one such symbol.  The name is specific
+        //   enough (not `new`, not `build`) that collisions with
+        //   unrelated code are astronomically unlikely; a substring
+        //   hit means a real Session-5-A test-only constructor
+        //   escaped into prod.
+        //
+        // DetectorState, PatternBuffer, SequenceTracker, ScopeBucketKey,
+        // AnomalyFire, StreamError, CanonicalizedEvent (and its
+        // associated `AuditStreamInput` / `Outcome` / `TemplateEvent`
+        // / `PatternDescription` / `PatternEntry` types) are
+        // unconditional production API — they MUST appear in the
+        // default-features rlib and are therefore NOT forbidden.
+        "fixture_delete_storm_stream",
+        "fixture_canary_stream",
+        "fixture_detector_library",
+        "new_for_testing",
     ];
     // Positive control per rlib: at least one unconditionally public,
     // non-generic symbol that MUST be monomorphized into the rlib. If

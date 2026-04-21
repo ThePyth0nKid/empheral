@@ -29,6 +29,13 @@ ephemeral-crypto = { path = "../ephemeral-crypto" }
 ciborium = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
+# Session 5-A — `AuditStreamInput::PatternDescription::start_time` is
+# declared as an RFC-3339 string on the wire (see the audit-replay
+# conformance fixture shape).  The `time` crate parses it to a
+# `unix_seconds: i64` at stream-normalise time.  Same version the
+# ephemeral-core suite already consumes for `parse_iso_seconds`, so
+# resolver sees a single workspace-pinned version.
+time = { workspace = true }
 
 # Optional deps activated only by `test_fixtures`.  Kept distinct from
 # [dev-dependencies]: dev-deps are crate-private (used only by this
@@ -44,6 +51,10 @@ coset = { workspace = true, optional = true }
 # do not opt into `test_fixtures`.
 ed25519-dalek = { workspace = true }
 coset = { workspace = true }
+# Dev-only JSON (de)serialisation for Session 5-A `Outcome` wire-form
+# and `CanonicalizedEvent` roundtrip tests.  Production code consumes
+# the signed CBOR envelope through ciborium, never JSON.
+serde_json = { workspace = true }
 # Byte-equality tripwire in `tests/minimum_library.rs` hashes the
 # MINIMUM-library envelope with SHA-256 and pins the hex digest.  Stays
 # a dev-dep: production code never hashes fixtures.  Routed through the
