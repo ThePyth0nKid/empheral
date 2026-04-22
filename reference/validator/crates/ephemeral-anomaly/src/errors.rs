@@ -470,6 +470,30 @@ pub enum StreamError {
         "advance_clock rejected: from={from}s to={to}s (time must move forward monotonically)"
     )]
     ClockRegression { from: i64, to: i64 },
+
+    /// An ingested event's `timestamp` is older than the detector's
+    /// past-dated floor (`current_time - (max_library_window +
+    /// PAST_DATED_GRACE_SECONDS)`).  Events this old cannot
+    /// contribute to any firing-rule evaluation — the sliding-window
+    /// evictor would drop them on first pass — so rejecting them at
+    /// ingest time saves buffer slots and stops a past-dated flood
+    /// early.
+    ///
+    /// `event_id` is attacker-controlled and MUST be passed through
+    /// [`sanitize_log_string`] at construction.  `age_seconds` is the
+    /// positive number of seconds the event is behind the floor
+    /// (`floor - event.timestamp`); `floor` is the absolute unix-
+    /// epoch seconds value so an operator can reconstruct the
+    /// rejecting clock without re-deriving the library window.
+    #[error(
+        "event `{event_id}` timestamp is {age_seconds}s older than past-dated floor {floor}s \
+         (floor = current_time - (max_library_window + PAST_DATED_GRACE_SECONDS))"
+    )]
+    PastDatedEventRejected {
+        event_id: String,
+        age_seconds: i64,
+        floor: i64,
+    },
 }
 
 #[cfg(test)]
@@ -803,5 +827,38 @@ mod tests {
         assert!(display.contains("1700000120"));
         assert!(display.contains("1699999000"));
         assert!(display.contains("monotonically"));
+    }
+
+    #[test]
+    fn stream_error_past_dated_event_surfaces_event_age_and_floor() {
+        // Operator-facing message must name the event, its age below
+        // the floor, and the floor itself — a three-tuple sufficient to
+        // debug a past-dated stream without metrics cross-reference.
+        let err = StreamError::PastDatedEventRejected {
+            event_id: sanitize_log_string("evt::stale"),
+            age_seconds: 172_800,
+            floor: 1_699_913_600,
+        };
+        let display = format!("{err}");
+        assert!(display.contains("evt::stale"));
+        assert!(display.contains("172800"));
+        assert!(display.contains("1699913600"));
+        assert!(display.contains("past-dated floor"));
+    }
+
+    #[test]
+    fn stream_error_past_dated_event_sanitises_event_id() {
+        // Attacker-controlled event_id; construction-site sanitisation
+        // is responsible for collapsing control bytes.  The Display
+        // surface must not re-inject them.
+        let err = StreamError::PastDatedEventRejected {
+            event_id: sanitize_log_string("evt::evil\nINJ\x1b[31m"),
+            age_seconds: 10,
+            floor: 0,
+        };
+        let display = format!("{err}");
+        assert!(!display.contains('\n'));
+        assert!(!display.contains('\x1b'));
+        assert!(display.contains("evt::evil?INJ?[31m"));
     }
 }

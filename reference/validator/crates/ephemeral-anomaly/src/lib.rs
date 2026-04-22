@@ -100,6 +100,12 @@
 pub const ANOMALY_LIBRARY_ABI_VERSION: u32 = 1;
 
 pub mod errors;
+// `evaluators` hosts the Session 5-B per-firing-rule evaluators
+// (FirstMatch, SequenceMatch, CumulativeOverBaseline).  The public
+// entry point is [`state::DetectorState::evaluate_all`]; evaluators
+// themselves are internal detail — `pub(crate)` keeps the prod rlib
+// symbol surface minimal (tracked by `prod-symbol-probe`).
+pub(crate) mod evaluators;
 pub mod event;
 pub mod families;
 pub mod fire;

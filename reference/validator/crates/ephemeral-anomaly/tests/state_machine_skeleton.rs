@@ -1,17 +1,18 @@
-//! End-to-end integration tests for the Session 5-A state-machine
-//! skeleton ([`DetectorState`], [`PatternBuffer`], [`SequenceTracker`]).
+//! End-to-end integration tests for the state-machine skeleton
+//! ([`DetectorState`], [`PatternBuffer`], [`SequenceTracker`]).
 //!
-//! Session 5-A deliverable (plan §18).  This file pins the PUBLIC
-//! API surface every downstream consumer sees:
+//! This file pins the PUBLIC API surface every downstream consumer
+//! sees:
 //!
 //! - Construction via [`DetectorState::new`] with a pinned library.
-//! - Per-event ingestion pipeline (clock-skew gate, per-mandate
-//!   quota, scope routing, silent per-buffer ring eviction).
+//! - Per-event ingestion pipeline (clock-skew gate, past-dated
+//!   floor, per-mandate quota, scope routing, silent per-buffer
+//!   ring eviction).
 //! - Monotonic clock advancement via
 //!   [`DetectorState::advance_clock`].
-//! - The Session-5-A contract that [`DetectorState::evaluate_all`]
-//!   returns an empty `Vec` even after ingestion — Session 5-B
-//!   replaces this stub with per-pattern firing evaluators.
+//! - Dispatch behaviour of [`DetectorState::evaluate_all`]: empty
+//!   output on fresh state, a single fire on the storm fixture,
+//!   and fire-once dedup across repeated calls.
 //!
 //! # Layered protection
 //!
@@ -19,10 +20,10 @@
 //!    ingestion logic and individual error-variant shapes.
 //! 2. This file pins the cross-module integration: library fixture
 //!    → `DetectorState` → ingest → `evaluate_all` produces the
-//!    Session-5-A stub output.  A regression in the fixture, the
+//!    expected dispatch output.  A regression in the fixture, the
 //!    `Arc<VerifiedAnomalyLibrarySignature>` sharing surface, or
 //!    the `pub use` re-exports from `lib.rs` surfaces here rather
-//!    than passing silently and breaking Session 5-B.
+//!    than passing silently.
 //! 3. The `test_fixtures` self-tests pin the fixture's structural
 //!    shape; this file pins the state machine's OBSERVABLE effect
 //!    on that fixture.
@@ -42,7 +43,7 @@ use ephemeral_anomaly::{
 };
 
 // -------------------------------------------------------------------
-// Contract pin — the Session-5-A evaluator stub
+// Session-5-B integration pins — evaluate_all + fixture storm
 // -------------------------------------------------------------------
 
 /// Detector-clock anchor for tests that replay the full
@@ -55,49 +56,69 @@ use ephemeral_anomaly::{
 const POST_STORM_ANCHOR: i64 = FIXTURE_STORM_START_UNIX + 54;
 
 #[test]
-fn evaluate_all_returns_empty_vec_without_fire_logic() {
-    // The load-bearing Session-5-A contract: no matter how many
-    // events the detector has ingested, `evaluate_all` returns an
-    // empty Vec.  Session 5-B replaces the stub with per-pattern
-    // evaluators; downstream consumers relying on the stub until
-    // then observe "no fires" as an intentional no-op, NOT a silent
-    // mis-routing.
+fn evaluate_all_fires_on_storm_fixture() {
+    // Session-5-B contract: replaying the 10-event delete-storm
+    // fixture into a FirstMatch/threshold=5 pattern produces exactly
+    // one `AnomalyFire`.  Session 5-A used to pin this as the empty
+    // stub; the rename + inverted assertion is the 5-B commit-A
+    // landmark.
     let library = fixture_detector_library(vec![delete_storm_pattern()]);
     let mut state = DetectorState::new(Arc::clone(&library), POST_STORM_ANCHOR);
 
-    // Feed the storm fixture — 10 events that WOULD fire delete-storm
-    // at Session 5-B (5-in-60s threshold crossed twice over).
     for event in fixture_delete_storm_stream()
         .normalize()
         .expect("storm fixture normalises")
     {
         state
             .ingest_event(event)
-            .expect("session-5-A ingest MUST accept the full delete-storm fixture");
+            .expect("session-5-B ingest MUST accept the full delete-storm fixture");
     }
 
-    // Pre-condition: the state machine HAS seen the events.
     assert_eq!(state.per_mandate_counters().get("m-storm"), Some(&10));
 
-    // Contract pin: evaluate_all is the empty stub regardless of
-    // ingestion state.
     let fires = state.evaluate_all();
-    assert!(
-        fires.is_empty(),
-        "Session-5-A evaluate_all MUST be empty; observed {} fires \
-         — firing-rule evaluation is Session-5-B work.",
-        fires.len()
+    assert_eq!(
+        fires.len(),
+        1,
+        "storm fixture crosses the 5-in-60s threshold → exactly one fire"
+    );
+    assert_eq!(fires[0].pattern_id, "delete-storm");
+    assert_eq!(
+        fires[0].match_scope.mandate_id.as_deref(),
+        Some("m-storm")
     );
 }
 
 #[test]
 fn evaluate_all_is_empty_on_fresh_state() {
-    // Symmetric pin: the stub returns empty BEFORE any ingestion,
-    // too.  A regression that made evaluate_all depend on the
-    // iteration order of an empty buffer map would surface here.
+    // Symmetric pin: no buckets → no fires.  Pins that an empty
+    // `BTreeMap<ScopeBucketKey, PatternBuffer>` is a valid input
+    // state, not an error case.
     let library = fixture_detector_library(vec![delete_storm_pattern()]);
-    let state = DetectorState::new(library, FIXTURE_STORM_START_UNIX);
+    let mut state = DetectorState::new(library, FIXTURE_STORM_START_UNIX);
     assert!(state.evaluate_all().is_empty());
+}
+
+#[test]
+fn evaluate_all_dedups_across_two_calls_on_storm_fixture() {
+    // Within-window re-invocation MUST NOT refire for the same
+    // (pattern_id, mandate_id).  Pins the dedup bookmarking path
+    // end-to-end against a realistic fixture.
+    let library = fixture_detector_library(vec![delete_storm_pattern()]);
+    let mut state = DetectorState::new(Arc::clone(&library), POST_STORM_ANCHOR);
+
+    for event in fixture_delete_storm_stream()
+        .normalize()
+        .expect("storm fixture normalises")
+    {
+        state.ingest_event(event).expect("ingest");
+    }
+
+    assert_eq!(state.evaluate_all().len(), 1, "first call fires");
+    assert!(
+        state.evaluate_all().is_empty(),
+        "second call within dedup window must not refire"
+    );
 }
 
 // -------------------------------------------------------------------
@@ -465,9 +486,12 @@ fn per_buffer_cap_evicts_oldest_event_silently() {
     // cap; anything that hits the cap is already in a regime the
     // firing rule either caught long ago or never will.
     let library = fixture_detector_library(vec![delete_storm_pattern()]);
-    // Clock at a far-future anchor so every event (same timestamp)
-    // falls within the skew window.
-    let now = FIXTURE_STORM_START_UNIX + 100_000;
+    // Clock slightly after the fixture so every event (same timestamp)
+    // falls within BOTH the skew window AND the past-dated floor.  A
+    // 60-second offset keeps events inside the library's 60s delete-
+    // storm window while staying well above
+    // `current_time - (60 + 86_400)` = the past-dated floor.
+    let now = FIXTURE_STORM_START_UNIX + 60;
     let mut state = DetectorState::new(library, now);
 
     for i in 0..=MAX_EVENTS_PER_BUFFER {
