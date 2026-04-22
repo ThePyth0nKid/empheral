@@ -17,7 +17,9 @@ use std::time::SystemTime;
 use crate::error::{SchemaError, ValidatorError};
 use crate::schema::CompiledSchema;
 use crate::suite_file::{load_suite_file, LoadedSuite};
-use crate::suites::{anomaly_library, audit, canonicalization, delegation, fuzz, pcr, tariff};
+use crate::suites::{
+    anomaly_detect, anomaly_library, audit, canonicalization, delegation, fuzz, pcr, tariff,
+};
 use crate::types::{
     SuiteReport, TestReport, ValidationOutcome, Vector, VectorFailure, VectorSuite,
 };
@@ -161,6 +163,7 @@ fn execute_vector(loaded: &LoadedSuite, vector: &Vector) -> ValidationOutcome {
         VectorSuite::PcrAttestationReject => pcr::execute(vector),
         VectorSuite::AuditReplay => audit::execute(vector),
         VectorSuite::AnomalyLibraryReject => anomaly_library::execute(vector),
+        VectorSuite::AnomalyDetect => anomaly_detect::execute(vector),
     }
 }
 
@@ -229,6 +232,7 @@ fn stem_suite_hint(path: &Path) -> Option<VectorSuite> {
         "pcr-attestation-reject" => Some(VectorSuite::PcrAttestationReject),
         "audit-replay" => Some(VectorSuite::AuditReplay),
         "anomaly-library-reject" => Some(VectorSuite::AnomalyLibraryReject),
+        "anomaly-detect" => Some(VectorSuite::AnomalyDetect),
         _ => None,
     }
 }

@@ -60,6 +60,22 @@
 //! dial.  Signing inputs flow through `ephemeral_anomaly::test_fixtures`,
 //! the single source of truth also consumed by ephemeral-core's
 //! `anomaly-library-reject` suite executor.
+//!
+//! ### `gen-phase-c4-detect`
+//! Generator for the fifteen Phase C.4 Session 5-B Commit B
+//! anomaly-detect firing-rule vectors (adet-100..adet-114).  Delegates
+//! to `phase_c4_detect::build_all()`.  Each vector binds the MINIMUM
+//! library envelope (signed via
+//! `ephemeral_anomaly::test_fixtures::sign_minimum_library_with_version(1)`
+//! — the same fixture source the `anomaly-library-reject` suite reaches
+//! for) with one or more `AuditStreamInput` shapes, then pins the
+//! expected firing multiset against `DetectorState::evaluate_all` per
+//! design-final.md §3.5.3 + §11.2.  Twelve vectors expect
+//! `reject_code = "anomaly-detected"` with a non-empty `fires` array;
+//! two expect `accept` (the negative-control empty / below-threshold
+//! streams); three expect stream-shape rejects (`anomaly-detect-stream-
+//! clock-regression`, `-pattern-description-count-zero`,
+//! `-timestamp-parse-failed`).
 
 // NOTE: This binary unconditionally activates `test-fixtures` on
 // `ephemeral-attestation`, so `insert_trusted_der_for_test` is reachable at
@@ -104,6 +120,7 @@ mod merkle;
 mod phase_c2_5;
 mod phase_c3_c;
 mod phase_c3_c_fuzz;
+mod phase_c4_detect;
 mod phase_c4_library;
 
 #[derive(Parser, Debug)]
@@ -130,6 +147,9 @@ enum Cmd {
     GenFuzzC3_C(GenFuzzC3_CArgs),
     /// Regenerate + append the seventeen Phase C.4 anomaly-library vectors.
     GenPhaseC4Library(GenPhaseC4LibraryArgs),
+    /// Regenerate + append the fifteen Phase C.4 Session 5-B Commit B
+    /// anomaly-detect firing-rule vectors.
+    GenPhaseC4Detect(GenPhaseC4DetectArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -218,6 +238,32 @@ struct GenPhaseC4LibraryArgs {
 }
 
 #[derive(clap::Args, Debug)]
+struct GenPhaseC4DetectArgs {
+    /// Target JSON.  Created with a fresh Phase-C.4 anomaly-detect envelope
+    /// if missing; otherwise appended to (duplicate IDs are rejected).
+    ///
+    /// The anomaly-detect suite is a brand-new suite key introduced in
+    /// Session 5-B Commit B (`VectorSuite::AnomalyDetect`).  The filename
+    /// matches the `vector_suite` field exactly — `stem_suite_hint` in
+    /// `ephemeral-core::runner` falls back on the stem only when the body
+    /// fails to parse, so a mismatched filename would silently misroute
+    /// orphan load-errors.
+    ///
+    /// Path is relative to the canonical invocation cwd (workspace root,
+    /// i.e. `cargo run -p vector-signer -- gen-phase-c4-detect`). From
+    /// there, `../../conformance/` resolves to the repo-root `conformance/`
+    /// dir.
+    #[arg(long, default_value = r"..\..\conformance\anomaly-detect.json")]
+    target: PathBuf,
+    /// Dry-run: print the 15 JSON values to stdout, pretty-printed and
+    /// separated by newlines (matching the C.4-library pattern).  The
+    /// committed `tests/determinism_c4_detect.rs` tripwire pins the
+    /// SHA-256 of this dry-run output against regeneration drift.
+    #[arg(long)]
+    dry_run: bool,
+}
+
+#[derive(clap::Args, Debug)]
 struct GenFuzzC3_CArgs {
     /// Target JSON.  The fuzz-baseline file must already exist — this
     /// subcommand patches two entries (fuzz-190 replace, fuzz-200
@@ -262,6 +308,7 @@ fn main() -> Result<()> {
         Cmd::GenPhaseC3_C(a) => run_gen_phase_c3_c(&a),
         Cmd::GenFuzzC3_C(a) => run_gen_fuzz_c3_c(&a),
         Cmd::GenPhaseC4Library(a) => run_gen_phase_c4_library(&a),
+        Cmd::GenPhaseC4Detect(a) => run_gen_phase_c4_detect(&a),
     }
 }
 
@@ -1512,6 +1559,94 @@ fn build_c4_library_envelope() -> Value {
             "anomaly-library-version-rollback": 1,
             "anomaly-library-accept-first-observation": 1,
             "anomaly-library-accept-strict-advance": 1
+        },
+        "vectors": []
+    })
+}
+
+// ============================================================================
+// Phase C.4 Session 5-B Commit B: anomaly-detect firing-rule vectors
+// (adet-100..adet-114)
+// ============================================================================
+//
+// Delegated to `phase_c4_detect::build_all()` — the fifteen vectors cover
+// the full `DetectorState::evaluate_all` surface against the MINIMUM library
+// (10 primaries + 5 companions): per-pattern fire paths
+// (FirstMatch/Count, FirstMatch/DistinctCount, SequenceMatch/CrossTier,
+// SequenceMatch/SilenceThenBurst, CumulativeOverBaseline), scope-predicate
+// projections (VerbResourceMandate/AnyDestructive, Exact, Family,
+// IamAttachFamily, ProtectedBranches wildcard, MandatePace with tier
+// projection, VerbFanout with verb projection, CrossTierSequence,
+// SilenceThenBurst), fire-once-within-suppression-window dedup, anti-
+// walk-under companion pairing, and stream-shape normalization errors
+// (ClockRegression, PatternDescriptionCountZero, TimestampParseFailed).
+// The library envelope is signed by
+// `ephemeral_anomaly::test_fixtures::sign_minimum_library_with_version(1)`
+// — the same source of fixture truth the Session-4
+// `anomaly-library-reject` suite consumes, so regeneration here and
+// live-dispatch there cannot drift.
+
+fn run_gen_phase_c4_detect(args: &GenPhaseC4DetectArgs) -> Result<()> {
+    let vectors = phase_c4_detect::build_all();
+
+    if args.dry_run {
+        let mut stdout = std::io::stdout().lock();
+        for v in &vectors {
+            writeln!(stdout, "{}", serde_json::to_string_pretty(v)?)?;
+        }
+        return Ok(());
+    }
+
+    append_vectors_with_envelope(&args.target, vectors, build_c4_detect_envelope)
+}
+
+/// Build the envelope for a fresh C.4 anomaly-detect suite file.
+///
+/// `generated_at` is pinned to the authoring date (2026-04-22) as a
+/// literal string.  The field is not schema-validated and not
+/// consumed by any executor; pinning it keeps the dry-run output
+/// deterministic under the SHA-256 tripwire in
+/// `tests/determinism_c4_detect.rs`, matching the C.2 / C.2.5 /
+/// C.3-C / C.4-library precedent.  Do NOT rewrite this to
+/// `OffsetDateTime::now_utc()` — every regeneration would then
+/// produce a new hash and defeat the tripwire.  When a genuine re-
+/// authoring lands, advance the constant AND `DRY_RUN_SHA256`
+/// together in the same commit.
+///
+/// `vector_suite` is `"anomaly-detect"` — a brand-new suite key
+/// introduced in Session 5-B Commit B (`VectorSuite::AnomalyDetect`).
+/// Mirrors the Session-4 library-reject pattern: one suite key, one
+/// file; any future anomaly-detect expansion should append into this
+/// same file rather than introduce a second filename.
+///
+/// `coverage_summary` keys MUST match each vector's `category` string
+/// byte-for-byte so a downstream coverage checker that joins
+/// `coverage_summary` against emitted vector categories lands on a hit
+/// for every row.  The C.2.5 envelope set this invariant; any drift
+/// here is a silent coverage-drop.
+fn build_c4_detect_envelope() -> Value {
+    json!({
+        "schema_version": "1.0.0",
+        "vector_suite": "anomaly-detect",
+        "spec_reference": "design-final.md §3.5.3 + §11.2 (Phase C.4 Session 5-B Commit B anomaly-detect firing rules)",
+        "spec_version": "round8-delta-applied + phase-c4-session5b-commit-b",
+        "generated_at": "2026-04-22T00:00:00Z",
+        "coverage_summary": {
+            "anomaly-detect-delete-storm-basic": 1,
+            "anomaly-detect-iam-attach-storm": 1,
+            "anomaly-detect-vault-rotate-storm": 1,
+            "anomaly-detect-gfp-only-isolation": 1,
+            "anomaly-detect-fanout-distinct-and-slow-burn": 1,
+            "anomaly-detect-cross-tier-escalation": 1,
+            "anomaly-detect-delete-walk-under-slow-burn": 1,
+            "anomaly-detect-iam-walk-under-slow-burn": 1,
+            "anomaly-detect-fire-once-dedup-across-streams": 1,
+            "anomaly-detect-empty-stream": 1,
+            "anomaly-detect-below-all-thresholds": 1,
+            "anomaly-detect-machine-pace-and-silence-burst": 1,
+            "anomaly-detect-clock-regression": 1,
+            "anomaly-detect-pattern-description-count-zero": 1,
+            "anomaly-detect-timestamp-parse-failed": 1
         },
         "vectors": []
     })

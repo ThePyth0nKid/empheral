@@ -43,7 +43,13 @@ unicode-normalization = "0.1"
 caseless = "0.2"
 proptest = "1.5"
 hex = "0.4"
-time = { version = "0.3", features = ["parsing", "formatting", "macros"] }
+# `parsing` is the only feature actually consumed across the workspace:
+# every `time` user goes through `OffsetDateTime::parse(..., &Rfc3339)`.
+# No production or test code uses `formatting` (no `.format(...)` calls)
+# or `macros` (no `datetime!`/`date!`).  Keeping the surface narrow
+# limits compile-time exposure if a future CVE hits the broader feature
+# set; widen deliberately if a new consumer needs it.
+time = { version = "0.3", features = ["parsing"] }
 coset = "0.4"
 ed25519-dalek = "2.2"
 ciborium = "0.2"

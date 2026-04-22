@@ -360,6 +360,11 @@ fn default_inputs(dir: &Path) -> Vec<PathBuf> {
         // verification (§3.5).  Adds 17 vectors under the new
         // `anomaly-library-reject` suite key; CLI totals climb 536→553.
         "anomaly-library-reject.json",
+        // Phase C.4 Session 5-B — firing-rule evaluation against a
+        // verified library (§3.5.3 primary/companion patterns, §11.2
+        // `AnomalyDetected` emission).  Adds 15 vectors under the new
+        // `anomaly-detect` suite key; CLI totals climb 553→568.
+        "anomaly-detect.json",
     ];
     NAMES
         .iter()

@@ -28,9 +28,10 @@
         "tariff-reject",
         "pcr-attestation-reject",
         "audit-replay",
-        "anomaly-library-reject"
+        "anomaly-library-reject",
+        "anomaly-detect"
       ],
-      "description": "Which of the seven conformance suites this file represents. `anomaly-library-reject` was added in Phase C.4 Session 4 for AnomalyPatternLibrary envelope verification (design-final.md §3.5)."
+      "description": "Which of the eight conformance suites this file represents. `anomaly-library-reject` was added in Phase C.4 Session 4 for AnomalyPatternLibrary envelope verification (design-final.md §3.5). `anomaly-detect` was added in Phase C.4 Session 5-B for firing-rule evaluation against a verified library (design-final.md §3.5.3, §11.2)."
     },
     "spec_reference": {
       "type": "string",

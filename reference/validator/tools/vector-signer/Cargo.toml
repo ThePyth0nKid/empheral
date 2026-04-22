@@ -51,3 +51,9 @@ proptest = { workspace = true }
 # differs from sha256-of-supplied-wasm").  Dev-only — never used at
 # runtime by the binary itself.
 ciborium = { workspace = true }
+# Phase C.4 Session 5-B Commit B — `phase_c4_detect.rs` inline test
+# `detect_initial_time_unix_matches_iso_literal` parses the ISO-8601
+# constant back to a unix timestamp to cross-check the two compile-time
+# constants stay in sync.  Dev-only — builder code paths never parse
+# timestamps at runtime.
+time = { workspace = true }

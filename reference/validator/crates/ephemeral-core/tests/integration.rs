@@ -7,6 +7,10 @@
 //!
 //! Phase C.4 Session 4 adds the seventh suite `anomaly-library-reject`
 //! (`conformance/anomaly-library-reject.json`, 17 vectors).
+//!
+//! Phase C.4 Session 5-B Commit B adds the eighth suite `anomaly-detect`
+//! (`conformance/anomaly-detect.json`, 15 vectors) — firing-rule evaluation
+//! against a verified library envelope per design-final.md §3.5.3 + §11.2.
 
 use std::path::{Path, PathBuf};
 
@@ -150,8 +154,20 @@ fn anomaly_library_reject_structural() {
     );
 }
 
+/// Phase C.4 Session 5-B Commit B — firing-rule evaluation vectors
+/// (adet-100..adet-114). 12 rejects produce `AnomalyDetected` fires under
+/// `DetectorState::evaluate_all`, 2 accepts pin the negative-control
+/// (empty / below-threshold) path, 3 stream-shape rejects exercise the
+/// normalizer error surface.  The suite executor mirrors the
+/// `anomaly-library-reject` envelope path end-to-end and then drives
+/// `evaluate_all` against the MINIMUM library.
 #[test]
-fn run_many_aggregates_all_seven() {
+fn anomaly_detect_structural() {
+    assert_file_all_executed("anomaly-detect.json", VectorSuite::AnomalyDetect);
+}
+
+#[test]
+fn run_many_aggregates_all_eight() {
     let s = schema();
     let cfg = RunConfig {
         schema: &s,
@@ -171,6 +187,7 @@ fn run_many_aggregates_all_seven() {
         "pcr-attestation-reject.json",
         "audit-replay.json",
         "anomaly-library-reject.json",
+        "anomaly-detect.json",
     ];
     #[cfg(feature = "test-fixtures")]
     input_names.push("pcr-attestation-reject-c2-live.json");
@@ -180,8 +197,8 @@ fn run_many_aggregates_all_seven() {
     let report = ephemeral_core::run_many(&inputs, &cfg);
     assert_eq!(
         report.per_suite.len(),
-        7,
-        "expected 7 suites in the aggregate report, got {:?}",
+        8,
+        "expected 8 suites in the aggregate report, got {:?}",
         report.per_suite.keys().collect::<Vec<_>>()
     );
     for (suite, sr) in &report.per_suite {
@@ -197,11 +214,11 @@ fn run_many_aggregates_all_seven() {
         report.per_suite
     );
     assert!(report.is_clean());
-    // Phase C.4 Session 4: all seven suites execute. With `test-fixtures`
-    // enabled the corpus is 545 vectors (93 canon + 70 deleg + 205 fuzz +
-    // 71 tariff + 49 pcr mock + 8 pcr c2-live + 32 audit + 17 anomaly-
-    // library); without the feature the c2-live file is excluded, leaving
-    // 537.
+    // Phase C.4 Session 5-B Commit B: all eight suites execute. With
+    // `test-fixtures` enabled the corpus is 560 vectors (93 canon + 70
+    // deleg + 205 fuzz + 71 tariff + 49 pcr mock + 8 pcr c2-live + 32
+    // audit + 17 anomaly-library + 15 anomaly-detect); without the
+    // feature the c2-live file is excluded, leaving 552.
     //
     // Intentionally NOT aggregated here: the Phase C.2.5 Rekor vectors
     // (`pcr-attestation-reject-c2-5-rekor.json`, 16 vectors) and the
@@ -211,11 +228,11 @@ fn run_many_aggregates_all_seven() {
     // to-end; folding them into this aggregate would require another
     // feature-gated branch and an updated pin for every new session.
     // The total ephemeral-cli run covers them via `default_inputs` —
-    // see the 553-vector number reported by `cargo run -p ephemeral-cli`.
+    // see the 568-vector number reported by `cargo run -p ephemeral-cli`.
     #[cfg(feature = "test-fixtures")]
-    let expected_pass = 545;
+    let expected_pass = 560;
     #[cfg(not(feature = "test-fixtures"))]
-    let expected_pass = 537;
+    let expected_pass = 552;
     assert_eq!(
         report.total_pass(),
         expected_pass,

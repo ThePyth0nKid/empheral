@@ -51,6 +51,12 @@ pub enum VectorSuite {
     /// (Stages 1–8 per §3.5).  Suite executor lives in
     /// [`crate::suites::anomaly_library`].
     AnomalyLibraryReject,
+    /// Phase C.4 Session 5-B — anomaly-detect stream replay exercising
+    /// [`ephemeral_anomaly::DetectorState::evaluate_all`] firing rules
+    /// (§3.5.3 primary/companion patterns, §11.2 AnomalyDetected
+    /// emission).  Suite executor lives in
+    /// [`crate::suites::anomaly_detect`].
+    AnomalyDetect,
 }
 
 impl VectorSuite {
@@ -64,11 +70,12 @@ impl VectorSuite {
             Self::PcrAttestationReject => "pcr-attestation-reject",
             Self::AuditReplay => "audit-replay",
             Self::AnomalyLibraryReject => "anomaly-library-reject",
+            Self::AnomalyDetect => "anomaly-detect",
         }
     }
 
-    /// All seven suites, in documentation order.
-    pub const ALL: [Self; 7] = [
+    /// All eight suites, in documentation order.
+    pub const ALL: [Self; 8] = [
         Self::DelegationScope,
         Self::Canonicalization,
         Self::FuzzBaseline,
@@ -76,6 +83,7 @@ impl VectorSuite {
         Self::PcrAttestationReject,
         Self::AuditReplay,
         Self::AnomalyLibraryReject,
+        Self::AnomalyDetect,
     ];
 }
 

@@ -163,6 +163,16 @@ fn build_match_scope(
                 }
             }
             if resource_kind.is_some() {
+                // Copy from sample_event, NOT from the predicate's
+                // literal `resource_kind: Some(literal)`.  This is
+                // valid because the bucket-membership gate in
+                // `ScopePredicate::matches` already enforced
+                // `event.resource_kind == predicate.resource_kind`
+                // before the event reached this projection site, so
+                // the two strings are structurally equal and copying
+                // from the event keeps the invariant "MatchScope
+                // reflects observed event fields, not pattern literal
+                // fields" from §11.2.
                 scope.resource_kind = Some(sample_event.resource_kind.clone());
             }
             if mandate_scope.integration_ref.is_some() {
@@ -549,6 +559,21 @@ mod tests {
     use crate::patterns::{Action, FiringRule, PatternEntry, Severity, Threshold};
     use crate::scope::{MandateScope, ScopePredicate, VerbPredicate};
 
+    /// Local evaluator-test fixture for `delete-storm`.
+    ///
+    /// INTENTIONALLY divergent from the MINIMUM library's
+    /// `delete-storm` (see
+    /// `ephemeral_anomaly::test_fixtures::delete_storm_pattern`,
+    /// which uses `VerbPredicate::AnyDestructive` + `resource_kind:
+    /// None`).  This local copy pins `Exact("delete")` +
+    /// `resource_kind: Some("pod")` so the evaluator unit tests
+    /// below can exercise the `VerbPredicate::Exact` and explicit-
+    /// resource-kind projection paths in `build_match_scope` that
+    /// the wildcard AnyDestructive/None shape would otherwise leave
+    /// uncovered.  Keep the divergence — the EPHEMERAL conformance
+    /// corpus exercises the MINIMUM library's shape end-to-end via
+    /// `anomaly-detect.json`; the two fixtures complement rather
+    /// than duplicate each other.
     fn delete_storm_pattern() -> PatternEntry {
         PatternEntry {
             pattern_id: "delete-storm".into(),
