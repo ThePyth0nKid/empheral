@@ -1,0 +1,21 @@
+{
+  "name": "canon-verify-wasm",
+  "type": "module",
+  "description": "WebAssembly verifier for Canon fact COSE_Sign1 envelopes (companion to tools/canon-signer/web/)",
+  "version": "0.1.0",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ThePyth0nKid/empheral"
+  },
+  "files": [
+    "canon_verify_wasm_bg.wasm",
+    "canon_verify_wasm.js",
+    "canon_verify_wasm.d.ts"
+  ],
+  "main": "canon_verify_wasm.js",
+  "types": "canon_verify_wasm.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

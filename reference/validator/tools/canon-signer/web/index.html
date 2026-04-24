@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Canon Verifier — see why a fact is signed</title>
+  <meta name="description" content="Client-side Canon fact verifier. Everything runs in your browser — no server, no telemetry." />
+
+  <!-- OpenGraph / share card -->
+  <meta property="og:title" content="Canon Verifier" />
+  <meta property="og:description" content="Verify a Canon fact in your browser. Ten transparent steps, zero round-trips." />
+  <meta property="og:type" content="website" />
+
+  <link rel="stylesheet" href="style.css" />
+  <!-- Preload the wasm module so the first click is snappy. -->
+  <link rel="preload" href="pkg/canon_verify_wasm_bg.wasm" as="fetch" type="application/wasm" crossorigin />
+  <link rel="modulepreload" href="pkg/canon_verify_wasm.js" />
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 64 64" aria-hidden="true">
+        <!-- Stylised wax-seal ring.  Filled with --wax-red; stamped "C". -->
+        <circle cx="32" cy="32" r="28" fill="var(--wax-red)" stroke="var(--wax-shadow)" stroke-width="2"/>
+        <circle cx="32" cy="32" r="22" fill="none" stroke="var(--parchment)" stroke-width="1.2" stroke-dasharray="2 2"/>
+        <text x="32" y="42" text-anchor="middle" font-family="Georgia, serif" font-size="26" font-weight="700" fill="var(--parchment)">C</text>
+      </svg>
+      <div class="brand-text">
+        <h1>Canon Verifier</h1>
+        <p class="subtitle">Every signature, every step — verified in your browser.</p>
+      </div>
+    </div>
+    <nav class="top-nav">
+      <a href="#about">About</a>
+      <a href="https://github.com/" id="repo-link" target="_blank" rel="noopener">Source</a>
+    </nav>
+  </header>
+
+  <main>
+    <!-- ───────── Input panel ───────── -->
+    <section class="panel input" aria-labelledby="input-heading">
+      <h2 id="input-heading">Paste a Canon fact</h2>
+      <p class="panel-hint">
+        A <em>Canon fact</em> is a single signed claim: who, what, and when.  The signed bundle
+        travels as two pieces — a hex <strong>envelope</strong> plus the <strong>signer's public key</strong>.
+        Both fit on the back of a QR code.
+      </p>
+
+      <div class="field">
+        <label for="envelope">COSE_Sign1 envelope (hex)</label>
+        <textarea id="envelope" rows="5" spellcheck="false" autocapitalize="off" autocomplete="off"
+          placeholder="84581ba20127…"></textarea>
+      </div>
+
+      <div class="field">
+        <label for="pubkey">Signer public key</label>
+        <input id="pubkey" type="text" spellcheck="false" autocapitalize="off" autocomplete="off"
+          placeholder="ed25519:…" />
+      </div>
+
+      <div class="controls">
+        <button id="verify-btn" class="primary" type="button">Verify</button>
+        <button id="demo-btn" class="secondary" type="button">Load demo fact</button>
+        <button id="clear-btn" class="ghost" type="button">Clear</button>
+      </div>
+
+      <p class="privacy">
+        <svg viewBox="0 0 16 16" class="icon" aria-hidden="true">
+          <path d="M8 1 2 4v4c0 3.6 2.5 6.2 6 7 3.5-.8 6-3.4 6-7V4L8 1zm0 2.2 4 2V8c0 2.6-1.7 4.6-4 5.3-2.3-.7-4-2.7-4-5.3V5.2l4-2z" fill="currentColor"/>
+        </svg>
+        Everything runs locally.  No request leaves this page.
+      </p>
+    </section>
+
+    <!-- ───────── Verdict panel (filled after Verify) ───────── -->
+    <section class="panel verdict hidden" id="verdict-panel" aria-live="polite">
+      <div class="seal-wrap">
+        <!-- Seal SVG mounts here (seal-green or seal-broken-red). -->
+        <div id="seal-mount"></div>
+      </div>
+      <div class="verdict-body">
+        <h2 id="verdict-title"></h2>
+        <p id="verdict-sub"></p>
+        <dl class="facts" id="fact-facts" hidden>
+          <div><dt>Fact ID</dt><dd id="f-fact-id"></dd></div>
+          <div><dt>Entity</dt><dd id="f-entity"></dd></div>
+          <div><dt>Claim</dt><dd id="f-claim"></dd></div>
+          <div><dt>Source</dt><dd id="f-source"></dd></div>
+          <div><dt>Excerpt</dt><dd id="f-excerpt"></dd></div>
+          <div><dt>Parent</dt><dd id="f-parent"></dd></div>
+          <div><dt>Signed at</dt><dd id="f-signed-at"></dd></div>
+          <div><dt>Signer (kid)</dt><dd id="f-kid"></dd></div>
+          <div><dt>Event hash</dt><dd id="f-event-hash" class="mono"></dd></div>
+        </dl>
+      </div>
+    </section>
+
+    <!-- ───────── Steps panel ───────── -->
+    <section class="panel steps hidden" id="steps-panel" aria-labelledby="steps-heading">
+      <h2 id="steps-heading">Every step, in order</h2>
+      <p class="panel-hint">
+        The verifier walks ten checks in a fixed sequence.  A single failure stops the pipeline,
+        and every step after is marked as not reached — so you see <em>where</em> a verification
+        broke, not just that it did.
+      </p>
+      <ol id="step-list" class="step-list"></ol>
+    </section>
+
+    <!-- ───────── Raw bytes drawer (advanced) ───────── -->
+    <section class="panel raw hidden" id="raw-panel">
+      <details>
+        <summary>Raw bytes (for the paranoid)</summary>
+        <p class="panel-hint">
+          The exact CBOR pieces that were mixed into the signature input,
+          so you can reconstruct the <code>Sig_structure_1</code> yourself
+          and replay the verification in any language.
+        </p>
+        <dl class="raw-grid">
+          <div><dt>Payload CBOR</dt><dd id="r-payload" class="mono wrap"></dd></div>
+          <div><dt>Protected header</dt><dd id="r-protected" class="mono wrap"></dd></div>
+          <div><dt>External AAD</dt><dd id="r-aad" class="mono wrap"></dd></div>
+          <div><dt>Signature</dt><dd id="r-signature" class="mono wrap"></dd></div>
+        </dl>
+      </details>
+    </section>
+
+    <!-- ───────── Explainer ───────── -->
+    <section class="panel about" id="about">
+      <h2>What am I looking at?</h2>
+      <p>
+        A Canon fact is a <a href="https://www.rfc-editor.org/rfc/rfc9052" target="_blank" rel="noopener">COSE_Sign1</a>
+        envelope over a 7-field CBOR array — a tiny, self-describing record that carries its own cryptographic signature.
+        This page downloads a <strong>WebAssembly build</strong> of Canon's own <code>canon-verify</code>
+        verifier, runs it inside your browser, and shows every single step it takes.
+      </p>
+      <p>
+        The signing side is deliberately <em>not</em> in this bundle.  If someone ever managed to
+        convince this page to emit a valid signature, the audit surface is <code>ephemeral-crypto</code>
+        and not the 250 KB of JavaScript you downloaded a moment ago.
+      </p>
+    </section>
+  </main>
+
+  <footer>
+    <p>
+      <span>Canon Verifier · client-side, no-telemetry build</span>
+      <span class="dot">·</span>
+      <span id="build-stamp">loading&hellip;</span>
+    </p>
+  </footer>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
