@@ -59,6 +59,13 @@ pub enum AnchorRole {
     /// MUST NOT validate an anomaly library even when the `kid`
     /// collides.  Resolves B-2.
     AnomalyLibrarySigner,
+    /// Authorised to sign Canon fact envelopes
+    /// (AAD = `b"canon/fact/v1"`).  Canon is an external project that
+    /// re-uses EPHEMERAL's COSE_Sign1 + Ed25519 primitives via the
+    /// `tools/canon-signer` CLI sidecar; the dedicated role keeps a
+    /// Canon-signing key from being accepted for any EPHEMERAL
+    /// verification path even under kid collision.
+    CanonSigner,
 }
 
 impl AnchorRole {
@@ -72,6 +79,7 @@ impl AnchorRole {
             Self::DelegationSigner => "delegation-signer",
             Self::ClassifierSigner => "classifier-signer",
             Self::AnomalyLibrarySigner => "anomaly-library-signer",
+            Self::CanonSigner => "canon-signer",
         }
     }
 
@@ -95,6 +103,8 @@ impl AnchorRole {
             Ok(Self::ClassifierSigner)
         } else if s.eq_ignore_ascii_case("anomaly-library-signer") {
             Ok(Self::AnomalyLibrarySigner)
+        } else if s.eq_ignore_ascii_case("canon-signer") {
+            Ok(Self::CanonSigner)
         } else {
             // Char-boundary-safe truncation to ≤ 64 bytes so an
             // adversarial vector supplying a megabyte role string
@@ -390,6 +400,7 @@ mod tests {
             AnchorRole::DelegationSigner,
             AnchorRole::ClassifierSigner,
             AnchorRole::AnomalyLibrarySigner,
+            AnchorRole::CanonSigner,
         ] {
             let s = role.as_wire_str();
             let parsed = AnchorRole::from_wire_str(s).unwrap();

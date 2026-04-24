@@ -1,0 +1,39 @@
+[package]
+name = "canon-signer"
+description = "Canon fact-signing CLI sidecar (COSE_Sign1 over Ed25519 via stdin/stdout NDJSON)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "canon_signer"
+path = "src/lib.rs"
+
+[[bin]]
+name = "canon-signer"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+base64 = { workspace = true }
+ciborium = { workspace = true }
+coset = { workspace = true }
+ed25519-dalek = { workspace = true }
+hex = { workspace = true }
+rand_core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+zeroize = { workspace = true }
+ephemeral-crypto = { path = "../../crates/ephemeral-crypto" }
+
+[dev-dependencies]
+# Integration tests spawn the built binary and parse its NDJSON I/O;
+# no fixture-feature gating needed because the binary exposes the same
+# deterministic behaviour in dev and release builds.

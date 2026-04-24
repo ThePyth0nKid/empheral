@@ -199,6 +199,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "175812e0be2bccb6abe50bb8d566126198344f707e304f45c648fd8f2cc0365e"
 
 [[package]]
+name = "canon-signer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "ciborium",
+ "coset",
+ "ed25519-dalek",
+ "ephemeral-crypto",
+ "hex",
+ "rand_core 0.6.4",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "zeroize",
+]
+
+[[package]]
 name = "caseless"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
