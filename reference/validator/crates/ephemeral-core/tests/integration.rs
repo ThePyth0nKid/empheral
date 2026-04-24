@@ -214,11 +214,14 @@ fn run_many_aggregates_all_eight() {
         report.per_suite
     );
     assert!(report.is_clean());
-    // Phase C.4 Session 5-B Commit B: all eight suites execute. With
-    // `test-fixtures` enabled the corpus is 560 vectors (93 canon + 70
-    // deleg + 205 fuzz + 71 tariff + 49 pcr mock + 8 pcr c2-live + 32
+    // Phase C.4 Session 5-B Commit C: all eight suites execute. With
+    // `test-fixtures` enabled the corpus is 545 vectors (93 canon + 70
+    // deleg + 205 fuzz + 71 tariff + 49 pcr mock + 8 pcr c2-live + 17
     // audit + 17 anomaly-library + 15 anomaly-detect); without the
-    // feature the c2-live file is excluded, leaving 552.
+    // feature the c2-live file is excluded, leaving 537.  Commit C
+    // replaced the Session-3 mock-era `arep-0XX` corpus (32 vectors)
+    // with the multi-tenant `arep-1XX` corpus (17 vectors); the 15-
+    // vector delta falls through to these pins.
     //
     // Intentionally NOT aggregated here: the Phase C.2.5 Rekor vectors
     // (`pcr-attestation-reject-c2-5-rekor.json`, 16 vectors) and the
@@ -228,11 +231,11 @@ fn run_many_aggregates_all_eight() {
     // to-end; folding them into this aggregate would require another
     // feature-gated branch and an updated pin for every new session.
     // The total ephemeral-cli run covers them via `default_inputs` —
-    // see the 568-vector number reported by `cargo run -p ephemeral-cli`.
+    // see the 553-vector number reported by `cargo run -p ephemeral-cli`.
     #[cfg(feature = "test-fixtures")]
-    let expected_pass = 560;
+    let expected_pass = 545;
     #[cfg(not(feature = "test-fixtures"))]
-    let expected_pass = 552;
+    let expected_pass = 537;
     assert_eq!(
         report.total_pass(),
         expected_pass,

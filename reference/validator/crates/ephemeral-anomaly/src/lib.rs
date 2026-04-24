@@ -111,6 +111,7 @@ pub mod families;
 pub mod fire;
 pub mod invariants;
 pub mod ledger;
+pub mod orchestrator;
 pub mod patterns;
 pub mod schema;
 pub mod scope;
@@ -131,8 +132,9 @@ pub use event::{
     AuditStreamInput, CanonicalizedEvent, Outcome, PatternDescription, TemplateEvent,
     MAX_EXPANDED_EVENTS,
 };
-pub use fire::{AnomalyFire, MatchScope};
+pub use fire::{AnomalyDetectedRecord, AnomalyFire, MatchScope};
 pub use ledger::{AnomalyLedger, InMemoryAnomalyLedger, LedgerError, LedgerObservation};
+pub use orchestrator::AuditOrchestrator;
 pub use patterns::{Action, FiringRule, PatternEntry, Severity, Threshold};
 pub use schema::AnomalyLibraryPayload;
 pub use scope::{MandateScope, ScopePredicate, VerbPredicate};

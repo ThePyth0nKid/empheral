@@ -120,6 +120,7 @@ mod merkle;
 mod phase_c2_5;
 mod phase_c3_c;
 mod phase_c3_c_fuzz;
+mod phase_c4_audit;
 mod phase_c4_detect;
 mod phase_c4_library;
 
@@ -150,6 +151,9 @@ enum Cmd {
     /// Regenerate + append the fifteen Phase C.4 Session 5-B Commit B
     /// anomaly-detect firing-rule vectors.
     GenPhaseC4Detect(GenPhaseC4DetectArgs),
+    /// Regenerate + append the seventeen Phase C.4 Session 5-B Commit C
+    /// audit-replay multi-tenant vectors.
+    GenPhaseC4Audit(GenPhaseC4AuditArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -264,6 +268,35 @@ struct GenPhaseC4DetectArgs {
 }
 
 #[derive(clap::Args, Debug)]
+struct GenPhaseC4AuditArgs {
+    /// Target JSON.  Created with a fresh Phase-C.4 audit-replay envelope
+    /// if missing; otherwise appended to (duplicate IDs are rejected).
+    ///
+    /// The audit-replay suite pre-exists as `conformance/audit-replay.json`
+    /// — the Session-3 `arep-0XX` corpus used a mock category-based
+    /// classifier.  Session 5-B Commit C replaces that corpus wholesale
+    /// with `arep-1XX` multi-tenant vectors driven by the real
+    /// `AuditOrchestrator`.  The two namespaces do not overlap, so a
+    /// regeneration against an *empty* file is required: delete (or
+    /// truncate to an empty envelope) `audit-replay.json` before running
+    /// this subcommand, or `append_vectors_with_envelope` will reject the
+    /// append on the first duplicate-id miss.
+    ///
+    /// Path is relative to the canonical invocation cwd (workspace root,
+    /// i.e. `cargo run -p vector-signer -- gen-phase-c4-audit`). From
+    /// there, `../../conformance/` resolves to the repo-root `conformance/`
+    /// dir.
+    #[arg(long, default_value = r"..\..\conformance\audit-replay.json")]
+    target: PathBuf,
+    /// Dry-run: print the 17 JSON values to stdout, pretty-printed and
+    /// separated by newlines (matching the C.4-library / C.4-detect
+    /// pattern).  The committed `tests/determinism_c4_audit.rs` tripwire
+    /// pins the SHA-256 of this dry-run output against regeneration drift.
+    #[arg(long)]
+    dry_run: bool,
+}
+
+#[derive(clap::Args, Debug)]
 struct GenFuzzC3_CArgs {
     /// Target JSON.  The fuzz-baseline file must already exist — this
     /// subcommand patches two entries (fuzz-190 replace, fuzz-200
@@ -309,6 +342,7 @@ fn main() -> Result<()> {
         Cmd::GenFuzzC3_C(a) => run_gen_fuzz_c3_c(&a),
         Cmd::GenPhaseC4Library(a) => run_gen_phase_c4_library(&a),
         Cmd::GenPhaseC4Detect(a) => run_gen_phase_c4_detect(&a),
+        Cmd::GenPhaseC4Audit(a) => run_gen_phase_c4_audit(&a),
     }
 }
 
@@ -1647,6 +1681,102 @@ fn build_c4_detect_envelope() -> Value {
             "anomaly-detect-clock-regression": 1,
             "anomaly-detect-pattern-description-count-zero": 1,
             "anomaly-detect-timestamp-parse-failed": 1
+        },
+        "vectors": []
+    })
+}
+
+// ============================================================================
+// Phase C.4 Session 5-B Commit C: audit-replay multi-tenant vectors
+// (arep-100..arep-116)
+// ============================================================================
+//
+// Delegated to `phase_c4_audit::build_all()` — the seventeen vectors cover
+// the full `AuditOrchestrator` dispatch surface: single-tenant baseline,
+// multi-tenant isolation (distinct / shared mandate_id), mixed pattern
+// fires across tenants, scope-projection fidelity (VerbFanout verb,
+// MandatePace tier), slow-burn cumulative + companion pairing, library
+// rotation (pre-only / post-only / mid-run), stream-normalize errors
+// (ClockRegression, PatternDescriptionCountZero, TimestampParseFailed),
+// and three accept paths (two-tenants-empty, two-tenants-below-threshold,
+// single-tenant-empty) that pin the "silence is silence" negative
+// control.  Both the initial (v1) and rotation (v2) library envelopes
+// come from `ephemeral_anomaly::test_fixtures::sign_minimum_library_with_version`
+// — the same source of fixture truth the Session-4 library-reject and
+// Session 5-B Commit B detect suites consume, so regeneration here and
+// live-dispatch through `ephemeral-core::suites::audit` cannot drift.
+//
+// Namespace `arep-1XX` signals the Commit-C rewrite; the pre-rewrite
+// mock-era `arep-0XX` corpus (32 vectors, category-based classifier)
+// does not coexist with this one.  `audit-replay.json` must be
+// regenerated from empty — the append guard in
+// `append_vectors_with_envelope` rejects if any `arep-0XX` remain.
+
+fn run_gen_phase_c4_audit(args: &GenPhaseC4AuditArgs) -> Result<()> {
+    let vectors = phase_c4_audit::build_all();
+
+    if args.dry_run {
+        let mut stdout = std::io::stdout().lock();
+        for v in &vectors {
+            writeln!(stdout, "{}", serde_json::to_string_pretty(v)?)?;
+        }
+        return Ok(());
+    }
+
+    append_vectors_with_envelope(&args.target, vectors, build_c4_audit_envelope)
+}
+
+/// Build the envelope for a fresh C.4 audit-replay suite file.
+///
+/// `generated_at` is pinned to the authoring date (2026-04-24) as a
+/// literal string.  The field is not schema-validated and not
+/// consumed by any executor; pinning it keeps the dry-run output
+/// deterministic under the SHA-256 tripwire in
+/// `tests/determinism_c4_audit.rs`, matching the C.2 / C.2.5 /
+/// C.3-C / C.4-library / C.4-detect precedent.  Do NOT rewrite this
+/// to `OffsetDateTime::now_utc()` — every regeneration would then
+/// produce a new hash and defeat the tripwire.  When a genuine
+/// re-authoring lands, advance the constant AND `DRY_RUN_SHA256`
+/// together in the same commit.
+///
+/// `vector_suite` is `"audit-replay"` — the pre-existing suite key
+/// from the Session-3 mock-era `arep-0XX` corpus, preserved so the
+/// runner's `VectorSuite::AuditReplay` dispatch does not need to
+/// change.  The executor in `ephemeral-core::suites::audit` was
+/// hard-cutover rewritten in Commit C to drive the real
+/// `AuditOrchestrator`; the suite key is the only surface that
+/// crosses the rewrite boundary untouched.
+///
+/// `coverage_summary` keys MUST match each vector's `category` string
+/// byte-for-byte so a downstream coverage checker that joins
+/// `coverage_summary` against emitted vector categories lands on a hit
+/// for every row.  The C.2.5 envelope set this invariant; any drift
+/// here is a silent coverage-drop.
+fn build_c4_audit_envelope() -> Value {
+    json!({
+        "schema_version": "1.0.0",
+        "vector_suite": "audit-replay",
+        "spec_reference": "design-final.md §3.5.3 + §11.2 (Phase C.4 Session 5-B Commit C audit-replay multi-tenant)",
+        "spec_version": "round8-delta-applied + phase-c4-session5b-commit-c",
+        "generated_at": "2026-04-24T00:00:00Z",
+        "coverage_summary": {
+            "audit-replay-single-tenant-baseline": 1,
+            "audit-replay-two-tenants-only-a-fires": 1,
+            "audit-replay-two-tenants-both-fire": 1,
+            "audit-replay-shared-mandate-id-isolated": 1,
+            "audit-replay-three-tenants-three-patterns": 1,
+            "audit-replay-iam-storm-and-cross-tier-escalation": 1,
+            "audit-replay-fanout-a-mandatepace-b": 1,
+            "audit-replay-slow-burn-tenant-a-silent-b": 1,
+            "audit-replay-rotation-after-stream-zero": 1,
+            "audit-replay-rotation-after-final-stream": 1,
+            "audit-replay-rotation-mid-run-different-tenants": 1,
+            "audit-replay-clock-regression": 1,
+            "audit-replay-pattern-description-count-zero": 1,
+            "audit-replay-timestamp-parse-failed": 1,
+            "audit-replay-two-tenants-empty": 1,
+            "audit-replay-two-tenants-below-threshold": 1,
+            "audit-replay-single-tenant-empty": 1
         },
         "vectors": []
     })

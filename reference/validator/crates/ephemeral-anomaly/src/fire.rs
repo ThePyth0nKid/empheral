@@ -1,11 +1,17 @@
-//! §11.2 `AnomalyDetected` output-shape DTO.
+//! §11.2 `AnomalyDetected` output-shape DTO + multi-tenant container.
 //!
 //! Session 5-A publishes the *wire contract* — downstream consumers
-//! (Session 5-C `audit.rs`, future revocation-pusher, etc.) can build
-//! against this shape today.  Session 5-B fills
+//! (Session 5-B Commit C `audit.rs`, future revocation-pusher, etc.)
+//! can build against this shape today.  Session 5-B Commit A filled
 //! [`crate::state::DetectorState::evaluate_all`] with the firing-rule
-//! evaluators that actually produce [`AnomalyFire`] values; until
-//! then, `evaluate_all` returns an empty `Vec`.
+//! evaluators that actually produce [`AnomalyFire`] values; Session
+//! 5-B Commit B exercised them against a conformance corpus.
+//!
+//! Session 5-B Commit C adds [`AnomalyDetectedRecord`] — the
+//! multi-tenant audit-stream container that [`crate::orchestrator`]
+//! emits.  [`AnomalyFire`] remains the §11.2 *payload* (unchanged);
+//! the record wraps it with the tenant identity and the wall-clock
+//! timestamp the orchestrator observed at fire time.
 //!
 //! # Why publish the DTO now
 //!
@@ -148,6 +154,79 @@ pub struct MatchScope {
     pub tier: Option<u8>,
 }
 
+/// Multi-tenant audit-stream container wrapping one `AnomalyFire` payload.
+///
+/// §11.2 defines `AnomalyDetected` as a named audit-event carrying
+/// `{pattern_id, library_version, severity, firing_rule, match_scope}`.
+/// The spec is silent on the *container* that the audit service persists
+/// around that payload — concrete deployments vary (S3 Object Lock
+/// records, immutable Kafka messages, etc.).  This reference
+/// implementation pins one container shape: the minimum fields a
+/// multi-tenant Router+Audit-Worker needs to route, correlate, and
+/// de-duplicate fires across tenants.
+///
+/// # Fields
+///
+/// - `tenant_id`: routing key.  One [`crate::orchestrator::AuditOrchestrator`]
+///   may host multiple tenants (per-deployment), each with its own
+///   [`crate::state::DetectorState`] instance.  The tenant_id names
+///   which state produced the fire.  **Attacker-influence-bounded:**
+///   the tenant_id is chosen by the Router operator at orchestrator-
+///   build time, never by an ingested event — so a malicious event
+///   cannot forge a tenant attribution.
+/// - `record_timestamp`: the detector's current wall-clock (unix
+///   seconds) at the moment `evaluate_all` returned the fire.  Stable
+///   for conformance tests because it is pinned to the last event's
+///   `advance_clock`, not to `SystemTime::now()`.
+/// - `payload`: the §11.2 `AnomalyDetected` payload, verbatim.
+///
+/// # Duplicate-tolerance contract (load-bearing)
+///
+/// [`crate::orchestrator::AuditOrchestrator`] does NOT persist its
+/// [`crate::state::DetectorState::last_fired_at`] dedup table.  A
+/// process restart re-initialises an empty dedup map, which means a
+/// pattern may fire again within its dedup window.  Downstream audit
+/// consumers MUST be duplicate-tolerant on the
+/// `(tenant_id, pattern_id, match_scope, ~record_timestamp)` tuple —
+/// idempotent alert fan-out at the dashboard layer is the canonical
+/// approach.  This is a deliberate scope-out of Session 5-B Commit C;
+/// an optional Commit D may add a persistent dedup ledger.
+///
+/// # Non-exhaustive
+///
+/// `#[non_exhaustive]` so future operational fields (e.g. an
+/// orchestrator-generated `record_id` for dashboard de-dup) can land
+/// without a semver bump.  Wire-form: snake_case JSON via serde.
+#[cfg_attr(any(test, feature = "test_fixtures"), derive(Serialize))]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct AnomalyDetectedRecord {
+    /// Routing key identifying which [`crate::state::DetectorState`]
+    /// instance produced this fire.  Operator-controlled at
+    /// orchestrator-build time.
+    pub tenant_id: String,
+    /// Unix-seconds wall-clock at fire time (detector's
+    /// `current_time`).  Deterministic under conformance replay.
+    pub record_timestamp: i64,
+    /// §11.2 `AnomalyDetected` payload.
+    pub payload: AnomalyFire,
+}
+
+impl AnomalyDetectedRecord {
+    /// Construct a record around a payload the orchestrator just observed.
+    ///
+    /// `tenant_id` moves in (no clone at wrap time); `record_timestamp`
+    /// is the orchestrator's snapshot of the detector clock.
+    #[must_use]
+    pub fn new(tenant_id: String, record_timestamp: i64, payload: AnomalyFire) -> Self {
+        Self {
+            tenant_id,
+            record_timestamp,
+            payload,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -259,5 +338,51 @@ mod tests {
         fn assert_bounds<T: std::fmt::Debug + Clone + PartialEq + Eq + Send + Sync>() {}
         assert_bounds::<AnomalyFire>();
         assert_bounds::<MatchScope>();
+    }
+
+    // ---------------- AnomalyDetectedRecord container -------------------
+
+    fn example_record() -> AnomalyDetectedRecord {
+        AnomalyDetectedRecord::new("tenant-A".into(), 1_800_000_000, example_fire())
+    }
+
+    #[test]
+    fn anomaly_detected_record_roundtrips_through_json() {
+        let rec = example_record();
+        let encoded = serde_json::to_string(&rec).unwrap();
+        let back: AnomalyDetectedRecord = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(rec, back);
+    }
+
+    #[test]
+    fn anomaly_detected_record_wire_shape_pins_field_names() {
+        // Pin the exact JSON keys: tenant_id, record_timestamp, payload.
+        // A rename to camelCase would silently break third-party audit
+        // consumers — catch it here.
+        let rec = example_record();
+        let encoded = serde_json::to_string(&rec).unwrap();
+        assert!(encoded.contains("\"tenant_id\":"), "{encoded}");
+        assert!(encoded.contains("\"record_timestamp\":"), "{encoded}");
+        assert!(encoded.contains("\"payload\":"), "{encoded}");
+        // Payload inlines the full §11.2 fire shape; spot-check one key.
+        assert!(encoded.contains("\"pattern_id\":"), "{encoded}");
+    }
+
+    #[test]
+    fn anomaly_detected_record_constructor_moves_tenant_id() {
+        // `new` takes ownership of `tenant_id: String` so callers do
+        // not clone at wrap time.  This is the load-bearing allocation
+        // shape for the orchestrator's hot path.
+        let fire = example_fire();
+        let rec = AnomalyDetectedRecord::new("tenant-X".to_owned(), 42, fire);
+        assert_eq!(rec.tenant_id, "tenant-X");
+        assert_eq!(rec.record_timestamp, 42);
+        assert_eq!(rec.payload.pattern_id, "delete-storm");
+    }
+
+    #[test]
+    fn anomaly_detected_record_implements_standard_bounds() {
+        fn assert_bounds<T: std::fmt::Debug + Clone + PartialEq + Eq + Send + Sync>() {}
+        assert_bounds::<AnomalyDetectedRecord>();
     }
 }
