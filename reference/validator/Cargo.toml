@@ -9,6 +9,7 @@ members = [
     "crates/ephemeral-core",
     "crates/ephemeral-crypto",
     "tools/canon-signer",
+    "tools/canon-signer/crates/canon-verify-wasm",
     "tools/print-root-fingerprint",
     "tools/prod-symbol-probe",
     "tools/vector-signer",

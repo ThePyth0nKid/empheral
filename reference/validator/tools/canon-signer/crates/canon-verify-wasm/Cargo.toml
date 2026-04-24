@@ -1,0 +1,85 @@
+[package]
+name = "canon-verify-wasm"
+description = "WebAssembly verifier for Canon fact COSE_Sign1 envelopes (companion to tools/canon-signer/web/)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+# cdylib  — built by `wasm-pack` for the web target.
+# rlib    — consumed by `cargo test` on the host toolchain for the
+#           native parity tests in `tests/` (AAD + kid + decode parity
+#           against the real `canon-signer` crate).
+crate-type = ["cdylib", "rlib"]
+
+# Forward the post-link optimiser the flags it needs to understand
+# modern rustc output.  Rust 1.82+ emits bulk-memory and
+# non-trapping-f2i ops by default; wasm-pack 0.14's bundled wasm-opt
+# (binaryen 0.116) rejects them unless these features are explicitly
+# enabled.  Without this override, `wasm-pack build --release` fails
+# with "Bulk memory operations require bulk memory [--enable-bulk-memory]".
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-O", "--enable-bulk-memory", "--enable-nontrapping-float-to-int"]
+
+[package.metadata.wasm-pack.profile.dev]
+wasm-opt = false
+
+[dependencies]
+# `ephemeral-crypto` is the single crypto authority: Ed25519 signature
+# verification, COSE_Sign1 parsing, TrustAnchor/AnchorRole plumbing.
+# This crate holds *no* independent signature primitives — if someone
+# ever manages to make this crate emit a valid signature, the audit
+# surface is the `ephemeral-crypto` rlib, not us.
+ephemeral-crypto = { path = "../../../../crates/ephemeral-crypto" }
+
+# CBOR: protected-header & payload decode (7-field Canon fact array).
+# Mirrors the shapes used by canon-signer::cose / canon-signer::event;
+# byte-level parity is pinned by `tests/payload_parity.rs`.
+coset    = { workspace = true }
+ciborium = { workspace = true }
+
+# Hashing: SHA-256 for (a) kid derivation from the raw Ed25519 pubkey
+# and (b) `event_hash = sha256(payload_cbor)` returned to the caller.
+sha2 = { workspace = true }
+
+# Hex + base64: wire-string parsing of `envelope_hex` and the
+# `ed25519:<base64(32)>` public-key format Canon already uses.
+hex    = { workspace = true }
+base64 = { workspace = true }
+
+thiserror = { workspace = true }
+
+# wasm-bindgen interop.  Versions match what wasm-pack 0.13 expects at
+# the time of writing; `serde-wasm-bindgen` gives us a direct
+# Serialize -> JsValue path so the verifier result object arrives in
+# JavaScript as a plain `{ verified, event_hash, ... }` POJO, not as
+# an opaque wasm-bindgen ref.
+wasm-bindgen       = "0.2"
+serde              = { workspace = true, features = ["derive"] }
+serde-wasm-bindgen = "0.6"
+
+# --- Dev-dependencies, scoped by build target ---------------------
+#
+# Native (host) parity & roundtrip tests pull the *real* canon-signer
+# + ed25519-dalek so we can assert byte-identity against the authority.
+# These are gated off the wasm32 target so `wasm-pack test --node` does
+# not drag OsRng / SigningKey / zeroize / getrandom into the wasm build
+# graph — keeping the WASM surface strictly verify-only, as documented
+# in the design note at the top of `src/canon.rs`.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+canon-signer  = { path = "../.." }
+ed25519-dalek = { workspace = true }
+# Only used by the native `roundtrip_native.rs` test to flip a byte
+# inside a signed envelope; `hex` is already a runtime dep and in scope.
+
+# --- WASM-only dev-deps ------------------------------------------
+# `wasm-bindgen-test` ships its own stub of the rand/entropy layer
+# for the `#[wasm_bindgen_test]` macro; no `getrandom/js` feature
+# needed on our side because the verify path itself is deterministic.
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
