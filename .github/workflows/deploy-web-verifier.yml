@@ -1,0 +1,111 @@
+# Deploy the Canon Verifier single-page app to GitHub Pages.
+#
+# Trigger policy
+# --------------
+# This workflow is `workflow_dispatch`-only.  Routine merges to `main`
+# do **not** auto-publish — publishing is always a deliberate human
+# action so a surprise refactor never flips the live verifier URL.
+#
+# To deploy: Actions → "Deploy web verifier" → Run workflow.
+#
+# What it publishes
+# -----------------
+# The static site at `reference/validator/tools/canon-signer/web/`:
+#
+#   web/
+#     index.html
+#     style.css
+#     app.js
+#     pkg/              (wasm-pack --target web output, committed)
+#     test/smoke.mjs    (harmless to publish; dead code in-browser)
+#
+# The `pkg-node/` directory is intentionally **excluded** from the
+# deployed artefact — it carries a different JS wrapper (Node require
+# shim) and would not load in a browser.
+
+name: Deploy web verifier
+
+on:
+  workflow_dispatch:
+    inputs:
+      note:
+        description: "Free-form release note (shown in the run summary)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  # Stage 1 — assemble the artefact.  No Rust build here: the wasm
+  # bundle is committed to the repo, so we can ship from any runner
+  # without waiting for wasm-pack.  That keeps the deploy fast and
+  # reproducible (no toolchain drift between pushes).
+  build:
+    name: Stage static site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sanity-check the committed wasm bundle
+        run: |
+          set -euo pipefail
+          pkg=reference/validator/tools/canon-signer/web/pkg
+          for f in canon_verify_wasm.js canon_verify_wasm_bg.wasm canon_verify_wasm.d.ts; do
+            test -f "$pkg/$f" || (echo "::error::$pkg/$f is missing" && exit 1)
+          done
+          size=$(stat -c%s "$pkg/canon_verify_wasm_bg.wasm")
+          echo "wasm bundle: $size bytes"
+          if [ "$size" -gt 400000 ]; then
+            echo "::warning::wasm bundle is larger than 400 KB — consider wasm-opt tuning"
+          fi
+
+      - name: Stage artefact directory
+        run: |
+          set -euo pipefail
+          mkdir -p _site
+          cp -r reference/validator/tools/canon-signer/web/. _site/
+          # `pkg-node` is a Node-only build and would 404 every page
+          # that tries to load it from a browser — strip it out.
+          rm -rf _site/pkg-node
+          rm -rf _site/test
+          # A touch of hygiene: remove any .DS_Store stragglers.
+          find _site -name ".DS_Store" -delete
+
+      - name: Summarise what will deploy
+        run: |
+          echo "## Canon Verifier deploy" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Note:** ${{ inputs.note || '(none)' }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '### Files staged' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          (cd _site && find . -type f | sort) >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artefact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  # Stage 2 — publish the artefact.  Separate job so a mis-staging
+  # above doesn't silently flip the live URL.
+  deploy:
+    name: Publish to Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
