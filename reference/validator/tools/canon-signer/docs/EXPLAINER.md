@@ -28,6 +28,10 @@ Three things make this trustworthy:
 
 `canon-signer` is the digital version of that notary.
 
+![notary](diagrams/notary.svg)
+
+<details><summary>Mermaid source (fallback)</summary>
+
 ```mermaid
 flowchart LR
     E["📧 email arrives"] --> C["🤖 Canon<br/>(extracts fact)"]
@@ -35,7 +39,9 @@ flowchart LR
     S --> DB["📚 Canon database<br/>(the leather book)"]
 ```
 
-> **Excalidraw version:** [`diagrams/notary.excalidraw`](./diagrams/notary.excalidraw) — email → Canon → canon-signer → ledger, plus the three-principles breakdown (unique stamp / sequential book / loud tampering).
+</details>
+
+> **Editable source:** [`diagrams/notary.excalidraw`](./diagrams/notary.excalidraw)
 
 ---
 
@@ -74,6 +80,10 @@ Let's follow one fact from birth to forever.
 
 Here's where it gets clever. Each fact **points backward** at the fact before it, by including its hash.
 
+![chain](diagrams/chain.svg)
+
+<details><summary>Mermaid source (fallback)</summary>
+
 ```mermaid
 flowchart LR
     G["🌱 Genesis<br/>(no parent)"]
@@ -84,7 +94,9 @@ flowchart LR
     G --> F1 --> F2 --> F3 --> F4
 ```
 
-> **Excalidraw version:** [`diagrams/chain.excalidraw`](./diagrams/chain.excalidraw) — the clean 4-fact chain plus the tampered version underneath, showing exactly how Fact B edits poison Fact C's parent pointer.
+</details>
+
+> **Editable source:** [`diagrams/chain.excalidraw`](./diagrams/chain.excalidraw) — the clean 4-fact chain plus the tampered version underneath, showing how Fact B edits poison every later parent pointer.
 
 Why is this clever? Say an attacker wants to secretly edit Fact B.
 
@@ -176,6 +188,10 @@ When we finished writing the code, we didn't just run the tests and call it done
 - A **security reviewer** whose only job was to find crypto mistakes, memory-safety issues, and attack surfaces.
 - A **code reviewer** whose only job was to find bugs, sloppy patterns, and hidden assumptions.
 
+![review-swarm](diagrams/review-swarm.svg)
+
+<details><summary>Mermaid source (fallback)</summary>
+
 ```mermaid
 flowchart TD
     Code[📝 Fresh code] --> R1[🔒 Security reviewer]
@@ -187,7 +203,9 @@ flowchart TD
     V --> Ship[🚀 commit]
 ```
 
-> **Excalidraw version:** [`diagrams/review-swarm.excalidraw`](./diagrams/review-swarm.excalidraw) — the full parallel pipeline plus the sidebar of real bugs the swarm caught on canon-signer itself.
+</details>
+
+> **Editable source:** [`diagrams/review-swarm.excalidraw`](./diagrams/review-swarm.excalidraw) — full parallel pipeline plus sidebar of real bugs the swarm caught.
 
 They flagged 0 critical, 4 high, 5 medium, 4 low, and 3 nitpick findings. We folded every single one. Real bugs they caught:
 

@@ -1,4 +1,12 @@
+<p align="center">
+  <img src="./assets/logo-banner.svg" alt="canon-signer — a cryptographic notary for business facts" width="100%"/>
+</p>
+
 # canon-signer
+
+<p align="center">
+  <img src="./assets/logo.svg" alt="canon-signer wax seal" width="160"/>
+</p>
 
 A thin CLI sidecar that re-exposes EPHEMERAL's `COSE_Sign1` + Ed25519 primitives as a long-running stdin/stdout NDJSON service.  Intended to be spawned once by [Canon](https://github.com/ultranova/canon) (or any Node/Python consumer) and kept alive for the lifetime of the parent process.
 

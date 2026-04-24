@@ -11,28 +11,32 @@ Drei Einstiegspunkte — wähle nach deinem Zweck:
 
 ## Diagramme
 
-Alle fünf Diagramme liegen als fertige `.excalidraw`-Dateien in `diagrams/`. Drag & drop auf [excalidraw.ultranova.io](https://excalidraw.ultranova.io) oder über den Obsidian Excalidraw-Plugin importieren (File → Import → `.excalidraw`).
+Jedes Diagramm liegt in zwei Formaten in `diagrams/` nebeneinander:
 
-| Datei | Was es zeigt | Verwendet in |
-|-------|--------------|--------------|
-| [`architecture.excalidraw`](./diagrams/architecture.excalidraw) | 3-Swim-Lane: Canon / canon-signer / Verifier + 6-Schritt-Pipeline | TECHNICAL §1 |
-| [`cbor-layout.excalidraw`](./diagrams/cbor-layout.excalidraw) | 7 positionale CBOR-Boxen + `bstr` vs `tstr` / `array` vs `map` Rationale | TECHNICAL §4 |
-| [`notary.excalidraw`](./diagrams/notary.excalidraw) | Notar-Analogie (email → Canon → signer → Buch) + drei Prinzipien | EXPLAINER §"Notary" |
-| [`chain.excalidraw`](./diagrams/chain.excalidraw) | Saubere 4-Fakt-Kette + getamperte Variante mit Parent-Mismatch | EXPLAINER §"Chain" |
-| [`review-swarm.excalidraw`](./diagrams/review-swarm.excalidraw) | Parallele Security+Code-Reviewer + reale Bugs, die sie gefangen haben | EXPLAINER §"Review-Swarm" |
+- **`.svg`** — wird direkt in den Markdown-Docs inline gerendert (GitHub, Obsidian-Preview).
+- **`.excalidraw`** — bearbeitbar: drop auf [excalidraw.ultranova.io](https://excalidraw.ultranova.io) oder via Obsidian Excalidraw-Plugin importieren.
 
-Die Markdown-Dokumente enthalten zusätzlich Mermaid-Inline-Fallbacks, damit GitHub direkt ohne Excalidraw-Import rendert.
+| Thema | SVG (inline) | Excalidraw (editable) | Verwendet in |
+|-------|--------------|------------------------|--------------|
+| Architecture | [`architecture.svg`](./diagrams/architecture.svg) | [`architecture.excalidraw`](./diagrams/architecture.excalidraw) | TECHNICAL §1 |
+| CBOR Layout | [`cbor-layout.svg`](./diagrams/cbor-layout.svg) | [`cbor-layout.excalidraw`](./diagrams/cbor-layout.excalidraw) | TECHNICAL §3 |
+| Notary analogy | [`notary.svg`](./diagrams/notary.svg) | [`notary.excalidraw`](./diagrams/notary.excalidraw) | EXPLAINER §"Notary" |
+| Hash chain | [`chain.svg`](./diagrams/chain.svg) | [`chain.excalidraw`](./diagrams/chain.excalidraw) | EXPLAINER §"Chain" |
+| Review-Swarm | [`review-swarm.svg`](./diagrams/review-swarm.svg) | [`review-swarm.excalidraw`](./diagrams/review-swarm.excalidraw) | EXPLAINER §"Review-Swarm" |
+
+Die `.md`s enthalten zusätzlich Mermaid-Fallbacks in `<details>`-Blöcken — für den Fall, dass ein Reader SVGs nicht rendern kann.
 
 ### Diagramme regenerieren
 
-Die `.excalidraw`-Dateien werden deterministisch aus `diagrams/generate.py` erzeugt. Nach Änderungen am Skript:
+Beide Formate werden aus **einem** Skript deterministisch erzeugt (gleiche RNG-Seeds → gleiche Bytes):
 
 ```bash
 cd docs/diagrams
 python generate.py
+# → architecture.svg + architecture.excalidraw (5×)
 ```
 
-Fonts, Farben und Layout werden aus dem Skript-Header gesteuert — Palette nah an Nelsons homelab-Diagrammen.
+Farben, Fonts und Layout stehen im Skript-Header. Wenn du das Layout änderst, **committe beide** — `.svg` fürs README-Rendering, `.excalidraw` zum Weiterbearbeiten.
 
 ## Quick links zurück in den Code
 

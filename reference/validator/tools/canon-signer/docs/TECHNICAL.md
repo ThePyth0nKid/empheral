@@ -25,6 +25,10 @@
 
 ## 1. Architecture
 
+![architecture](diagrams/architecture.svg)
+
+<details><summary>Mermaid source (fallback)</summary>
+
 ```mermaid
 flowchart LR
     subgraph Canon["Canon (Node.js, production)"]
@@ -48,7 +52,9 @@ flowchart LR
     K -. "later, for audit" .-> V
 ```
 
-> **Excalidraw version:** [`diagrams/architecture.excalidraw`](./diagrams/architecture.excalidraw) — drop it into [excalidraw.ultranova.io](https://excalidraw.ultranova.io) or the Obsidian Excalidraw plugin (File → Import → `.excalidraw`).
+</details>
+
+> **Editable source:** [`diagrams/architecture.excalidraw`](./diagrams/architecture.excalidraw) — open in [excalidraw.ultranova.io](https://excalidraw.ultranova.io) or the Obsidian Excalidraw plugin (File → Import → `.excalidraw`).
 
 ### 1.1 Why a sidecar and not FFI or pure-JS
 
@@ -136,6 +142,10 @@ Field contract in [io.rs:29](../src/io.rs#L29).
 
 The signed bytes are a **CBOR positional array of 7 elements**, fixed order:
 
+![cbor-layout](diagrams/cbor-layout.svg)
+
+<details><summary>Mermaid source (fallback)</summary>
+
 ```mermaid
 flowchart LR
     subgraph CBOR["CBOR payload (signed)"]
@@ -151,7 +161,9 @@ flowchart LR
     end
 ```
 
-> **Excalidraw version:** [`diagrams/cbor-layout.excalidraw`](./diagrams/cbor-layout.excalidraw) — the 7 positional slots as horizontal boxes, with the `bstr` vs `tstr` and `array` vs `map` rationale called out.
+</details>
+
+> **Editable source:** [`diagrams/cbor-layout.excalidraw`](./diagrams/cbor-layout.excalidraw)
 
 **Why positional array, not a map?** A CBOR map has key-ordering ambiguity; canonicalisation rules exist (RFC 8949 §4.2) but bite you if a library drifts. A positional array is canonical by construction: no keys, no ordering question.
 

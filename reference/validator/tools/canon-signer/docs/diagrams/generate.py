@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import random
 import time
+import zlib
 from pathlib import Path
 
 # Deterministic across runs — same file, same bytes.
@@ -144,6 +145,127 @@ def line(x1, y1, x2, y2, color=INK):
     return el
 
 
+def _xml_escape(s: str) -> str:
+    return (
+        s.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+_FONT_STACK = (
+    "'Segoe Print', 'Bradley Hand', 'Comic Sans MS', "
+    "'Caveat', 'Patrick Hand', cursive, sans-serif"
+)
+
+
+def _svg_element(el: dict) -> str:
+    t = el["type"]
+    sc = el["strokeColor"]
+    sw = el.get("strokeWidth", 2)
+    bg = el.get("backgroundColor", NONE)
+    fill = bg if bg and bg != NONE else "none"
+
+    if t == "rectangle":
+        return (
+            f'<rect x="{el["x"]}" y="{el["y"]}" width="{el["width"]}" height="{el["height"]}"'
+            f' rx="10" ry="10" fill="{fill}" stroke="{sc}" stroke-width="{sw}"/>'
+        )
+    if t == "ellipse":
+        cx = el["x"] + el["width"] / 2
+        cy = el["y"] + el["height"] / 2
+        return (
+            f'<ellipse cx="{cx}" cy="{cy}" rx="{el["width"] / 2}" ry="{el["height"] / 2}"'
+            f' fill="{fill}" stroke="{sc}" stroke-width="{sw}"/>'
+        )
+    if t == "diamond":
+        x, y, w, h = el["x"], el["y"], el["width"], el["height"]
+        pts = f"{x + w / 2},{y} {x + w},{y + h / 2} {x + w / 2},{y + h} {x},{y + h / 2}"
+        return f'<polygon points="{pts}" fill="{fill}" stroke="{sc}" stroke-width="{sw}"/>'
+    if t in ("arrow", "line"):
+        ox, oy = el["x"], el["y"]
+        pts = el.get("points") or [[0, 0], [el["width"], el["height"]]]
+        x1, y1 = ox + pts[0][0], oy + pts[0][1]
+        x2, y2 = ox + pts[-1][0], oy + pts[-1][1]
+        dash = ' stroke-dasharray="10,6"' if el.get("strokeStyle") == "dashed" else ""
+        marker = ' marker-end="url(#arrow-ink)"' if t == "arrow" else ""
+        return (
+            f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}"'
+            f' stroke="{sc}" stroke-width="{sw}" stroke-linecap="round"{dash}{marker}/>'
+        )
+    if t == "text":
+        size = el["fontSize"]
+        align = el.get("textAlign", "center")
+        anchor = {"left": "start", "center": "middle", "right": "end"}.get(align, "middle")
+        if align == "left":
+            tx = el["x"]
+        elif align == "right":
+            tx = el["x"] + el["width"]
+        else:
+            tx = el["x"] + el["width"] / 2
+        cy = el["y"] + el["height"] / 2
+        lines = el["text"].split("\n")
+        line_h = size * 1.25
+        first_y = cy - (len(lines) - 1) * line_h / 2
+        tspans = []
+        for i, ln in enumerate(lines):
+            dy = 0 if i == 0 else line_h
+            tspans.append(f'<tspan x="{tx}" dy="{dy}">{_xml_escape(ln)}</tspan>')
+        return (
+            f'<text x="{tx}" y="{first_y}" font-size="{size}" fill="{sc}"'
+            f' font-family="{_FONT_STACK}"'
+            f' text-anchor="{anchor}" dominant-baseline="middle">{"".join(tspans)}</text>'
+        )
+    return ""
+
+
+def _render_svg(elements: list, bg: str) -> str:
+    # Bounding box across all elements (includes text for safety).
+    min_x = min_y = float("inf")
+    max_x = max_y = float("-inf")
+    for el in elements:
+        x, y = el["x"], el["y"]
+        w, h = el["width"], el["height"]
+        if el["type"] in ("arrow", "line"):
+            ox, oy = x, y
+            pts = el.get("points") or [[0, 0], [w, h]]
+            for px, py in pts:
+                ax, ay = ox + px, oy + py
+                min_x = min(min_x, ax); min_y = min(min_y, ay)
+                max_x = max(max_x, ax); max_y = max(max_y, ay)
+            continue
+        min_x = min(min_x, x); min_y = min(min_y, y)
+        max_x = max(max_x, x + w); max_y = max(max_y, y + h)
+
+    pad = 30
+    min_x -= pad; min_y -= pad
+    max_x += pad; max_y += pad
+    vw = max_x - min_x
+    vh = max_y - min_y
+
+    head = (
+        f'<svg xmlns="http://www.w3.org/2000/svg"'
+        f' viewBox="{min_x:.0f} {min_y:.0f} {vw:.0f} {vh:.0f}"'
+        f' width="{vw:.0f}" height="{vh:.0f}"'
+        f' font-family="{_FONT_STACK}">'
+    )
+    defs = (
+        '<defs>'
+        '<marker id="arrow-ink" viewBox="0 0 10 10" refX="9" refY="5"'
+        ' markerWidth="8" markerHeight="8" orient="auto-start-reverse">'
+        f'<path d="M 0 0 L 10 5 L 0 10 z" fill="{INK}"/>'
+        '</marker>'
+        '</defs>'
+    )
+    bg_rect = (
+        f'<rect x="{min_x:.0f}" y="{min_y:.0f}" width="{vw:.0f}" height="{vh:.0f}"'
+        f' fill="{bg}"/>'
+    )
+    body = "\n  ".join(_svg_element(el) for el in elements if _svg_element(el))
+    return f"{head}\n{defs}\n  {bg_rect}\n  {body}\n</svg>\n"
+
+
 def save(elements: list, name: str, bg: str = "#fef9e7"):
     doc = {
         "type": "excalidraw",
@@ -157,9 +279,14 @@ def save(elements: list, name: str, bg: str = "#fef9e7"):
         },
         "files": {},
     }
-    path = Path(__file__).parent / f"{name}.excalidraw"
-    path.write_text(json.dumps(doc, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(f"wrote {path} ({len(elements)} elements)")
+    out_dir = Path(__file__).parent
+    exc_path = out_dir / f"{name}.excalidraw"
+    exc_path.write_text(json.dumps(doc, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    svg_path = out_dir / f"{name}.svg"
+    svg_path.write_text(_render_svg(elements, bg), encoding="utf-8")
+
+    print(f"wrote {exc_path.name} + {svg_path.name} ({len(elements)} elements)")
 
 
 # ============================================================
@@ -476,7 +603,7 @@ def main() -> None:
         ("chain", chain),
         ("review-swarm", review_swarm),
     ]:
-        _rng.seed(hash(name) & 0xFFFFFFFF)
+        _rng.seed(zlib.crc32(name.encode("utf-8")))  # stable across runs
         save(builder(), name)
 
 
