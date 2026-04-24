@@ -16,7 +16,21 @@ One line of JSON in → one line of JSON out.  No HTTP, no socket, no shared sta
 
 - **[docs/TECHNICAL.md](./docs/TECHNICAL.md)** — architecture, wire protocol, CBOR layout, threat model, test matrix (for engineers/auditors).
 - **[docs/EXPLAINER.md](./docs/EXPLAINER.md)** — notary & hash-chain analogies, the "why it matters" story (no crypto background needed).
+- **[docs/VALIDATION.md](./docs/VALIDATION.md)** — how verification works, the three audience paths (library / CLI / demo), and the honest gap ("no web verifier yet").
 - **[docs/HACKATHON.md](./docs/HACKATHON.md)** — demo playbook, audience FAQ, rescue answers (Nelson's personal guide).
+
+## Try it in 30 seconds
+
+```bash
+# Build signer + verifier once:
+cargo build -p canon-signer --release --bins
+
+# Run the full live demo (signs two chained facts, verifies them,
+# tampers with one, shows rejection):
+bash reference/validator/tools/canon-signer/scripts/demo.sh
+```
+
+See [docs/VALIDATION.md](./docs/VALIDATION.md) for the step-by-step walkthrough.
 
 ## Build
 
@@ -41,6 +55,17 @@ canon-signer [--keyfile <path>]
 canon-signer --help
 canon-signer --version
 ```
+
+### Companion: `canon-verify`
+
+```
+canon-verify --envelope-hex <HEX> --pubkey <ed25519:BASE64> [--kid <canon/...>]
+```
+
+Standalone verifier.  Wraps `ephemeral_crypto::verify_cose_sign1` behind
+a single-binary CLI.  Emits one JSON line on stdout; exit `0` on verify
+success, `1` on verification failure, `2` on arg errors.  Full walkthrough:
+[docs/VALIDATION.md](./docs/VALIDATION.md).
 
 Key-loading priority (first match wins):
 

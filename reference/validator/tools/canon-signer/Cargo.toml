@@ -18,6 +18,10 @@ path = "src/lib.rs"
 name = "canon-signer"
 path = "src/main.rs"
 
+[[bin]]
+name = "canon-verify"
+path = "src/bin/canon_verify.rs"
+
 [dependencies]
 base64 = { workspace = true }
 ciborium = { workspace = true }
