@@ -4,6 +4,12 @@ A thin CLI sidecar that re-exposes EPHEMERAL's `COSE_Sign1` + Ed25519 primitives
 
 One line of JSON in → one line of JSON out.  No HTTP, no socket, no shared state.
 
+## Deeper docs
+
+- **[docs/TECHNICAL.md](./docs/TECHNICAL.md)** — architecture, wire protocol, CBOR layout, threat model, test matrix (for engineers/auditors).
+- **[docs/EXPLAINER.md](./docs/EXPLAINER.md)** — notary & hash-chain analogies, the "why it matters" story (no crypto background needed).
+- **[docs/HACKATHON.md](./docs/HACKATHON.md)** — demo playbook, audience FAQ, rescue answers (Nelson's personal guide).
+
 ## Build
 
 ```bash
