@@ -36,23 +36,40 @@ use sha2::{Digest, Sha256};
 
 use crate::io::SignRequest;
 
-/// Error produced by the encoder.  Only one failure mode exists: the
-/// caller supplied a non-hex or odd-length `parent_hash`.
+/// Hard upper bound on the hex-encoded `parent_hash` length.  128 hex
+/// chars = 64 raw bytes = SHA-512 digest width, which is the widest
+/// hash family we anticipate Canon ever adopting.  Rejecting longer
+/// inputs prevents an adversarial caller from forcing unbounded
+/// allocation through `hex::decode` before the CBOR encoder gets a
+/// chance to reject the request downstream.
+pub(crate) const MAX_PARENT_HASH_HEX_LEN: usize = 128;
+
+/// Error produced by the encoder.
+#[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum EncodeError {
     #[error("parent_hash is not valid hex: {0}")]
     InvalidParentHashHex(String),
+    #[error("parent_hash exceeds maximum length ({got} hex chars, max {max})")]
+    ParentHashTooLong { got: usize, max: usize },
 }
 
 /// Decode the `parent_hash` hex string to raw bytes.
 ///
-/// Empty string → empty `Vec` (genesis).  Any other length is accepted
-/// verbatim (we do not force 32 bytes here — Canon may choose a
-/// different hash width in future; the signature binds whatever bytes
-/// the caller supplies).
-pub fn decode_parent_hash(hex_str: &str) -> Result<Vec<u8>, EncodeError> {
+/// Empty string → empty `Vec` (genesis).  Non-empty inputs must be at
+/// most [`MAX_PARENT_HASH_HEX_LEN`] hex chars.  Within that bound, any
+/// even length is accepted — we do not force 32 bytes because Canon
+/// may choose a different hash width in future; the signature binds
+/// whatever bytes the caller supplies.
+pub(crate) fn decode_parent_hash(hex_str: &str) -> Result<Vec<u8>, EncodeError> {
     if hex_str.is_empty() {
         return Ok(Vec::new());
+    }
+    if hex_str.len() > MAX_PARENT_HASH_HEX_LEN {
+        return Err(EncodeError::ParentHashTooLong {
+            got: hex_str.len(),
+            max: MAX_PARENT_HASH_HEX_LEN,
+        });
     }
     hex::decode(hex_str).map_err(|e| EncodeError::InvalidParentHashHex(e.to_string()))
 }
@@ -121,6 +138,26 @@ mod tests {
     fn invalid_parent_hash_returns_error() {
         let err = decode_parent_hash("not-hex").unwrap_err();
         assert!(matches!(err, EncodeError::InvalidParentHashHex(_)));
+    }
+
+    #[test]
+    fn parent_hash_exceeding_cap_returns_error() {
+        // 129 hex chars — one over the SHA-512-width ceiling.  The
+        // allocator must never see a decode call for this input.
+        let oversized = "a".repeat(MAX_PARENT_HASH_HEX_LEN + 1);
+        let err = decode_parent_hash(&oversized).unwrap_err();
+        assert!(matches!(
+            err,
+            EncodeError::ParentHashTooLong { got: 129, max: 128 }
+        ));
+    }
+
+    #[test]
+    fn parent_hash_at_cap_is_accepted() {
+        // Exactly 128 hex chars = 64 bytes.  Boundary must not reject.
+        let at_cap = "b".repeat(MAX_PARENT_HASH_HEX_LEN);
+        let bytes = decode_parent_hash(&at_cap).unwrap();
+        assert_eq!(bytes.len(), 64);
     }
 
     #[test]

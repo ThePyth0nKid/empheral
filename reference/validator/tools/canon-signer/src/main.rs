@@ -78,14 +78,14 @@ fn main() -> ExitCode {
         Source::Env => {
             eprintln!(
                 "canon-signer: using key from CANON_SIGNER_KEY_HEX; pubkey={}",
-                identity.pubkey_wire_string()
+                identity.pubkey_wire_str()
             );
         }
         Source::Keyfile(path) => {
             eprintln!(
                 "canon-signer: using key from {}; pubkey={}",
                 path.display(),
-                identity.pubkey_wire_string()
+                identity.pubkey_wire_str()
             );
         }
         Source::Generated { persisted_to } => match persisted_to {
@@ -93,14 +93,20 @@ fn main() -> ExitCode {
                 "canon-signer: using ephemeral key (auto-generated, persisted to {}); \
                      pubkey={}",
                 path.display(),
-                identity.pubkey_wire_string()
+                identity.pubkey_wire_str()
             ),
             None => eprintln!(
                 "canon-signer: using ephemeral key (auto-generated, NOT persisted — \
                      restart will produce a fresh key); pubkey={}",
-                identity.pubkey_wire_string()
+                identity.pubkey_wire_str()
             ),
         },
+        // `Source` is `#[non_exhaustive]`; future variants surface here
+        // as a neutral log so the binary still boots.
+        _ => eprintln!(
+            "canon-signer: using key from unrecognised source; pubkey={}",
+            identity.pubkey_wire_str()
+        ),
     }
     let _ = io::stderr().flush();
 

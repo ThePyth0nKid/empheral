@@ -202,7 +202,6 @@ checksum = "175812e0be2bccb6abe50bb8d566126198344f707e304f45c648fd8f2cc0365e"
 name = "canon-signer"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "base64",
  "ciborium",
  "coset",

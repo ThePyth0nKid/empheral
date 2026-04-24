@@ -20,6 +20,7 @@ use ed25519_dalek::SigningKey;
 use crate::COSE_EXTERNAL_AAD;
 
 /// Error produced when building a COSE_Sign1 envelope.
+#[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum CoseBuildError {
     #[error("coset serialisation failed: {0}")]
@@ -55,7 +56,7 @@ pub fn build_cose_sign1(
 
     sign1
         .to_vec()
-        .map_err(|e| CoseBuildError::Serialize(format!("{e:?}")))
+        .map_err(|e| CoseBuildError::Serialize(e.to_string()))
 }
 
 /// Derive the Canon-style UTF-8 kid for an Ed25519 public key.

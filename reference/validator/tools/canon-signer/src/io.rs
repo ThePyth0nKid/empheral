@@ -13,6 +13,13 @@ use crate::cose::{build_cose_sign1, derive_kid};
 use crate::event::{encode_payload, event_hash};
 use crate::key::SignerIdentity;
 
+/// Upper bound on any single string field in a [`SignRequest`] (claim,
+/// source_excerpt, etc.).  64 KiB comfortably fits the longest realistic
+/// e-mail excerpt Canon extracts while cutting off accidental or
+/// adversarial MB-scale inputs before they reach the CBOR encoder and
+/// SHA-256 path.
+pub const MAX_REQUEST_STRING_BYTES: usize = 64 * 1024;
+
 /// A `sign` request from Canon.
 ///
 /// `op` is accepted permissively: only `"sign"` is valid today; any
@@ -64,6 +71,7 @@ pub enum Response {
 /// `now_ms` is injected (rather than read from the clock) so tests can
 /// pin reproducible timestamps; the production binary passes
 /// `SystemTime::now()`-derived ms.
+#[must_use = "the response must be written back on stdout; dropping it silently swallows the request"]
 pub fn handle_line(line: &str, identity: &SignerIdentity, now_ms: u64) -> Response {
     let req: SignRequest = match serde_json::from_str(line) {
         Ok(r) => r,
@@ -77,8 +85,15 @@ pub fn handle_line(line: &str, identity: &SignerIdentity, now_ms: u64) -> Respon
 
     if req.op != "sign" {
         return Response::Err(ErrorResponse {
-            error: "parse_error".to_string(),
+            error: "unsupported_op".to_string(),
             detail: format!("unsupported op: {}", req.op),
+        });
+    }
+
+    if let Some(offender) = oversized_field(&req) {
+        return Response::Err(ErrorResponse {
+            error: "payload_too_large".to_string(),
+            detail: format!("{offender} exceeds {MAX_REQUEST_STRING_BYTES}-byte limit"),
         });
     }
 
@@ -108,9 +123,37 @@ pub fn handle_line(line: &str, identity: &SignerIdentity, now_ms: u64) -> Respon
         fact_id: req.fact_id,
         event_hash: hash,
         cose_sign1_hex: hex::encode(envelope),
-        signer_pubkey: identity.pubkey_wire_string(),
+        signer_pubkey: identity.pubkey_wire_str().to_string(),
         signed_at_ms: now_ms,
     })
+}
+
+/// Returns the name of the first field that exceeds
+/// [`MAX_REQUEST_STRING_BYTES`], or `None` if every string is within
+/// bounds.  Checked fields are only the free-form strings Canon can
+/// widen arbitrarily — `parent_hash` is bounded separately by the
+/// hex-decode cap in [`crate::event`].
+fn oversized_field(req: &SignRequest) -> Option<&'static str> {
+    if req.fact_id.len() > MAX_REQUEST_STRING_BYTES {
+        return Some("fact_id");
+    }
+    if req.entity.len() > MAX_REQUEST_STRING_BYTES {
+        return Some("entity");
+    }
+    if req.claim.len() > MAX_REQUEST_STRING_BYTES {
+        return Some("claim");
+    }
+    if req.source_ref.len() > MAX_REQUEST_STRING_BYTES {
+        return Some("source_ref");
+    }
+    if req
+        .source_excerpt
+        .as_deref()
+        .is_some_and(|s| s.len() > MAX_REQUEST_STRING_BYTES)
+    {
+        return Some("source_excerpt");
+    }
+    None
 }
 
 /// Run the stdin-loop against the supplied reader/writer pair.
@@ -202,16 +245,43 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_op_yields_parse_error() {
+    fn unsupported_op_yields_dedicated_slug() {
+        // Regression-guard: `unsupported_op` must be distinct from
+        // `parse_error` so Canon can dispatch unambiguously on the wire.
         let id = fixed_identity();
         let line = r#"{"op":"verify","fact_id":"f1","entity":"e","claim":"c","source_ref":"s","source_excerpt":null,"parent_hash":"","created_at_ms":0}"#;
         let response = handle_line(line, &id, 0);
         match response {
             Response::Err(e) => {
-                assert_eq!(e.error, "parse_error");
+                assert_eq!(e.error, "unsupported_op");
                 assert!(e.detail.contains("unsupported op"));
             }
             Response::Ok(_) => panic!("expected error on unsupported op"),
+        }
+    }
+
+    #[test]
+    fn oversized_claim_yields_payload_too_large() {
+        let id = fixed_identity();
+        let giant_claim = "x".repeat(MAX_REQUEST_STRING_BYTES + 1);
+        let req = SignRequest {
+            op: "sign".to_string(),
+            fact_id: "f1".to_string(),
+            entity: "e".to_string(),
+            claim: giant_claim,
+            source_ref: "s".to_string(),
+            source_excerpt: None,
+            parent_hash: String::new(),
+            created_at_ms: 0,
+        };
+        let line = serde_json::to_string(&req).unwrap();
+        let response = handle_line(&line, &id, 0);
+        match response {
+            Response::Err(e) => {
+                assert_eq!(e.error, "payload_too_large");
+                assert!(e.detail.contains("claim"));
+            }
+            Response::Ok(_) => panic!("expected payload_too_large error"),
         }
     }
 

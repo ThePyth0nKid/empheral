@@ -4,15 +4,23 @@
 //! 2. CLI flag `--keyfile <path>` (file contents are trimmed then
 //!    treated like the env value)
 //! 3. Auto-generate from [`rand_core::OsRng`] and persist the seed to
-//!    `${TMPDIR:-/tmp}/canon-signer.key` so a restart can resume the
-//!    same identity.  The public pubkey is logged to **stderr** so
-//!    Canon operators can recover it.
+//!    the platform temp directory (`${TMPDIR}` on unix, `%TEMP%` on
+//!    Windows) as `canon-signer.key` so a restart can resume the same
+//!    identity.  The public pubkey is logged to **stderr** so Canon
+//!    operators can recover it.
 //!
 //! A [`SignerIdentity`] bundles the loaded [`SigningKey`] with its
 //! derived `kid` (via [`crate::cose::derive_kid`]) and wire-format
-//! public-key string.  Cloning an identity is cheap and copies only
-//! the small metadata strings; the signing key itself is reused by
-//! reference via the bundled value.
+//! public-key string.
+//!
+//! # Seed-material hygiene
+//!
+//! Every path that touches raw 32-byte seed bytes zeroizes them before
+//! the allocation is dropped.  `ed25519_dalek::SigningKey` itself
+//! implements `ZeroizeOnDrop`, so the wrapped key is scrubbed when the
+//! identity dies — but transient buffers (decoded `Vec<u8>`, stack
+//! `[u8; 32]`, `hex_seed: String` used for persistence) must be
+//! scrubbed explicitly or the seed lingers in freed heap/stack slots.
 
 use std::env;
 use std::path::{Path, PathBuf};
@@ -24,6 +32,7 @@ use crate::io::derive_public_identity;
 
 /// Where a [`SignerIdentity`] came from — surfaced to `main` for the
 /// stderr log line.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum Source {
     /// Loaded from `CANON_SIGNER_KEY_HEX`.
@@ -36,6 +45,7 @@ pub enum Source {
 }
 
 /// Errors produced during key-loading.  All are fatal at startup.
+#[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum KeyLoadError {
     #[error("CANON_SIGNER_KEY_HEX must be exactly 64 hex characters (got {0})")]
@@ -85,8 +95,10 @@ impl SignerIdentity {
         &self.kid
     }
 
-    pub fn pubkey_wire_string(&self) -> String {
-        self.pubkey_wire.clone()
+    /// Borrow the wire-format pubkey string.  Lives as long as the
+    /// identity, so callers should not clone it on every sign call.
+    pub fn pubkey_wire_str(&self) -> &str {
+        &self.pubkey_wire
     }
 
     pub fn pubkey_bytes(&self) -> [u8; 32] {
@@ -107,12 +119,13 @@ pub fn try_from_env() -> Result<Option<SignerIdentity>, KeyLoadError> {
         return Err(KeyLoadError::EnvWrongLength(trimmed.len()));
     }
     let mut seed = hex::decode(trimmed).map_err(|e| KeyLoadError::EnvInvalidHex(e.to_string()))?;
-    let arr: [u8; 32] = seed
+    let mut arr: [u8; 32] = seed
         .as_slice()
         .try_into()
         .expect("length checked above; 64 hex chars always decode to 32 bytes");
     let sk = SigningKey::from_bytes(&arr);
     seed.zeroize();
+    arr.zeroize();
     Ok(Some(SignerIdentity::from_signing_key(sk)))
 }
 
@@ -134,24 +147,25 @@ pub fn from_keyfile(path: &Path) -> Result<SignerIdentity, KeyLoadError> {
         path: path.to_path_buf(),
         source,
     })?;
-    let arr: [u8; 32] = seed.as_slice().try_into().expect("length checked above");
+    let mut arr: [u8; 32] = seed.as_slice().try_into().expect("length checked above");
     let sk = SigningKey::from_bytes(&arr);
     seed.zeroize();
+    arr.zeroize();
     Ok(SignerIdentity::from_signing_key(sk))
 }
 
 /// Auto-generate a fresh Ed25519 identity from `OsRng`.  Attempts to
-/// persist the seed to `${TMPDIR:-/tmp}/canon-signer.key` so a
-/// subsequent restart resumes the same identity.  If persistence
-/// fails (e.g. read-only FS), returns the identity anyway with
-/// `persisted_to: None` — a restart will produce a fresh key.
+/// persist the seed to the platform temp directory so a subsequent
+/// restart resumes the same identity.  If persistence fails (e.g.
+/// read-only FS), returns the identity anyway with `persisted_to:
+/// None` — a restart will produce a fresh key.
 pub fn autogenerate() -> (SignerIdentity, Source) {
     use rand_core::{OsRng, RngCore};
     let mut seed = [0u8; 32];
     // `OsRng` fills directly from the OS entropy source; `rand_core`'s
-    // contract is infallible on supported platforms (returns via
-    // `try_fill_bytes` elsewhere, but `fill_bytes` panics only on
-    // platform misconfiguration which is a bootstrap problem anyway).
+    // contract is infallible on supported platforms (`fill_bytes`
+    // panics only on platform misconfiguration which is a bootstrap
+    // problem anyway).
     OsRng.fill_bytes(&mut seed);
     let sk = SigningKey::from_bytes(&seed);
     seed.zeroize();
@@ -162,17 +176,28 @@ pub fn autogenerate() -> (SignerIdentity, Source) {
 }
 
 fn persist_seed(sk: &SigningKey) -> Option<PathBuf> {
-    let dir = env::var_os("TMPDIR").map_or_else(
-        || PathBuf::from(if cfg!(windows) { r".\" } else { "/tmp" }),
-        PathBuf::from,
-    );
+    // Honour `TMPDIR` if the operator explicitly set it, otherwise fall
+    // back to the platform default (`std::env::temp_dir` respects
+    // `%TEMP%`/`%TMP%` on Windows and `/tmp` on unix).  We refuse to
+    // persist if the target does not resolve to an existing directory
+    // to avoid writing seed material to surprising locations when a
+    // typo in `TMPDIR` creates a new path.
+    let dir = env::var_os("TMPDIR").map_or_else(env::temp_dir, PathBuf::from);
+    if !dir.is_dir() {
+        return None;
+    }
     let path = dir.join("canon-signer.key");
-    let hex_seed = hex::encode(sk.to_bytes());
-    match std::fs::write(&path, hex_seed.as_bytes()) {
+
+    let raw_seed = sk.to_bytes();
+    let mut hex_seed = hex::encode(raw_seed);
+    let write_result = std::fs::write(&path, hex_seed.as_bytes());
+    hex_seed.zeroize();
+
+    match write_result {
         Ok(()) => {
-            // Best-effort permissions tightening.  Failing to set
-            // 0600 is not fatal — stderr will mention the location
-            // so the operator can secure it.
+            // Best-effort permissions tightening.  Failing to set 0600
+            // is not fatal — stderr will mention the location so the
+            // operator can secure it.
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
@@ -207,8 +232,8 @@ mod tests {
         let (id, src) = autogenerate();
         assert!(id.kid().starts_with("canon/"));
         assert_eq!(id.kid().len(), "canon/".len() + 16);
-        assert!(id.pubkey_wire_string().starts_with("ed25519:"));
-        matches!(src, Source::Generated { .. });
+        assert!(id.pubkey_wire_str().starts_with("ed25519:"));
+        assert!(matches!(src, Source::Generated { .. }));
     }
 
     #[test]
