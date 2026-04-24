@@ -1,5 +1,12 @@
 # Canon Verifier (web)
 
+> **Status:** hackathon preview, 2026-04-24.  Merged to `main` ahead of
+> schedule to enable the GitHub Pages deploy during the Berlin Hack
+> 2026-04-25/26.  Post-event this deploy may be taken down pending the
+> full public-release gate (`LICENSE-APACHE` + `LICENSE-MIT` committed,
+> secrets-scan, CODEOWNERS review).  The in-page banner and this block
+> are the removable "preview" flag.
+
 **Client-side Canon-fact verifier.**  A single-page app that runs the
 canonical `canon-verify` logic inside your browser via WebAssembly and
 shows every step of the verification — so a viewer can see **why** a

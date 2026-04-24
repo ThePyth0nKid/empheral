@@ -45,6 +45,23 @@ h1, h2, h3 { font-family: var(--serif); letter-spacing: -0.01em; }
 h1 { font-size: 1.55rem; margin: 0; font-weight: 700; }
 h2 { font-size: 1.2rem; margin: 0 0 0.6rem; font-weight: 700; }
 
+/* ───────── Hackathon preview banner (removable flag) ─────────
+   This rule — together with the <aside class="preview-banner"> in
+   index.html — is the entire feature flag for the Berlin Hack preview
+   deploy.  Delete both to un-flag.
+   ============================================================ */
+.preview-banner {
+  background: linear-gradient(180deg, #fff3c4 0%, #fce89b 100%);
+  color: #5a4300;
+  border-bottom: 1px solid #e0c870;
+  padding: 0.55rem 1.25rem;
+  font-size: 0.92rem;
+  text-align: center;
+  letter-spacing: 0.01em;
+}
+.preview-banner strong { margin-right: 0.4rem; }
+.preview-banner span { opacity: 0.85; }
+
 /* ───────── Top header ───────── */
 .top {
   display: flex;
