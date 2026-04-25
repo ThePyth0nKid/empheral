@@ -1,9 +1,16 @@
+<div align="center">
+
+<img src="assets/empheral-logo.png" alt="EPHEMERAL" width="240">
+
 # EPHEMERAL
 
 Cross-organization agent-authority protocol and reference validator.
+COSE_Sign1, Ed25519, hash-chained — 528/528 conformance vectors.
 
 [![CI](https://github.com/ThePyth0nKid/empheral/actions/workflows/ci.yml/badge.svg)](https://github.com/ThePyth0nKid/empheral/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
+
+</div>
 
 ---
 
