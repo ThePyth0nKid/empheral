@@ -1,0 +1,16 @@
+# Local agent config
+.claude/
+
+# Rust build artifacts
+reference/target/
+**/target/
+**/*.rs.bk
+**/Cargo.lock.bak
+
+# Test/conformance output
+report.json
+**/smoke-logs/
+
+# Editor / OS junk
+.DS_Store
+Thumbs.db
