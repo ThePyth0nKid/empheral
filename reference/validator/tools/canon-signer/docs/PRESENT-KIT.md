@@ -65,9 +65,7 @@ lockstep with the test fixtures — no drift.
 
 **https://thepyth0nkid.github.io/empheral/**
 
-(Hosted on GitHub Pages from `main`, flagged as *hackathon preview*
-via the yellow top banner.  Removable post-event — see the
-`chore(canon-signer)` commit that introduced the flag.)
+(Hosted on GitHub Pages from `main`.)
 
 ---
 

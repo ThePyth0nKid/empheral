@@ -28,7 +28,6 @@ open https://thepyth0nkid.github.io/empheral/
 ```
 
 Safari öffnet die Seite.  Du solltest sehen:
-- Gelbe „Hackathon preview build"-Leiste oben
 - Canon-Wax-Seal-Logo + „Canon Verifier"
 - Textfelder + drei Buttons
 
