@@ -289,8 +289,7 @@ fn summarize_transparency(inputs: &[PathBuf]) -> TransparencySummary {
             continue;
         };
         for vec in vectors {
-            let Some(proof) = vec
-                .pointer("/input/attestation_bundle/transparency_log_proof")
+            let Some(proof) = vec.pointer("/input/attestation_bundle/transparency_log_proof")
             else {
                 continue;
             };
@@ -316,7 +315,11 @@ fn summarize_transparency(inputs: &[PathBuf]) -> TransparencySummary {
 fn contains_cose_sign1(v: &Value) -> bool {
     match v {
         Value::Object(map) => {
-            if map.get("cose_sign1_bytes").and_then(Value::as_str).is_some() {
+            if map
+                .get("cose_sign1_bytes")
+                .and_then(Value::as_str)
+                .is_some()
+            {
                 return true;
             }
             map.values().any(contains_cose_sign1)

@@ -98,7 +98,11 @@ pub fn build_chain(
     );
 
     // Intermediate — signed by root (or impostor when break_ca_chain)
-    let inter_signer: &SigningKey = if break_ca_chain { &impostor_sk } else { &root_sk };
+    let inter_signer: &SigningKey = if break_ca_chain {
+        &impostor_sk
+    } else {
+        &root_sk
+    };
     let inter_issuer_vk: &VerifyingKey = if break_ca_chain {
         impostor_sk.verifying_key()
     } else {

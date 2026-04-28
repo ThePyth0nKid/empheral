@@ -122,8 +122,7 @@ mod tests {
     /// `ed25519-dalek` in dev-deps here (the test verifies role wiring,
     /// not the underlying crypto, which is already covered by
     /// `ephemeral-crypto`'s own test-suite).
-    const TEST_PK_HEX: &str =
-        "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
+    const TEST_PK_HEX: &str = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
 
     /// Reverse role-confusion: a vector JSON supplying a
     /// `role: "classifier-signer"` string registers the anchor as

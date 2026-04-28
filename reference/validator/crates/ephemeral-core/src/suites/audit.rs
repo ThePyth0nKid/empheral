@@ -240,10 +240,7 @@ pub fn execute(vector: &Vector) -> ValidationOutcome {
         Ok(v) => v,
         Err(e) => {
             return ValidationOutcome::Fail {
-                reason: format!(
-                    "audit-replay vector {} input deserialize: {e}",
-                    vector.id
-                ),
+                reason: format!("audit-replay vector {} input deserialize: {e}", vector.id),
             };
         }
     };
@@ -355,9 +352,10 @@ pub fn execute(vector: &Vector) -> ValidationOutcome {
         if Some(stream_idx) == rotate_after {
             // Safe: `rotate_after` is derived from `input.rotate_library`
             // only when that option is `Some`.
-            let rot = input.rotate_library.as_ref().expect(
-                "rotate_after derived from Some(rotate_library); unreachable None",
-            );
+            let rot = input
+                .rotate_library
+                .as_ref()
+                .expect("rotate_after derived from Some(rotate_library); unreachable None");
             if let Err(fail) = apply_rotation(
                 &mut orch,
                 vector,
@@ -407,14 +405,13 @@ fn apply_rotation(
         }
     })?;
 
-    let new_initial_time = parse_iso_seconds(&rot.new_initial_time).map_err(|e| {
-        ValidationOutcome::Fail {
+    let new_initial_time =
+        parse_iso_seconds(&rot.new_initial_time).map_err(|e| ValidationOutcome::Fail {
             reason: format!(
                 "audit-replay vector {} rotation new_initial_time not RFC-3339 ({}): {e}",
                 vector.id, rot.new_initial_time
             ),
-        }
-    })?;
+        })?;
 
     // Fresh ledger for the rotation verify step: the vector's
     // `pre_ledger` was already consumed at Stage A.  A production
@@ -535,10 +532,8 @@ fn render_records_outcome(
     };
 
     let expected_code = vector.expected.reject_code.as_deref().unwrap_or("");
-    let observed_projected: Vec<ExpectedRecord> = observed
-        .iter()
-        .map(ExpectedRecord::from_observed)
-        .collect();
+    let observed_projected: Vec<ExpectedRecord> =
+        observed.iter().map(ExpectedRecord::from_observed).collect();
 
     match vector.expected.outcome {
         Outcome::Accept => {
@@ -676,7 +671,10 @@ mod tests {
 
     #[test]
     fn aggregation_wire_const_is_spec_literal() {
-        assert_eq!(AGGREGATION_PATTERN_DETECTED_WIRE, "aggregation-pattern-detected");
+        assert_eq!(
+            AGGREGATION_PATTERN_DETECTED_WIRE,
+            "aggregation-pattern-detected"
+        );
     }
 
     // ---------------- firing_rule_rank pins -------------------------
@@ -812,7 +810,8 @@ mod tests {
         let vector = Vector {
             id: "arep-test-accept-with-records".to_string(),
             category: "audit-replay".to_string(),
-            description: "unit-test guard — accept vector with declared expected record".to_string(),
+            description: "unit-test guard — accept vector with declared expected record"
+                .to_string(),
             input: json!({}),
             expected: ExpectedOutcome {
                 outcome: Outcome::Accept,
@@ -852,9 +851,7 @@ mod tests {
                     "Fail reason must flag this as an authoring bug: {reason}"
                 );
             }
-            other => panic!(
-                "expected Fail for accept+non-empty-records vector, got {other:?}"
-            ),
+            other => panic!("expected Fail for accept+non-empty-records vector, got {other:?}"),
         }
     }
 }

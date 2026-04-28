@@ -191,7 +191,10 @@ pub(super) fn build_arep_110_rotation_mid_run() -> Value {
          lazily on first post-rotation event. Cross-rotation \
          attribution stays loyal to the tenant_id that dispatched the \
          event, not to a stale map entry.",
-        vec![tenant_stream("t-a", a_stream), tenant_stream("t-b", b_stream)],
+        vec![
+            tenant_stream("t-a", a_stream),
+            tenant_stream("t-b", b_stream),
+        ],
         vec![
             expected_record_v(
                 "t-a",

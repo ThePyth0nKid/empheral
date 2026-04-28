@@ -112,12 +112,7 @@ pub(super) fn literal_post_rotation_stream(events: Vec<Value>) -> Value {
     literal_stream(events)
 }
 
-pub(super) fn template_event(
-    mandate_id: &str,
-    tier: u8,
-    resource_kind: &str,
-    verb: &str,
-) -> Value {
+pub(super) fn template_event(mandate_id: &str, tier: u8, resource_kind: &str, verb: &str) -> Value {
     json!({
         "mandate_id": mandate_id,
         "tier": tier,
@@ -155,11 +150,7 @@ pub(super) fn scope_mandate_tier(mandate_id: &str, tier: u8) -> Value {
 /// bound — the projection VerbResourceMandate emits when the pattern
 /// pins both a `VerbPredicate::Exact(_)` verb and a `Some(_)`
 /// resource_kind (e.g. `vault-rotate-storm`, `vault-rotate-slow-burn`).
-pub(super) fn scope_mandate_verb_kind(
-    mandate_id: &str,
-    verb: &str,
-    resource_kind: &str,
-) -> Value {
+pub(super) fn scope_mandate_verb_kind(mandate_id: &str, verb: &str, resource_kind: &str) -> Value {
     json!({
         "mandate_id": mandate_id,
         "verb": verb,

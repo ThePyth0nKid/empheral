@@ -70,8 +70,7 @@ fn happy_inclusion_verifies() {
         tree_size: 4,
     };
 
-    verify_rekor_inclusion(&entry, &leaves[2], &root)
-        .expect("valid inclusion proof should verify");
+    verify_rekor_inclusion(&entry, &leaves[2], &root).expect("valid inclusion proof should verify");
 
     // Also verify leaf index 1 (L1):
     // sibling: L0 (left sibling)
@@ -121,7 +120,9 @@ fn tampered_leaf_rejected() {
 
 /// Build the full leaf-hash list for `n` leaves with the helper above.
 fn leaves_for(n: usize) -> Vec<[u8; 32]> {
-    (0..n).map(|i| leaf_hash(format!("leaf-{i}").as_bytes())).collect()
+    (0..n)
+        .map(|i| leaf_hash(format!("leaf-{i}").as_bytes()))
+        .collect()
 }
 
 /// Recursive RFC 9162 §2.1.1 subtree root over `leaves[start..start+len]`.

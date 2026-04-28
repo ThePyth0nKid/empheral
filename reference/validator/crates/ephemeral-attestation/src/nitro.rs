@@ -50,15 +50,24 @@ impl core::fmt::Debug for NitroClaims {
             .field("digest", &self.digest)
             .field("timestamp", &self.timestamp)
             .field("pcrs", &self.pcrs.len())
-            .field("certificate", &format!("<{} bytes>", self.certificate.len()))
+            .field(
+                "certificate",
+                &format!("<{} bytes>", self.certificate.len()),
+            )
             .field("cabundle", &format!("<{} certs>", self.cabundle.len()))
             .field(
                 "public_key",
-                &self.public_key.as_ref().map(|b| format!("<{} bytes>", b.len())),
+                &self
+                    .public_key
+                    .as_ref()
+                    .map(|b| format!("<{} bytes>", b.len())),
             )
             .field(
                 "user_data",
-                &self.user_data.as_ref().map(|b| format!("<{} bytes>", b.len())),
+                &self
+                    .user_data
+                    .as_ref()
+                    .map(|b| format!("<{} bytes>", b.len())),
             )
             .field(
                 "nonce",

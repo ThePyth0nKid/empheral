@@ -99,6 +99,5 @@ pub use hash::verify_classifier_hash;
 pub use output::ClassifierOutput;
 pub use runtime::execute_classifier;
 pub use signature::{
-    verify_classifier_signature, ClassifierSigPayload, VerifiedClassifierSignature,
-    CLASSIFIER_AAD,
+    verify_classifier_signature, ClassifierSigPayload, VerifiedClassifierSignature, CLASSIFIER_AAD,
 };

@@ -336,9 +336,18 @@ impl RekorSignedTreeHead {
         let map = Value::Map(vec![
             (Value::Text("v".into()), Value::Integer(v_int)),
             (Value::Text("ctx".into()), Value::Text(STH_CONTEXT.into())),
-            (Value::Text("log_id".into()), Value::Bytes(self.log_id.to_vec())),
-            (Value::Text("tree_size".into()), Value::Integer(tree_size_int)),
-            (Value::Text("tree_root".into()), Value::Bytes(self.tree_root.to_vec())),
+            (
+                Value::Text("log_id".into()),
+                Value::Bytes(self.log_id.to_vec()),
+            ),
+            (
+                Value::Text("tree_size".into()),
+                Value::Integer(tree_size_int),
+            ),
+            (
+                Value::Text("tree_root".into()),
+                Value::Bytes(self.tree_root.to_vec()),
+            ),
             (Value::Text("ts".into()), Value::Integer(ts_int)),
         ]);
 
@@ -568,15 +577,14 @@ pub fn verify_rekor_sth(
 
     // ── 2. log_id must be trusted at sth.timestamp ──────────────────────────
     let Some(vk) = keys.find_for_timestamp(&sth.log_id, sth.timestamp) else {
-        return Err(AttestError::RekorLogUntrusted {
-            log_id: sth.log_id,
-        });
+        return Err(AttestError::RekorLogUntrusted { log_id: sth.log_id });
     };
 
     // ── 3. Signature length + structure ─────────────────────────────────────
-    let sig = Signature::from_slice(&sth.signature).map_err(|_| AttestError::RekorProofInvalid {
-        source: RekorSource("STH signature malformed"),
-    })?;
+    let sig =
+        Signature::from_slice(&sth.signature).map_err(|_| AttestError::RekorProofInvalid {
+            source: RekorSource("STH signature malformed"),
+        })?;
 
     // ── 4. Strict Ed25519 verify over canonical STH bytes ───────────────────
     let bytes = sth.canonical_bytes();
@@ -1088,8 +1096,8 @@ mod tests {
             let mut sth = sign(&sk, sample_sth());
             // Mutate tree_root AFTER signing → signature no longer covers payload.
             sth.tree_root[0] ^= 0xff;
-            let err = verify_rekor_sth(&sth, &ks, sth.timestamp + 60, MAX_STH_AGE_SECONDS)
-                .unwrap_err();
+            let err =
+                verify_rekor_sth(&sth, &ks, sth.timestamp + 60, MAX_STH_AGE_SECONDS).unwrap_err();
             assert!(matches!(err, AttestError::RekorProofInvalid { .. }));
         }
 
@@ -1100,8 +1108,8 @@ mod tests {
             let (_sk_other, vk_other) = key_pair(SEED_B);
             let ks = key_set_with(LOG_ID_A, vk_other);
             let sth = sign(&sk_signer, sample_sth());
-            let err = verify_rekor_sth(&sth, &ks, sth.timestamp + 60, MAX_STH_AGE_SECONDS)
-                .unwrap_err();
+            let err =
+                verify_rekor_sth(&sth, &ks, sth.timestamp + 60, MAX_STH_AGE_SECONDS).unwrap_err();
             assert!(matches!(err, AttestError::RekorProofInvalid { .. }));
         }
 
@@ -1111,8 +1119,8 @@ mod tests {
             // Empty key set → log_id matches nothing.
             let ks = RekorKeySet::new();
             let sth = sign(&sk, sample_sth());
-            let err = verify_rekor_sth(&sth, &ks, sth.timestamp + 60, MAX_STH_AGE_SECONDS)
-                .unwrap_err();
+            let err =
+                verify_rekor_sth(&sth, &ks, sth.timestamp + 60, MAX_STH_AGE_SECONDS).unwrap_err();
             assert!(matches!(err, AttestError::RekorLogUntrusted { .. }));
         }
 
@@ -1124,9 +1132,7 @@ mod tests {
             let err = verify_rekor_sth(
                 &sth,
                 &ks,
-                sth.timestamp
-                    + i64::try_from(MAX_STH_AGE_SECONDS).expect("max_age fits i64")
-                    + 1,
+                sth.timestamp + i64::try_from(MAX_STH_AGE_SECONDS).expect("max_age fits i64") + 1,
                 MAX_STH_AGE_SECONDS,
             )
             .unwrap_err();
@@ -1151,8 +1157,8 @@ mod tests {
             let mut sth = sign(&sk, sample_sth());
             // Truncated signature — 63 bytes instead of 64.
             sth.signature.truncate(63);
-            let err = verify_rekor_sth(&sth, &ks, sth.timestamp + 60, MAX_STH_AGE_SECONDS)
-                .unwrap_err();
+            let err =
+                verify_rekor_sth(&sth, &ks, sth.timestamp + 60, MAX_STH_AGE_SECONDS).unwrap_err();
             assert!(matches!(err, AttestError::RekorProofInvalid { .. }));
         }
 

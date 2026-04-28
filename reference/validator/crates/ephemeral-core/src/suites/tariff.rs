@@ -452,7 +452,8 @@ fn classify(input: &TariffInput, category: &str) -> Result<(), TariffRejectCode>
     if ctx.payload_encoding_detected.as_deref() == Some("json") {
         return Err(TariffRejectCode::PayloadEncodingInvalid);
     }
-    if ctx.cbor_is_deterministic == Some(false) || ctx.cbor_type_observed.as_deref() == Some("float")
+    if ctx.cbor_is_deterministic == Some(false)
+        || ctx.cbor_type_observed.as_deref() == Some("float")
     {
         return Err(TariffRejectCode::PayloadNotDeterministicCbor);
     }
@@ -482,18 +483,15 @@ fn classify(input: &TariffInput, category: &str) -> Result<(), TariffRejectCode>
             let expected_abi = input
                 .policy_classifier_abi_version
                 .unwrap_or(CLASSIFIER_ABI_VERSION);
-            let cose_bytes = hex::decode(cose_hex)
-                .map_err(|_| TariffRejectCode::ClassifierSignatureInvalid)?;
-            let wasm_bytes = hex::decode(wasm_hex)
-                .map_err(|_| TariffRejectCode::ClassifierSignatureInvalid)?;
+            let cose_bytes =
+                hex::decode(cose_hex).map_err(|_| TariffRejectCode::ClassifierSignatureInvalid)?;
+            let wasm_bytes =
+                hex::decode(wasm_hex).map_err(|_| TariffRejectCode::ClassifierSignatureInvalid)?;
             let anchors = build_anchor_set(defs, AnchorRole::ClassifierSigner)
                 .map_err(|_| TariffRejectCode::ClassifierSignatureInvalid)?;
-            if let Err(e) = verify_classifier_signature(
-                &wasm_bytes,
-                &cose_bytes,
-                &anchors,
-                expected_abi,
-            ) {
+            if let Err(e) =
+                verify_classifier_signature(&wasm_bytes, &cose_bytes, &anchors, expected_abi)
+            {
                 return Err(map_classifier_sig_error_to_tariff(&e));
             }
         }
@@ -557,8 +555,7 @@ fn classify(input: &TariffInput, category: &str) -> Result<(), TariffRejectCode>
                 if gap > 0 && u64::try_from(gap).unwrap_or(u64::MAX) > max_gap {
                     return Err(TariffRejectCode::TariffIatNbfGapExcessive);
                 }
-            } else if gap > 0
-                && u64::try_from(gap).unwrap_or(u64::MAX) > MAX_IAT_TO_NBF_GAP_SECONDS
+            } else if gap > 0 && u64::try_from(gap).unwrap_or(u64::MAX) > MAX_IAT_TO_NBF_GAP_SECONDS
             {
                 return Err(TariffRejectCode::TariffIatNbfGapExcessive);
             }
@@ -603,7 +600,9 @@ fn dispatch_by_category(category: &str) -> Result<(), TariffRejectCode> {
 
         // Self-inconsistent payload (trej-017). Distinct from delegation-scope's
         // `version-skew` per the suite notes.
-        "version-skew-minimum-tariff-version" => Err(TariffRejectCode::TariffSelfInconsistentVersion),
+        "version-skew-minimum-tariff-version" => {
+            Err(TariffRejectCode::TariffSelfInconsistentVersion)
+        }
 
         // Fuzz-attestation family (§4.4 V3-8).
         "missing-classifier_fuzz_attestation" | "redteam-V3-8-fuzz-attestation-missing" => {
@@ -710,9 +709,7 @@ fn map_classifier_sig_error_to_tariff(e: &ClassifierSigError) -> TariffRejectCod
         ClassifierSigError::AbiVersionMismatch { .. } => {
             TariffRejectCode::ClassifierAbiVersionMismatch
         }
-        ClassifierSigError::WasmHashMismatch { .. } => {
-            TariffRejectCode::ClassifierWasmHashMismatch
-        }
+        ClassifierSigError::WasmHashMismatch { .. } => TariffRejectCode::ClassifierWasmHashMismatch,
         ClassifierSigError::SignerKidMismatch { .. } => {
             TariffRejectCode::ClassifierSignerKidMismatch
         }
@@ -785,7 +782,9 @@ mod tests {
             "trust_anchors": ["K_cust_root_pk_TEST"],
             "signature_valid_under_current_bytes": true
         });
-        let serde_json::Value::Object(ref mut map) = ctx else { unreachable!() };
+        let serde_json::Value::Object(ref mut map) = ctx else {
+            unreachable!()
+        };
         if let serde_json::Value::Object(x) = extra {
             for (k, vv) in x {
                 map.insert(k, vv);
@@ -819,20 +818,31 @@ mod tests {
     #[test]
     fn cose_missing_alg() {
         let ctx = base_ctx(json!({"protected_header_has_alg": false}));
-        let vec = v("trej-010", "sig-cose-header-malformed", "cose-malformed", base_input(ctx));
+        let vec = v(
+            "trej-010",
+            "sig-cose-header-malformed",
+            "cose-malformed",
+            base_input(ctx),
+        );
         assert!(matches!(execute(&vec), ValidationOutcome::Pass));
     }
 
     #[test]
     fn cose_unknown_crit() {
         let ctx = base_ctx(json!({"crit_labels": [99], "verifier_understands_crit": false}));
-        let vec = v("trej-011", "sig-cose-header-malformed", "cose-malformed", base_input(ctx));
+        let vec = v(
+            "trej-011",
+            "sig-cose-header-malformed",
+            "cose-malformed",
+            base_input(ctx),
+        );
         assert!(matches!(execute(&vec), ValidationOutcome::Pass));
     }
 
     #[test]
     fn alg_rsa_rejected() {
-        let ctx = base_ctx(json!({"cose_alg_label": -257, "signature_valid_under_declared_alg": true}));
+        let ctx =
+            base_ctx(json!({"cose_alg_label": -257, "signature_valid_under_declared_alg": true}));
         let vec = v(
             "trej-005",
             "sig-invalid-algorithm-unsupported",
@@ -884,7 +894,8 @@ mod tests {
 
     #[test]
     fn chain_empty() {
-        let ctx = base_ctx(json!({"delegation_chain": [], "signature_valid_under_declared_alg": true}));
+        let ctx =
+            base_ctx(json!({"delegation_chain": [], "signature_valid_under_declared_alg": true}));
         let vec = v(
             "trej-007",
             "sig-chain-broken-unsigned-root",
@@ -915,7 +926,12 @@ mod tests {
             "revocation_list": ["K_tariff_signer_pk_TEST"],
             "signature_valid_under_declared_alg": true
         }));
-        let vec = v("trej-009", "sig-chain-revoked-signer", "revoked", base_input(ctx));
+        let vec = v(
+            "trej-009",
+            "sig-chain-revoked-signer",
+            "revoked",
+            base_input(ctx),
+        );
         assert!(matches!(execute(&vec), ValidationOutcome::Pass));
     }
 
@@ -1177,7 +1193,10 @@ mod tests {
     #[test]
     fn reject_code_display_round_trip() {
         // A subset to confirm display matches the kebab-case contract.
-        assert_eq!(TariffRejectCode::CoseMalformed.to_string(), "cose-malformed");
+        assert_eq!(
+            TariffRejectCode::CoseMalformed.to_string(),
+            "cose-malformed"
+        );
         assert_eq!(
             TariffRejectCode::SignatureChainBroken.to_string(),
             "signature-chain-broken"
@@ -1270,9 +1289,7 @@ mod tests {
         let input = step_9_5_base_input(
             Some(hex::encode(&cose)),
             Some(hex::encode(STEP_9_5_WASM)),
-            Some(classifier_anchor_def_json(
-                cft::FIXTURE_CLASSIFIER_KID,
-            )),
+            Some(classifier_anchor_def_json(cft::FIXTURE_CLASSIFIER_KID)),
             None,
         );
         // previously_seen_version=1, tariff_version_in_payload absent → step
@@ -1293,9 +1310,7 @@ mod tests {
         let input = step_9_5_base_input(
             Some(hex::encode(&cose)),
             Some(hex::encode(STEP_9_5_WASM)),
-            Some(classifier_anchor_def_json(
-                cft::FIXTURE_CLASSIFIER_KID,
-            )),
+            Some(classifier_anchor_def_json(cft::FIXTURE_CLASSIFIER_KID)),
             None,
         );
         let input: TariffInput = serde_json::from_value(input).unwrap();
@@ -1318,9 +1333,7 @@ mod tests {
         let input = step_9_5_base_input(
             Some(hex::encode(&cose)),
             Some(hex::encode(STEP_9_5_WASM)),
-            Some(classifier_anchor_def_json(
-                cft::FIXTURE_CLASSIFIER_KID,
-            )),
+            Some(classifier_anchor_def_json(cft::FIXTURE_CLASSIFIER_KID)),
             None,
         );
         let input: TariffInput = serde_json::from_value(input).unwrap();
@@ -1346,9 +1359,7 @@ mod tests {
         let input = step_9_5_base_input(
             Some(hex::encode(&cose)),
             Some(hex::encode(STEP_9_5_WASM)),
-            Some(classifier_anchor_def_json(
-                cft::FIXTURE_CLASSIFIER_KID,
-            )),
+            Some(classifier_anchor_def_json(cft::FIXTURE_CLASSIFIER_KID)),
             None,
         );
         let input: TariffInput = serde_json::from_value(input).unwrap();
@@ -1377,9 +1388,7 @@ mod tests {
         let input = step_9_5_base_input(
             Some(hex::encode(&cose)),
             Some(hex::encode(STEP_9_5_WASM)),
-            Some(classifier_anchor_def_json(
-                cft::FIXTURE_CLASSIFIER_KID,
-            )),
+            Some(classifier_anchor_def_json(cft::FIXTURE_CLASSIFIER_KID)),
             None,
         );
         let input: TariffInput = serde_json::from_value(input).unwrap();
@@ -1407,9 +1416,7 @@ mod tests {
         let input = step_9_5_base_input(
             Some(hex::encode(&cose)),
             Some(hex::encode(STEP_9_5_WASM)),
-            Some(classifier_anchor_def_json(
-                cft::FIXTURE_CLASSIFIER_KID,
-            )),
+            Some(classifier_anchor_def_json(cft::FIXTURE_CLASSIFIER_KID)),
             None,
         );
         let input: TariffInput = serde_json::from_value(input).unwrap();
@@ -1507,9 +1514,7 @@ mod tests {
         let input = step_9_5_base_input(
             Some(hex::encode(&committed)),
             Some(hex::encode(ARCH_1_PROBE_WASM)),
-            Some(classifier_anchor_def_json(
-                cft::FIXTURE_CLASSIFIER_KID,
-            )),
+            Some(classifier_anchor_def_json(cft::FIXTURE_CLASSIFIER_KID)),
             None,
         );
         let input: TariffInput = serde_json::from_value(input).unwrap();
@@ -1539,9 +1544,7 @@ mod tests {
         let cose = cft::happy_envelope(STEP_9_5_WASM);
         let good_cose_hex = hex::encode(&cose);
         let good_wasm_hex = hex::encode(STEP_9_5_WASM);
-        let anchors = classifier_anchor_def_json(
-            cft::FIXTURE_CLASSIFIER_KID,
-        );
+        let anchors = classifier_anchor_def_json(cft::FIXTURE_CLASSIFIER_KID);
 
         // Case A: cose hex malformed.
         let input_a = step_9_5_base_input(
@@ -1584,11 +1587,14 @@ mod tests {
         let cose = cft::happy_envelope(STEP_9_5_WASM);
         let cose_hex = hex::encode(&cose);
         let wasm_hex = hex::encode(STEP_9_5_WASM);
-        let anchors = classifier_anchor_def_json(
-            cft::FIXTURE_CLASSIFIER_KID,
-        );
+        let anchors = classifier_anchor_def_json(cft::FIXTURE_CLASSIFIER_KID);
 
-        let cases: [(Option<String>, Option<String>, Option<serde_json::Value>, &str); 5] = [
+        let cases: [(
+            Option<String>,
+            Option<String>,
+            Option<serde_json::Value>,
+            &str,
+        ); 5] = [
             (None, Some(wasm_hex.clone()), None, "wasm-only"),
             (None, None, Some(anchors.clone()), "anchors-only"),
             (
@@ -1674,9 +1680,7 @@ mod tests {
         );
         map_a.insert(
             "trust_anchor_keys_classifier".into(),
-            classifier_anchor_def_json(
-                cft::FIXTURE_CLASSIFIER_KID,
-            ),
+            classifier_anchor_def_json(cft::FIXTURE_CLASSIFIER_KID),
         );
         let input_a: TariffInput = serde_json::from_value(inp_a).unwrap();
         assert_eq!(
@@ -1701,9 +1705,7 @@ mod tests {
         );
         map_b.insert(
             "trust_anchor_keys_classifier".into(),
-            classifier_anchor_def_json(
-                cft::FIXTURE_CLASSIFIER_KID,
-            ),
+            classifier_anchor_def_json(cft::FIXTURE_CLASSIFIER_KID),
         );
         let input_b: TariffInput = serde_json::from_value(inp_b).unwrap();
         assert_eq!(

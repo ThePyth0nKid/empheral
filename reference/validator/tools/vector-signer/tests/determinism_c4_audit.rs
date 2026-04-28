@@ -43,8 +43,7 @@ use std::process::Command;
 ///
 /// Update this constant when intentionally regenerating vectors — it is a
 /// tripwire for silent non-determinism regressions.
-const DRY_RUN_SHA256: &str =
-    "4e6055df026c29efd31b00087aa4512937b3289a64720e5003ce013850e787aa";
+const DRY_RUN_SHA256: &str = "4e6055df026c29efd31b00087aa4512937b3289a64720e5003ce013850e787aa";
 
 fn vector_signer_bin() -> std::path::PathBuf {
     if let Ok(p) = std::env::var("CARGO_BIN_EXE_vector-signer") {
@@ -63,7 +62,10 @@ fn vector_signer_bin() -> std::path::PathBuf {
         .expect("cargo build");
     assert!(status.success(), "cargo build -p vector-signer failed");
 
-    workspace_root.join("target").join("debug").join("vector-signer")
+    workspace_root
+        .join("target")
+        .join("debug")
+        .join("vector-signer")
 }
 
 fn run_dry_run() -> Vec<u8> {
@@ -97,11 +99,9 @@ fn dry_run_contains_all_vector_ids() {
     let stdout = run_dry_run();
     let text = std::str::from_utf8(&stdout).expect("stdout is UTF-8");
     for id in [
-        "arep-100", "arep-101", "arep-102", "arep-103",
-        "arep-104", "arep-105", "arep-106", "arep-107",
-        "arep-108", "arep-109", "arep-110", "arep-111",
-        "arep-112", "arep-113", "arep-114", "arep-115",
-        "arep-116",
+        "arep-100", "arep-101", "arep-102", "arep-103", "arep-104", "arep-105", "arep-106",
+        "arep-107", "arep-108", "arep-109", "arep-110", "arep-111", "arep-112", "arep-113",
+        "arep-114", "arep-115", "arep-116",
     ] {
         assert!(
             text.contains(id),

@@ -39,7 +39,9 @@ pub fn size_depth_check(bytes: &[u8]) -> Result<(), AttestError> {
 
     let depth = cbor_depth(&value, 1);
     if depth > MAX_CBOR_DEPTH {
-        return Err(AttestError::CborDepthExceeded { max: MAX_CBOR_DEPTH });
+        return Err(AttestError::CborDepthExceeded {
+            max: MAX_CBOR_DEPTH,
+        });
     }
 
     Ok(())

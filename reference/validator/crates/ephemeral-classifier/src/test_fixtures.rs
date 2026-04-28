@@ -263,14 +263,10 @@ pub struct SharedWasmArtifacts {
 pub fn shared_wasm_artifacts() -> &'static SharedWasmArtifacts {
     static POOL: OnceLock<SharedWasmArtifacts> = OnceLock::new();
     POOL.get_or_init(|| SharedWasmArtifacts {
-        echo: wat::parse_str(echo_classifier_wat())
-            .expect("echo_classifier_wat must parse"),
-        tier_1: wat::parse_str(always_tier_1_wat())
-            .expect("always_tier_1_wat must parse"),
-        tier_9999: wat::parse_str(always_tier_9999_wat())
-            .expect("always_tier_9999_wat must parse"),
-        reject: wat::parse_str(reject_by_schema_wat())
-            .expect("reject_by_schema_wat must parse"),
+        echo: wat::parse_str(echo_classifier_wat()).expect("echo_classifier_wat must parse"),
+        tier_1: wat::parse_str(always_tier_1_wat()).expect("always_tier_1_wat must parse"),
+        tier_9999: wat::parse_str(always_tier_9999_wat()).expect("always_tier_9999_wat must parse"),
+        reject: wat::parse_str(reject_by_schema_wat()).expect("reject_by_schema_wat must parse"),
         fuel_exhausted: wat::parse_str(fuel_exhausted_wat())
             .expect("fuel_exhausted_wat must parse"),
     })

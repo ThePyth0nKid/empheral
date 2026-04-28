@@ -469,7 +469,9 @@ fn build_vector(
     let mut input = serde_json::Map::new();
     input.insert(
         "tariff_cbor_hex".into(),
-        json!("<placeholder: live-crypto vector drives verification via cose_sign1_bytes_classifier>"),
+        json!(
+            "<placeholder: live-crypto vector drives verification via cose_sign1_bytes_classifier>"
+        ),
     );
     input.insert(
         "signature_verification_context".into(),
@@ -493,9 +495,9 @@ fn build_vector(
     let expected = match (outcome, reject_code) {
         ("reject", Some(code)) => json!({ "outcome": "reject", "reject_code": code }),
         ("accept", None) => json!({ "outcome": "accept" }),
-        (o, rc) => panic!(
-            "build_vector: outcome={o:?} reject_code={rc:?} is not a supported combination",
-        ),
+        (o, rc) => {
+            panic!("build_vector: outcome={o:?} reject_code={rc:?} is not a supported combination")
+        }
     };
 
     json!({
@@ -540,8 +542,7 @@ mod tests {
         // if a variant is renamed this refreshes automatically and any
         // mismatched vector surfaces here.
         let sig_invalid = TariffRejectCode::ClassifierSignatureInvalid.to_string();
-        let payload_malformed =
-            TariffRejectCode::ClassifierSignaturePayloadMalformed.to_string();
+        let payload_malformed = TariffRejectCode::ClassifierSignaturePayloadMalformed.to_string();
         let abi_mismatch = TariffRejectCode::ClassifierAbiVersionMismatch.to_string();
         let hash_mismatch = TariffRejectCode::ClassifierWasmHashMismatch.to_string();
         let kid_mismatch = TariffRejectCode::ClassifierSignerKidMismatch.to_string();
@@ -592,8 +593,7 @@ mod tests {
             .as_str()
             .expect("cose hex present");
         let cose_bytes = hex::decode(cose_hex).expect("valid hex");
-        let sign1 = coset::CoseSign1::from_slice(&cose_bytes)
-            .expect("parse COSE_Sign1");
+        let sign1 = coset::CoseSign1::from_slice(&cose_bytes).expect("parse COSE_Sign1");
         let inner = sign1.payload.expect("inner payload present");
         // Decode ciborium → Value and walk to the sha256 byte string.
         let val: ciborium::Value =
@@ -616,9 +616,7 @@ mod tests {
     #[test]
     fn trej_124_inner_and_outer_kid_diverge() {
         let v = build_trej_124_inner_kid_mismatch();
-        let cose_hex = v["input"]["cose_sign1_bytes_classifier"]
-            .as_str()
-            .unwrap();
+        let cose_hex = v["input"]["cose_sign1_bytes_classifier"].as_str().unwrap();
         let cose_bytes = hex::decode(cose_hex).unwrap();
         let sign1 = coset::CoseSign1::from_slice(&cose_bytes).unwrap();
         let outer_kid = std::str::from_utf8(&sign1.protected.header.key_id)
@@ -658,7 +656,9 @@ mod tests {
         // Anchor wiring registers the IMPOSTOR outer kid against the
         // real fixture pk so the outer COSE layer verifies cleanly —
         // the mismatch must surface purely at the inner/outer check.
-        let anchors = v["input"]["trust_anchor_keys_classifier"].as_array().unwrap();
+        let anchors = v["input"]["trust_anchor_keys_classifier"]
+            .as_array()
+            .unwrap();
         assert_eq!(anchors[0]["kid"].as_str().unwrap(), IMPOSTOR_OUTER_KID);
     }
 
@@ -682,9 +682,7 @@ mod tests {
     #[test]
     fn trej_123_signed_hash_differs_from_supplied_wasm() {
         let v = build_trej_123_wasm_hash_mismatch();
-        let cose_hex = v["input"]["cose_sign1_bytes_classifier"]
-            .as_str()
-            .unwrap();
+        let cose_hex = v["input"]["cose_sign1_bytes_classifier"].as_str().unwrap();
         let wasm_hex = v["input"]["wasm_bytes_classifier"].as_str().unwrap();
         let wasm_bytes = hex::decode(wasm_hex).unwrap();
         let supplied_hash = cft::sha256_of(&wasm_bytes);

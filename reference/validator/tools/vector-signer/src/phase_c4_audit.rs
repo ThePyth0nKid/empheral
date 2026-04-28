@@ -230,7 +230,11 @@ mod tests {
             ("arep-108", "reject", Some("aggregation-pattern-detected")),
             ("arep-109", "reject", Some("aggregation-pattern-detected")),
             ("arep-110", "reject", Some("aggregation-pattern-detected")),
-            ("arep-111", "reject", Some("audit-replay-stream-clock-regression")),
+            (
+                "arep-111",
+                "reject",
+                Some("audit-replay-stream-clock-regression"),
+            ),
             (
                 "arep-112",
                 "reject",
@@ -322,9 +326,9 @@ mod tests {
             ("arep-116", 0),
         ];
         for (i, (id, expected_count)) in expected.iter().enumerate() {
-            let got = v[i]["expected"].get("output").and_then(|o| {
-                o.get("records").and_then(|f| f.as_array()).map(Vec::len)
-            });
+            let got = v[i]["expected"]
+                .get("output")
+                .and_then(|o| o.get("records").and_then(|f| f.as_array()).map(Vec::len));
             let got_count = got.unwrap_or(0);
             assert_eq!(
                 got_count, *expected_count,

@@ -7,9 +7,7 @@
 
 use serde_json::Value;
 
-use super::helpers::{
-    build_accept_vector, canonical_event_named, literal_stream, tenant_stream,
-};
+use super::helpers::{build_accept_vector, canonical_event_named, literal_stream, tenant_stream};
 
 pub(super) fn build_arep_114_two_tenants_empty() -> Value {
     build_accept_vector(
@@ -50,7 +48,10 @@ pub(super) fn build_arep_115_two_tenants_below_threshold() -> Value {
          that always rejected would pass every fire-expected vector but \
          fail this; the below-threshold accept is the load-bearing \
          negative control.",
-        vec![tenant_stream("t-a", a_stream), tenant_stream("t-b", b_stream)],
+        vec![
+            tenant_stream("t-a", a_stream),
+            tenant_stream("t-b", b_stream),
+        ],
     )
 }
 

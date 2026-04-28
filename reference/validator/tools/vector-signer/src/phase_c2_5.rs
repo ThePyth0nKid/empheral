@@ -96,8 +96,7 @@ fn sign_sth(seed: [u8; 32], sth: &RekorSignedTreeHead) -> Vec<u8> {
 
 /// Derive the verifying key bytes (32) for a given seed.
 fn pubkey_for(seed: [u8; 32]) -> [u8; 32] {
-    *VerifyingKey::from(&SigningKey::from_bytes(&seed))
-        .as_bytes()
+    *VerifyingKey::from(&SigningKey::from_bytes(&seed)).as_bytes()
 }
 
 /// Shared setup: compute root + proof for the canonical leaves + index.
@@ -111,9 +110,8 @@ fn setup_sth() -> SthSetup {
     let leaves = canonical_leaves();
     let (proof, root) = generate_proof(&leaves, ENTRY_INDEX);
     let proof_path_hex = proof.iter().map(hex::encode).collect();
-    let leaf_bytes = leaf_hash(
-        &leaves[usize::try_from(ENTRY_INDEX).expect("ENTRY_INDEX fits in usize")],
-    );
+    let leaf_bytes =
+        leaf_hash(&leaves[usize::try_from(ENTRY_INDEX).expect("ENTRY_INDEX fits in usize")]);
     SthSetup {
         root,
         proof_path_hex,
@@ -473,7 +471,12 @@ fn build_pcrrej_117() -> Value {
 /// Build a fresh [`RekorSignedTreeHead`] with an empty signature. Callers
 /// compute `canonical_bytes()` on it and then fill `signature` with the
 /// Ed25519 output.
-fn base_sth(root: &[u8; 32], tree_size: u64, timestamp: i64, log_id: [u8; 32]) -> RekorSignedTreeHead {
+fn base_sth(
+    root: &[u8; 32],
+    tree_size: u64,
+    timestamp: i64,
+    log_id: [u8; 32],
+) -> RekorSignedTreeHead {
     RekorSignedTreeHead {
         tree_root: *root,
         tree_size,
@@ -619,8 +622,7 @@ mod tests {
         // `PcrRejectCode`'s `Display` impl. If a variant is renamed the
         // `expected` set refreshes automatically and any vector that missed
         // the rename surfaces here as a mismatch.
-        let transparency_invalid =
-            PcrRejectCode::PcrAttestationTransparencyInvalid.to_string();
+        let transparency_invalid = PcrRejectCode::PcrAttestationTransparencyInvalid.to_string();
         let transparency_stale = PcrRejectCode::PcrAttestationTransparencyStale.to_string();
         let transparency_log_unknown =
             PcrRejectCode::PcrAttestationTransparencyLogUnknown.to_string();
@@ -683,8 +685,7 @@ mod tests {
     #[test]
     fn pcrrej_110_proof_path_first_entry_is_malformed_hex() {
         let v = &build_pcrrej_110();
-        let p0 =
-            &v["input"]["attestation_bundle"]["transparency_log_proof"]["proof_path_hex"][0];
+        let p0 = &v["input"]["attestation_bundle"]["transparency_log_proof"]["proof_path_hex"][0];
         assert_eq!(p0.as_str().unwrap(), "abc");
     }
 

@@ -61,7 +61,10 @@ pub fn inner_hash(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
 /// Panics if `leaves` is empty.
 #[cfg(test)]
 pub fn build_tree(leaves: &[Vec<u8>]) -> [u8; 32] {
-    assert!(!leaves.is_empty(), "build_tree: empty leaves not defined by RFC 9162");
+    assert!(
+        !leaves.is_empty(),
+        "build_tree: empty leaves not defined by RFC 9162"
+    );
     let hashed: Vec<[u8; 32]> = leaves.iter().map(|d| leaf_hash(d)).collect();
     subtree_root(&hashed)
 }
@@ -100,7 +103,10 @@ fn split_point(n: usize) -> usize {
 /// - `leaves` empty: root undefined.
 /// - `index >= leaves.len() as u64`: index out of bounds.
 pub fn generate_proof(leaves: &[Vec<u8>], index: u64) -> (Vec<[u8; 32]>, [u8; 32]) {
-    assert!(!leaves.is_empty(), "generate_proof: leaves must be non-empty");
+    assert!(
+        !leaves.is_empty(),
+        "generate_proof: leaves must be non-empty"
+    );
     let idx_usize = usize::try_from(index).expect("index fits in usize on this host");
     assert!(
         idx_usize < leaves.len(),

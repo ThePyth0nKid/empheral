@@ -136,7 +136,9 @@ impl fmt::Display for PcrRejectCode {
             Self::PcrAttestationTransparencyMissing => "pcr-attestation-transparency-missing",
             Self::PcrAttestationTransparencyInvalid => "pcr-attestation-transparency-invalid",
             Self::PcrAttestationTransparencyStale => "pcr-attestation-transparency-stale",
-            Self::PcrAttestationTransparencyLogUnknown => "pcr-attestation-transparency-log-unknown",
+            Self::PcrAttestationTransparencyLogUnknown => {
+                "pcr-attestation-transparency-log-unknown"
+            }
             Self::PcrAttestationTransparencyNotYetLogged => {
                 "pcr-attestation-transparency-not-yet-logged"
             }
@@ -456,7 +458,8 @@ fn classify(input: &PcrInput, category: &str) -> PcrRejectCode {
     }
 
     // 7. Freshness (pcrrej-036, 037, 038, 039, 041).
-    if let Some(code) = classify_freshness(bundle, &input.tariff_pcr_requirement, input.current_time)
+    if let Some(code) =
+        classify_freshness(bundle, &input.tariff_pcr_requirement, input.current_time)
     {
         return code;
     }
@@ -753,10 +756,7 @@ fn classify_transparency_log(
     // pcrrej-045: required witness cosignatures missing.
     if let Some(required) = req.required_witness_cosignatures {
         if required > 0 {
-            let present = proof
-                .witness_cosignatures
-                .as_ref()
-                .map_or(0, Vec::len);
+            let present = proof.witness_cosignatures.as_ref().map_or(0, Vec::len);
             if u32::try_from(present).unwrap_or(u32::MAX) < required {
                 return Some(PcrRejectCode::PcrAttestationWitnessCosignatureMissing);
             }
@@ -1087,8 +1087,8 @@ fn execute_live_nitro(vector: &Vector) -> ValidationOutcome {
 #[cfg(feature = "test-fixtures")]
 fn classify_live_nitro(input: &LiveNitroInput) -> Result<(), PcrRejectCode> {
     // 1. Decode hex payload.
-    let cose_bytes = hex::decode(&input.cose_sign1_bytes)
-        .map_err(|_| PcrRejectCode::PcrBundleMalformed)?;
+    let cose_bytes =
+        hex::decode(&input.cose_sign1_bytes).map_err(|_| PcrRejectCode::PcrBundleMalformed)?;
 
     // 2. Build NitroRootSet from supplied hex roots. The test-fixtures insert
     //    path accepts roots without fingerprint pinning; production builds do
@@ -1134,8 +1134,10 @@ fn classify_live_nitro(input: &LiveNitroInput) -> Result<(), PcrRejectCode> {
         let hash = hex::decode(value).map_err(|_| PcrRejectCode::PcrBundleMalformed)?;
         expected_owned.push((id, hash));
     }
-    let expected_refs: Vec<(u8, &[u8])> =
-        expected_owned.iter().map(|(i, h)| (*i, h.as_slice())).collect();
+    let expected_refs: Vec<(u8, &[u8])> = expected_owned
+        .iter()
+        .map(|(i, h)| (*i, h.as_slice()))
+        .collect();
 
     verify_pcr_set(&claims, &expected_refs).map_err(|e| map_attest_error(&e))?;
 
@@ -1395,13 +1397,8 @@ fn classify_live_rekor(
         proof.log_key_valid_until.unwrap_or(sth_timestamp),
     );
     let mut keys = RekorKeySet::new();
-    keys.insert_trusted_key_for_test(
-        log_id_bytes,
-        verifying_key,
-        key_valid_from,
-        key_valid_until,
-    )
-    .map_err(|_| PcrRejectCode::PcrAttestationTransparencyInvalid)?;
+    keys.insert_trusted_key_for_test(log_id_bytes, verifying_key, key_valid_from, key_valid_until)
+        .map_err(|_| PcrRejectCode::PcrAttestationTransparencyInvalid)?;
 
     // ── 6. Verify STH signature + crate-level freshness ─────────────────────
     let sth = RekorSignedTreeHead {
@@ -1421,8 +1418,7 @@ fn classify_live_rekor(
         index: entry_index,
         tree_size,
     };
-    verify_rekor_inclusion(&entry, &leaf_hash, &tree_root)
-        .map_err(|e| map_attest_error(&e))?;
+    verify_rekor_inclusion(&entry, &leaf_hash, &tree_root).map_err(|e| map_attest_error(&e))?;
 
     // ── 8. Policy: witness cosignatures ─────────────────────────────────────
     if let Some(required) = req.required_witness_cosignatures {
@@ -1516,7 +1512,10 @@ mod tests {
     fn quorum_one_with_three_attestors_is_tariff_invalid() {
         let mut v = base_input();
         v["tariff_pcr_requirement"]["quorum"] = json!(1);
-        v["attestation_bundle"]["attestations"].as_array_mut().unwrap().pop();
+        v["attestation_bundle"]["attestations"]
+            .as_array_mut()
+            .unwrap()
+            .pop();
         assert_eq!(
             classify_from(v, "bundle-with-one-attestor-quorum-one"),
             PcrRejectCode::TariffPcrQuorumInvalid
@@ -1526,7 +1525,10 @@ mod tests {
     #[test]
     fn missing_expected_pcrs_is_tariff_invalid() {
         let mut v = base_input();
-        v["tariff_pcr_requirement"].as_object_mut().unwrap().remove("expected_pcrs");
+        v["tariff_pcr_requirement"]
+            .as_object_mut()
+            .unwrap()
+            .remove("expected_pcrs");
         assert_eq!(
             classify_from(v, "pcr-expected-missing-in-tariff"),
             PcrRejectCode::TariffPcrQuorumInvalid
@@ -1680,7 +1682,10 @@ mod tests {
     #[test]
     fn transparency_missing_when_field_absent() {
         let mut v = base_input();
-        v["attestation_bundle"].as_object_mut().unwrap().remove("transparency_log_proof");
+        v["attestation_bundle"]
+            .as_object_mut()
+            .unwrap()
+            .remove("transparency_log_proof");
         assert_eq!(
             classify_from(v, "transparency-log-missing-inclusion-proof"),
             PcrRejectCode::PcrAttestationTransparencyMissing
@@ -1722,8 +1727,7 @@ mod tests {
     #[test]
     fn transparency_log_unknown() {
         let mut v = base_input();
-        v["tariff_pcr_requirement"]["trusted_transparency_logs"] =
-            json!([{"log_id": "rekor-v1"}]);
+        v["tariff_pcr_requirement"]["trusted_transparency_logs"] = json!([{"log_id": "rekor-v1"}]);
         v["attestation_bundle"]["transparency_log_proof"]["log_id"] = json!("rogue-log-v1");
         assert_eq!(
             classify_from(v, "transparency-log-unknown-log"),
@@ -2134,7 +2138,10 @@ mod tests {
         proof.insert("log_id_hex".into(), json!(TEST_LIVE_LOG_ID_HEX));
         proof.insert("proof_path_hex".into(), json!(Vec::<String>::new()));
         proof.insert("sth_signature_hex".into(), json!("00".repeat(64)));
-        proof.insert("sth_timestamp".into(), json!(current - sth_timestamp_offset));
+        proof.insert(
+            "sth_timestamp".into(),
+            json!(current - sth_timestamp_offset),
+        );
         proof.insert("sth_tree_root_hex".into(), json!("00".repeat(32)));
         proof.insert("log_pubkey_hex".into(), json!(TEST_LOG_PUBKEY_HEX));
         proof.insert("entry_leaf_hash_hex".into(), json!("00".repeat(32)));
@@ -2173,10 +2180,9 @@ mod tests {
     #[test]
     fn max_root_age_override_cannot_loosen() {
         let mut v = live_presence_input(120);
-        v["tariff_pcr_requirement"]["transparency_log_max_root_age_seconds"] =
-            json!(60_u64);
-        v["attestation_bundle"]["transparency_log_proof"]
-            ["max_root_age_seconds_override"] = json!(3_600_u64);
+        v["tariff_pcr_requirement"]["transparency_log_max_root_age_seconds"] = json!(60_u64);
+        v["attestation_bundle"]["transparency_log_proof"]["max_root_age_seconds_override"] =
+            json!(3_600_u64);
         assert_eq!(
             classify_from(v, "h2-regression-override-loosen"),
             PcrRejectCode::PcrAttestationTransparencyStale
@@ -2190,10 +2196,9 @@ mod tests {
     #[test]
     fn max_root_age_override_can_tighten() {
         let mut v = live_presence_input(45);
-        v["tariff_pcr_requirement"]["transparency_log_max_root_age_seconds"] =
-            json!(60_u64);
-        v["attestation_bundle"]["transparency_log_proof"]
-            ["max_root_age_seconds_override"] = json!(30_u64);
+        v["tariff_pcr_requirement"]["transparency_log_max_root_age_seconds"] = json!(60_u64);
+        v["attestation_bundle"]["transparency_log_proof"]["max_root_age_seconds_override"] =
+            json!(30_u64);
         assert_eq!(
             classify_from(v, "h2-regression-override-tighten"),
             PcrRejectCode::PcrAttestationTransparencyStale
@@ -2207,8 +2212,7 @@ mod tests {
     #[test]
     fn max_root_age_override_none_uses_base() {
         let mut v = live_presence_input(100);
-        v["tariff_pcr_requirement"]["transparency_log_max_root_age_seconds"] =
-            json!(60_u64);
+        v["tariff_pcr_requirement"]["transparency_log_max_root_age_seconds"] = json!(60_u64);
         // Override deliberately absent.
         assert_eq!(
             classify_from(v, "h2-regression-override-none"),

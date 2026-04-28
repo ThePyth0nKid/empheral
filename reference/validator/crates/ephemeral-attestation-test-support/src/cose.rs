@@ -33,10 +33,8 @@ pub(crate) fn build_cose_sign1(
     let alg_id: i64 = if use_wrong_alg { -7 } else { -35 };
 
     // Protected header: {1: alg_id}
-    let protected_map: Vec<(Value, Value)> = vec![(
-        Value::Integer(1i64.into()),
-        Value::Integer(alg_id.into()),
-    )];
+    let protected_map: Vec<(Value, Value)> =
+        vec![(Value::Integer(1i64.into()), Value::Integer(alg_id.into()))];
     let mut protected_bytes = Vec::new();
     ciborium::ser::into_writer(&Value::Map(protected_map), &mut protected_bytes)
         .expect("protected header encode");
@@ -45,12 +43,11 @@ pub(crate) fn build_cose_sign1(
     let sig_structure = Value::Array(vec![
         Value::Text("Signature1".into()),
         Value::Bytes(protected_bytes.clone()),
-        Value::Bytes(vec![]),   // empty AAD for Nitro
+        Value::Bytes(vec![]), // empty AAD for Nitro
         Value::Bytes(payload.to_vec()),
     ]);
     let mut tbs_bytes = Vec::new();
-    ciborium::ser::into_writer(&sig_structure, &mut tbs_bytes)
-        .expect("sig structure encode");
+    ciborium::ser::into_writer(&sig_structure, &mut tbs_bytes).expect("sig structure encode");
 
     // Sign — RFC-6979 deterministic nonce
     let signature: p384::ecdsa::Signature = signing_key.sign(&tbs_bytes);
@@ -67,7 +64,7 @@ pub(crate) fn build_cose_sign1(
     // COSE_Sign1 = [protected_bstr, {}, payload_bstr, signature_bstr]
     let sign1_array = Value::Array(vec![
         Value::Bytes(protected_bytes),
-        Value::Map(vec![]),     // unprotected header (empty)
+        Value::Map(vec![]), // unprotected header (empty)
         Value::Bytes(embedded_payload),
         Value::Bytes(sig_bytes),
     ]);

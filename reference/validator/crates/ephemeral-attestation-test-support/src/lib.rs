@@ -91,8 +91,14 @@ impl Default for BuildParams {
             leaf_not_after: now + 86400 * 365,
             nonce: None,
             pcrs: vec![
-                PcrEntry { id: 0, hash: pcr_hash.clone() },
-                PcrEntry { id: 1, hash: pcr_hash },
+                PcrEntry {
+                    id: 0,
+                    hash: pcr_hash.clone(),
+                },
+                PcrEntry {
+                    id: 1,
+                    hash: pcr_hash,
+                },
             ],
             use_wrong_cose_alg: false,
             use_wrong_alg: false,
@@ -165,7 +171,10 @@ mod tests {
     fn build_is_deterministic() {
         let (bytes1, _) = build_attestation_doc(BuildParams::default());
         let (bytes2, _) = build_attestation_doc(BuildParams::default());
-        assert_eq!(bytes1, bytes2, "build_attestation_doc must be deterministic");
+        assert_eq!(
+            bytes1, bytes2,
+            "build_attestation_doc must be deterministic"
+        );
     }
 
     /// Sanity-check the first 8 bytes of the default fixture.

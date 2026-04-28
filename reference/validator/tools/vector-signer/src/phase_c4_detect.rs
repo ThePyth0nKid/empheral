@@ -203,11 +203,56 @@ fn build_adet_100_delete_storm_basic() -> Value {
 /// `iam-attach` family primary plus the ProtectedBranches wildcard.
 fn build_adet_101_iam_attach_storm() -> Value {
     let stream = literal_stream(vec![
-        canonical_event_named("e-0", "m-a101", 0, 2, "aws-iam", "attachrolepolicy", "role", "role/admin"),
-        canonical_event_named("e-1", "m-a101", 1, 2, "aws-iam", "attachrolepolicy", "role", "role/admin"),
-        canonical_event_named("e-2", "m-a101", 2, 2, "aws-iam", "attachrolepolicy", "role", "role/admin"),
-        canonical_event_named("e-3", "m-a101", 3, 2, "aws-iam", "attachrolepolicy", "role", "role/admin"),
-        canonical_event_named("e-4", "m-a101", 4, 2, "aws-iam", "attachrolepolicy", "role", "role/admin"),
+        canonical_event_named(
+            "e-0",
+            "m-a101",
+            0,
+            2,
+            "aws-iam",
+            "attachrolepolicy",
+            "role",
+            "role/admin",
+        ),
+        canonical_event_named(
+            "e-1",
+            "m-a101",
+            1,
+            2,
+            "aws-iam",
+            "attachrolepolicy",
+            "role",
+            "role/admin",
+        ),
+        canonical_event_named(
+            "e-2",
+            "m-a101",
+            2,
+            2,
+            "aws-iam",
+            "attachrolepolicy",
+            "role",
+            "role/admin",
+        ),
+        canonical_event_named(
+            "e-3",
+            "m-a101",
+            3,
+            2,
+            "aws-iam",
+            "attachrolepolicy",
+            "role",
+            "role/admin",
+        ),
+        canonical_event_named(
+            "e-4",
+            "m-a101",
+            4,
+            2,
+            "aws-iam",
+            "attachrolepolicy",
+            "role",
+            "role/admin",
+        ),
     ]);
 
     build_vector(
@@ -247,9 +292,36 @@ fn build_adet_101_iam_attach_storm() -> Value {
 /// MatchScope projection (verb AND resource_kind appear in the fire).
 fn build_adet_102_vault_rotate_storm() -> Value {
     let stream = literal_stream(vec![
-        canonical_event_named("e-0", "m-a102", 0, 2, "vault", "rotate", "vault-secret", "secret/prod/db-key"),
-        canonical_event_named("e-1", "m-a102", 1, 2, "vault", "rotate", "vault-secret", "secret/prod/db-key"),
-        canonical_event_named("e-2", "m-a102", 2, 2, "vault", "rotate", "vault-secret", "secret/prod/db-key"),
+        canonical_event_named(
+            "e-0",
+            "m-a102",
+            0,
+            2,
+            "vault",
+            "rotate",
+            "vault-secret",
+            "secret/prod/db-key",
+        ),
+        canonical_event_named(
+            "e-1",
+            "m-a102",
+            1,
+            2,
+            "vault",
+            "rotate",
+            "vault-secret",
+            "secret/prod/db-key",
+        ),
+        canonical_event_named(
+            "e-2",
+            "m-a102",
+            2,
+            2,
+            "vault",
+            "rotate",
+            "vault-secret",
+            "secret/prod/db-key",
+        ),
     ]);
 
     build_vector(
@@ -952,12 +1024,7 @@ fn match_scope_mandate(mandate_id: &str) -> Value {
 
 /// Build an `AnomalyFire`-shaped JSON object. `library_version` is
 /// always 1 (the `sign_minimum_library_with_version(1)` envelope).
-fn expected_fire(
-    pattern_id: &str,
-    severity: &str,
-    firing_rule: &str,
-    match_scope: Value,
-) -> Value {
+fn expected_fire(pattern_id: &str, severity: &str, firing_rule: &str, match_scope: Value) -> Value {
     json!({
         "pattern_id": pattern_id,
         "library_version": 1,
@@ -1124,7 +1191,11 @@ mod tests {
             ("adet-109", "accept", None),
             ("adet-110", "accept", None),
             ("adet-111", "reject", Some("anomaly-detected")),
-            ("adet-112", "reject", Some("anomaly-detect-stream-clock-regression")),
+            (
+                "adet-112",
+                "reject",
+                Some("anomaly-detect-stream-clock-regression"),
+            ),
             (
                 "adet-113",
                 "reject",
@@ -1189,9 +1260,9 @@ mod tests {
             ("adet-114", 0),
         ];
         for (i, (id, expected_count)) in expected.iter().enumerate() {
-            let got = v[i]["expected"].get("output").and_then(|o| {
-                o.get("fires").and_then(|f| f.as_array()).map(Vec::len)
-            });
+            let got = v[i]["expected"]
+                .get("output")
+                .and_then(|o| o.get("fires").and_then(|f| f.as_array()).map(Vec::len));
             let got_count = got.unwrap_or(0);
             assert_eq!(
                 got_count, *expected_count,
@@ -1289,7 +1360,9 @@ mod tests {
         // catastrophically — pin it here before any vector runs.
         let v = build_all();
         for vec_ in &v {
-            if let Some(fires) = vec_["expected"].get("output").and_then(|o| o["fires"].as_array())
+            if let Some(fires) = vec_["expected"]
+                .get("output")
+                .and_then(|o| o["fires"].as_array())
             {
                 for fire in fires {
                     assert_eq!(

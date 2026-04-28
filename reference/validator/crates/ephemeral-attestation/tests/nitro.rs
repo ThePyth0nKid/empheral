@@ -17,9 +17,7 @@
 
 #![allow(clippy::doc_markdown)]
 
-use ephemeral_attestation::{
-    verify_nitro_attestation, verify_pcr_set, AttestError, NitroRootSet,
-};
+use ephemeral_attestation::{verify_nitro_attestation, verify_pcr_set, AttestError, NitroRootSet};
 
 mod helpers;
 use helpers::{build_attestation_doc, BuildParams};
@@ -32,15 +30,16 @@ const DEFAULT_NOW: i64 = 1_700_000_000;
 #[test]
 fn happy_path_verifies_cleanly() {
     let (doc_bytes, roots) = build_attestation_doc(BuildParams::default());
-    let claims = verify_nitro_attestation(&doc_bytes, &roots, None, DEFAULT_NOW)
-        .expect("should verify");
+    let claims =
+        verify_nitro_attestation(&doc_bytes, &roots, None, DEFAULT_NOW).expect("should verify");
     assert_eq!(claims.module_id, "i-test-module-00");
     assert_eq!(claims.digest, "SHA384");
     assert!(!claims.pcrs.is_empty());
 
     // PCR verify round-trip
     let expected: Vec<(u8, Vec<u8>)> = claims.pcrs.clone();
-    let expected_refs: Vec<(u8, &[u8])> = expected.iter().map(|(i, h)| (*i, h.as_slice())).collect();
+    let expected_refs: Vec<(u8, &[u8])> =
+        expected.iter().map(|(i, h)| (*i, h.as_slice())).collect();
     verify_pcr_set(&claims, &expected_refs).expect("exact match should pass");
 }
 
@@ -52,8 +51,8 @@ fn ca_chain_expired() {
     let now = 2_000_000i64;
     let params = BuildParams {
         now,
-        leaf_not_before: now - 100_000,  // valid window was 900_000..1_000_000
-        leaf_not_after: 1_000_000,       // expired before now
+        leaf_not_before: now - 100_000, // valid window was 900_000..1_000_000
+        leaf_not_after: 1_000_000,      // expired before now
         ..BuildParams::default()
     };
     let (doc_bytes, roots) = build_attestation_doc(params);
@@ -105,8 +104,8 @@ fn nonce_mismatch() {
 #[test]
 fn pcr_mismatch() {
     let (doc_bytes, roots) = build_attestation_doc(BuildParams::default());
-    let claims = verify_nitro_attestation(&doc_bytes, &roots, None, DEFAULT_NOW)
-        .expect("verify ok");
+    let claims =
+        verify_nitro_attestation(&doc_bytes, &roots, None, DEFAULT_NOW).expect("verify ok");
 
     // Expect PCR0 to be all-zeros but claims has real data
     let wrong_hash = [0xFFu8; 48];
@@ -156,8 +155,8 @@ fn duplicate_pcr_id_rejected() {
         ..BuildParams::default()
     };
     let (doc_bytes, roots) = build_attestation_doc(params);
-    let claims = verify_nitro_attestation(&doc_bytes, &roots, None, DEFAULT_NOW)
-        .expect("doc parse ok");
+    let claims =
+        verify_nitro_attestation(&doc_bytes, &roots, None, DEFAULT_NOW).expect("doc parse ok");
     // verify_pcr_set must detect the duplicate
     let err = verify_pcr_set(&claims, &[]).unwrap_err();
     assert!(

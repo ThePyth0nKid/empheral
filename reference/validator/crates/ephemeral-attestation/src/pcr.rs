@@ -23,10 +23,7 @@ use crate::size_guard::MAX_PCR_COUNT;
 ///
 /// Passing an empty `expected` slice succeeds if `claims.pcrs` has no
 /// duplicates and all indices are in range.
-pub fn verify_pcr_set(
-    claims: &NitroClaims,
-    expected: &[(u8, &[u8])],
-) -> Result<(), AttestError> {
+pub fn verify_pcr_set(claims: &NitroClaims, expected: &[(u8, &[u8])]) -> Result<(), AttestError> {
     // ── 1. Reject duplicate PCR ids in claims ─────────────────────────────────
     check_no_duplicates(&claims.pcrs)?;
 

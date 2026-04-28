@@ -404,7 +404,9 @@ fn derive_floor(input: &FuzzInput) -> Option<u32> {
     let integration = input.integration.as_deref().unwrap_or("");
     let intent = input.raw_intent.as_ref();
     let verb = intent.and_then(|r| r.verb.as_deref()).unwrap_or("");
-    let kind = intent.and_then(|r| r.resource_kind.as_deref()).unwrap_or("");
+    let kind = intent
+        .and_then(|r| r.resource_kind.as_deref())
+        .unwrap_or("");
 
     let key_full = format!("{integration}:{verb}:{kind}");
     map.get(&key_full)
@@ -439,7 +441,10 @@ mod tests {
 
     #[test]
     fn derive_tier_from_vault_categories() {
-        assert_eq!(derive_tier_from_category("vault-tier0-read-metadata"), Some(0));
+        assert_eq!(
+            derive_tier_from_category("vault-tier0-read-metadata"),
+            Some(0)
+        );
         assert_eq!(derive_tier_from_category("vault-tier3-revoke"), Some(3));
         assert_eq!(derive_tier_from_category("vault-tier5-root"), Some(5));
     }
@@ -479,7 +484,9 @@ mod tests {
                 namespace: None,
                 name: None,
             }),
-            tariff_minimum_tiers: Some(json!({"kubernetes:delete:pod": 3, "kubernetes:patch:pod": 2})),
+            tariff_minimum_tiers: Some(
+                json!({"kubernetes:delete:pod": 3, "kubernetes:patch:pod": 2}),
+            ),
             classifier_wasm_bytes_hex: None,
             classifier_context_cbor_hex: None,
         };

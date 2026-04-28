@@ -37,7 +37,13 @@ pub(super) fn build_arep_100_single_tenant_baseline() -> Value {
          produces on the same stream (per §11.2 attribution).",
         vec![tenant_stream("t-a", stream)],
         vec![
-            expected_record("t-a", "delete-storm", "high", "first-match", scope_mandate("m-a100")),
+            expected_record(
+                "t-a",
+                "delete-storm",
+                "high",
+                "first-match",
+                scope_mandate("m-a100"),
+            ),
             expected_record(
                 "t-a",
                 "git-force-push-storm",
@@ -74,9 +80,18 @@ pub(super) fn build_arep_101_two_tenants_only_a_fires() -> Value {
          AuditOrchestrator isolation invariant: a fire under tenant-A's \
          `DetectorState` never leaks into tenant-B's attribution. This \
          is the single most load-bearing property of the orchestrator.",
-        vec![tenant_stream("t-a", a_stream), tenant_stream("t-b", b_stream)],
         vec![
-            expected_record("t-a", "delete-storm", "high", "first-match", scope_mandate("m-a101")),
+            tenant_stream("t-a", a_stream),
+            tenant_stream("t-b", b_stream),
+        ],
+        vec![
+            expected_record(
+                "t-a",
+                "delete-storm",
+                "high",
+                "first-match",
+                scope_mandate("m-a101"),
+            ),
             expected_record(
                 "t-a",
                 "git-force-push-storm",
@@ -116,9 +131,18 @@ pub(super) fn build_arep_102_two_tenants_both_fire() -> Value {
          independent AnomalyDetectedRecord streams keyed by tenant_id. \
          A bug that merged tenant state would short-circuit the second \
          storm under the first's dedup window.",
-        vec![tenant_stream("t-a", a_stream), tenant_stream("t-b", b_stream)],
         vec![
-            expected_record("t-a", "delete-storm", "high", "first-match", scope_mandate("m-a102")),
+            tenant_stream("t-a", a_stream),
+            tenant_stream("t-b", b_stream),
+        ],
+        vec![
+            expected_record(
+                "t-a",
+                "delete-storm",
+                "high",
+                "first-match",
+                scope_mandate("m-a102"),
+            ),
             expected_record(
                 "t-a",
                 "git-force-push-storm",
@@ -126,7 +150,13 @@ pub(super) fn build_arep_102_two_tenants_both_fire() -> Value {
                 "first-match",
                 scope_mandate("m-a102"),
             ),
-            expected_record("t-b", "delete-storm", "high", "first-match", scope_mandate("m-b102")),
+            expected_record(
+                "t-b",
+                "delete-storm",
+                "high",
+                "first-match",
+                scope_mandate("m-b102"),
+            ),
             expected_record(
                 "t-b",
                 "git-force-push-storm",
@@ -171,9 +201,18 @@ pub(super) fn build_arep_103_shared_mandate_id_isolated() -> Value {
          the FIRST component of every isolation boundary; a malicious \
          operator assigning a shared mandate_id across tenants cannot \
          influence another tenant's firing thresholds.",
-        vec![tenant_stream("t-a", a_stream), tenant_stream("t-b", b_stream)],
         vec![
-            expected_record("t-a", "delete-storm", "high", "first-match", scope_mandate("m-shared")),
+            tenant_stream("t-a", a_stream),
+            tenant_stream("t-b", b_stream),
+        ],
+        vec![
+            expected_record(
+                "t-a",
+                "delete-storm",
+                "high",
+                "first-match",
+                scope_mandate("m-shared"),
+            ),
             expected_record(
                 "t-a",
                 "git-force-push-storm",
@@ -181,7 +220,13 @@ pub(super) fn build_arep_103_shared_mandate_id_isolated() -> Value {
                 "first-match",
                 scope_mandate("m-shared"),
             ),
-            expected_record("t-b", "delete-storm", "high", "first-match", scope_mandate("m-shared")),
+            expected_record(
+                "t-b",
+                "delete-storm",
+                "high",
+                "first-match",
+                scope_mandate("m-shared"),
+            ),
             expected_record(
                 "t-b",
                 "git-force-push-storm",

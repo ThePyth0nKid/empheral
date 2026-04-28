@@ -43,19 +43,10 @@ pub(crate) fn decode_cert(der: &[u8], index: usize) -> Result<X509CertOwned, Att
     })?;
     Ok(X509CertOwned {
         der: der.to_vec(),
-        not_before: cert
-            .validity()
-            .not_before
-            .timestamp(),
-        not_after: cert
-            .validity()
-            .not_after
-            .timestamp(),
+        not_before: cert.validity().not_before.timestamp(),
+        not_after: cert.validity().not_after.timestamp(),
         sig_alg_oid: cert.signature_algorithm.algorithm.to_string(),
-        spki_der: cert
-            .public_key()
-            .raw
-            .to_vec(),
+        spki_der: cert.public_key().raw.to_vec(),
         tbs_der: cert.tbs_certificate.as_ref().to_vec(),
         sig_bytes: cert.signature_value.data.to_vec(),
     })

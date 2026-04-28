@@ -41,8 +41,7 @@ use std::process::Command;
 ///
 /// Update this constant when intentionally regenerating vectors — it is a
 /// tripwire for silent non-determinism regressions.
-const DRY_RUN_SHA256: &str =
-    "cc30f9f6cee108746f7995ffd52429fe01d812c66b4583f9867b99f7212155cd";
+const DRY_RUN_SHA256: &str = "cc30f9f6cee108746f7995ffd52429fe01d812c66b4583f9867b99f7212155cd";
 
 fn vector_signer_bin() -> std::path::PathBuf {
     if let Ok(p) = std::env::var("CARGO_BIN_EXE_vector-signer") {
@@ -61,7 +60,10 @@ fn vector_signer_bin() -> std::path::PathBuf {
         .expect("cargo build");
     assert!(status.success(), "cargo build -p vector-signer failed");
 
-    workspace_root.join("target").join("debug").join("vector-signer")
+    workspace_root
+        .join("target")
+        .join("debug")
+        .join("vector-signer")
 }
 
 fn run_dry_run() -> Vec<u8> {
@@ -95,10 +97,9 @@ fn dry_run_contains_all_vector_ids() {
     let stdout = run_dry_run();
     let text = std::str::from_utf8(&stdout).expect("stdout is UTF-8");
     for id in [
-        "adet-100", "adet-101", "adet-102", "adet-103",
-        "adet-104", "adet-105", "adet-106", "adet-107",
-        "adet-108", "adet-109", "adet-110", "adet-111",
-        "adet-112", "adet-113", "adet-114",
+        "adet-100", "adet-101", "adet-102", "adet-103", "adet-104", "adet-105", "adet-106",
+        "adet-107", "adet-108", "adet-109", "adet-110", "adet-111", "adet-112", "adet-113",
+        "adet-114",
     ] {
         assert!(
             text.contains(id),

@@ -168,9 +168,15 @@ mod tests {
         let payload = vec![0u8; cap + 1];
         let err = size_depth_check_with_cap(&payload, cap).unwrap_err();
         match err {
-            CoseError::PayloadTooLarge { observed, cap: reported } => {
+            CoseError::PayloadTooLarge {
+                observed,
+                cap: reported,
+            } => {
                 assert_eq!(observed, cap + 1);
-                assert_eq!(reported, cap, "reject error must echo caller's cap, not MAX_COSE_BYTES");
+                assert_eq!(
+                    reported, cap,
+                    "reject error must echo caller's cap, not MAX_COSE_BYTES"
+                );
             }
             other => panic!("expected PayloadTooLarge, got {other:?}"),
         }
@@ -187,8 +193,14 @@ mod tests {
         let b = size_depth_check_with_cap(&at_cap, MAX_COSE_BYTES).unwrap_err();
         match (a, b) {
             (
-                CoseError::PayloadTooLarge { observed: oa, cap: ca },
-                CoseError::PayloadTooLarge { observed: ob, cap: cb },
+                CoseError::PayloadTooLarge {
+                    observed: oa,
+                    cap: ca,
+                },
+                CoseError::PayloadTooLarge {
+                    observed: ob,
+                    cap: cb,
+                },
             ) => {
                 assert_eq!(oa, ob);
                 assert_eq!(ca, cb);

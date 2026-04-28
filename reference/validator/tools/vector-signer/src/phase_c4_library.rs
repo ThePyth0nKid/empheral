@@ -84,8 +84,8 @@
 //! c4-library --dry-run` stdout against regeneration drift.
 
 use ephemeral_anomaly::patterns::{Action, FiringRule, Severity};
-use ephemeral_anomaly::scope::{MandateScope, ScopePredicate};
 use ephemeral_anomaly::schema::AnomalyLibraryPayload;
+use ephemeral_anomaly::scope::{MandateScope, ScopePredicate};
 use ephemeral_anomaly::signature::ANOMALY_LIBRARY_AAD;
 use ephemeral_anomaly::test_fixtures as aft;
 use ephemeral_anomaly::ANOMALY_LIBRARY_ABI_VERSION;
@@ -869,9 +869,9 @@ fn build_vector(
     let expected = match (outcome, reject_code) {
         ("reject", Some(code)) => json!({ "outcome": "reject", "reject_code": code }),
         ("accept", None) => json!({ "outcome": "accept" }),
-        (o, rc) => panic!(
-            "build_vector: outcome={o:?} reject_code={rc:?} is not a supported combination",
-        ),
+        (o, rc) => {
+            panic!("build_vector: outcome={o:?} reject_code={rc:?} is not a supported combination")
+        }
     };
 
     json!({
@@ -920,21 +920,73 @@ mod tests {
     fn build_all_produces_expected_outcomes() {
         let v = build_all();
         let expected: [(&str, &str, Option<&str>); 17] = [
-            ("alrej-100", "reject", Some("anomaly-library-signature-invalid")),
-            ("alrej-101", "reject", Some("anomaly-library-signature-payload-malformed")),
-            ("alrej-102", "reject", Some("anomaly-library-abi-version-mismatch")),
-            ("alrej-103", "reject", Some("anomaly-library-signer-kid-mismatch")),
+            (
+                "alrej-100",
+                "reject",
+                Some("anomaly-library-signature-invalid"),
+            ),
+            (
+                "alrej-101",
+                "reject",
+                Some("anomaly-library-signature-payload-malformed"),
+            ),
+            (
+                "alrej-102",
+                "reject",
+                Some("anomaly-library-abi-version-mismatch"),
+            ),
+            (
+                "alrej-103",
+                "reject",
+                Some("anomaly-library-signer-kid-mismatch"),
+            ),
             ("alrej-104", "reject", Some("anomaly-library-not-yet-valid")),
             ("alrej-105", "reject", Some("anomaly-library-expired")),
-            ("alrej-106", "reject", Some("anomaly-library-pattern-id-duplicate")),
-            ("alrej-107", "reject", Some("anomaly-library-severity-action-inconsistent")),
-            ("alrej-108", "reject", Some("anomaly-library-unknown-verb-family")),
-            ("alrej-109", "reject", Some("anomaly-library-firing-rule-companion-missing")),
-            ("alrej-110", "reject", Some("anomaly-library-firing-rule-companion-missing")),
-            ("alrej-111", "reject", Some("anomaly-library-firing-rule-companion-missing")),
-            ("alrej-112", "reject", Some("anomaly-library-firing-rule-companion-missing")),
-            ("alrej-113", "reject", Some("pattern-library-version-too-old")),
-            ("alrej-114", "reject", Some("pattern-library-version-too-old")),
+            (
+                "alrej-106",
+                "reject",
+                Some("anomaly-library-pattern-id-duplicate"),
+            ),
+            (
+                "alrej-107",
+                "reject",
+                Some("anomaly-library-severity-action-inconsistent"),
+            ),
+            (
+                "alrej-108",
+                "reject",
+                Some("anomaly-library-unknown-verb-family"),
+            ),
+            (
+                "alrej-109",
+                "reject",
+                Some("anomaly-library-firing-rule-companion-missing"),
+            ),
+            (
+                "alrej-110",
+                "reject",
+                Some("anomaly-library-firing-rule-companion-missing"),
+            ),
+            (
+                "alrej-111",
+                "reject",
+                Some("anomaly-library-firing-rule-companion-missing"),
+            ),
+            (
+                "alrej-112",
+                "reject",
+                Some("anomaly-library-firing-rule-companion-missing"),
+            ),
+            (
+                "alrej-113",
+                "reject",
+                Some("pattern-library-version-too-old"),
+            ),
+            (
+                "alrej-114",
+                "reject",
+                Some("pattern-library-version-too-old"),
+            ),
             ("alrej-115", "accept", None),
             ("alrej-116", "accept", None),
         ];
@@ -1022,13 +1074,15 @@ mod tests {
             .unwrap();
         let bytes = hex::decode(cose_hex).unwrap();
         let sign1 = coset::CoseSign1::from_slice(&bytes).unwrap();
-        let outer_kid =
-            std::str::from_utf8(&sign1.protected.header.key_id).unwrap().to_owned();
+        let outer_kid = std::str::from_utf8(&sign1.protected.header.key_id)
+            .unwrap()
+            .to_owned();
         assert_eq!(outer_kid, IMPOSTOR_OUTER_KID, "outer kid must be impostor");
 
         let inner = decode_inner_payload(&v);
         assert_eq!(
-            inner.signer_kid, aft::FIXTURE_ANOMALY_KID,
+            inner.signer_kid,
+            aft::FIXTURE_ANOMALY_KID,
             "inner signer_kid must stay FIXTURE so the two diverge"
         );
         assert_ne!(outer_kid, inner.signer_kid);
@@ -1233,8 +1287,7 @@ mod tests {
             .as_str()
             .expect("cose hex present");
         let bytes = hex::decode(cose_hex).expect("valid hex");
-        let sign1 =
-            coset::CoseSign1::from_slice(&bytes).expect("envelope parses as COSE_Sign1");
+        let sign1 = coset::CoseSign1::from_slice(&bytes).expect("envelope parses as COSE_Sign1");
         let inner = sign1.payload.expect("inner payload present");
         ciborium::from_reader::<AnomalyLibraryPayload, _>(&inner[..])
             .expect("inner payload decodes as AnomalyLibraryPayload")

@@ -160,8 +160,7 @@ mod tests {
             "$schema": "https://json-schema.org/draft/2020-12/schema",
             "type": 42
         });
-        let err =
-            CompiledSchema::from_value(&bad_schema, PathBuf::from("bad")).unwrap_err();
+        let err = CompiledSchema::from_value(&bad_schema, PathBuf::from("bad")).unwrap_err();
         assert!(matches!(err, SchemaError::Compile { .. }));
     }
 }

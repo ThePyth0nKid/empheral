@@ -41,8 +41,7 @@ pub const MAX_INTENT_BYTES: usize = 65_536;
 
 /// Top-level fields permitted on a canonical intent map. Anything else is
 /// rejected as `normalization-not-applied` (strict schema, R7.C-unknown-field).
-const ALLOWED_TOP_LEVEL_KEYS: &[&str] =
-    &["verb", "resource_kind", "namespace", "name", "params"];
+const ALLOWED_TOP_LEVEL_KEYS: &[&str] = &["verb", "resource_kind", "namespace", "name", "params"];
 
 /// The four scalar text fields that receive the strictest canonical-form
 /// checks (NFKC, Simple case fold, whitespace reject, verb vocabulary).
@@ -670,9 +669,7 @@ fn apply_generator_hint(v: CoreValue) -> CoreValue {
         return v;
     };
     let hint_len = entries.iter().find_map(|(k, val)| match (k, val) {
-        (CoreValue::Text(k), CoreValue::Text(s)) if k == "generator_hint" => {
-            extract_byte_count(s)
-        }
+        (CoreValue::Text(k), CoreValue::Text(s)) if k == "generator_hint" => extract_byte_count(s),
         _ => None,
     });
     let Some(len) = hint_len else {
@@ -876,8 +873,7 @@ fn extract_raw_intent(
         if let Some(code) = prescreen_raw_json(s) {
             return Ok((CoreValue::Null, Some(code)));
         }
-        let parsed: serde_json::Value =
-            serde_json::from_str(s).map_err(|e| map_parse_error(&e))?;
+        let parsed: serde_json::Value = serde_json::from_str(s).map_err(|e| map_parse_error(&e))?;
         let core = json_to_core(&parsed).map_err(|_| CanonRejectCode::MalformedEncoding)?;
         return Ok((core, None));
     }
@@ -894,8 +890,7 @@ fn extract_raw_intent(
         if let Some(code) = prescreen_raw_json(s) {
             return Ok((CoreValue::Null, Some(code)));
         }
-        let parsed: serde_json::Value =
-            serde_json::from_str(s).map_err(|e| map_parse_error(&e))?;
+        let parsed: serde_json::Value = serde_json::from_str(s).map_err(|e| map_parse_error(&e))?;
         let core = json_to_core(&parsed).map_err(|_| CanonRejectCode::MalformedEncoding)?;
         return Ok((core, None));
     }
@@ -951,9 +946,7 @@ fn verify_acceptance(vector: &Vector, canonical: &CoreValue) -> ValidationOutcom
                 .as_deref()
                 .unwrap_or("<unspecified>");
             ValidationOutcome::Fail {
-                reason: format!(
-                    "expected reject ({expected_code}) but pipeline accepted"
-                ),
+                reason: format!("expected reject ({expected_code}) but pipeline accepted"),
             }
         }
     }
@@ -1190,7 +1183,11 @@ mod tests {
             "params": inner
         });
         let v = accept_vector("canon-depth-8", raw.clone(), raw);
-        assert!(matches!(execute(&v), ValidationOutcome::Pass), "got {:?}", execute(&v));
+        assert!(
+            matches!(execute(&v), ValidationOutcome::Pass),
+            "got {:?}",
+            execute(&v)
+        );
     }
 
     #[test]
@@ -1295,7 +1292,11 @@ mod tests {
             redteam_refs: vec![],
             severity_if_failed: None,
         };
-        assert!(matches!(execute(&v), ValidationOutcome::Pass), "got {:?}", execute(&v));
+        assert!(
+            matches!(execute(&v), ValidationOutcome::Pass),
+            "got {:?}",
+            execute(&v)
+        );
     }
 
     #[test]
@@ -1380,7 +1381,10 @@ mod tests {
     #[test]
     fn reject_code_display_is_kebab() {
         for (c, s) in [
-            (CanonRejectCode::NormalizationNotApplied, "normalization-not-applied"),
+            (
+                CanonRejectCode::NormalizationNotApplied,
+                "normalization-not-applied",
+            ),
             (CanonRejectCode::InvalidControlChar, "invalid-control-char"),
             (CanonRejectCode::MaxDepthExceeded, "max-depth-exceeded"),
             (CanonRejectCode::WhitespaceForbidden, "whitespace-forbidden"),

@@ -381,12 +381,7 @@ mod tests {
     /// Build a `COSE_Sign1` blob over the supplied inner payload bytes,
     /// signed with `seed` under header kid `kid`, using `aad` as the
     /// external AAD.
-    fn build_sign1(
-        inner_payload_bytes: Vec<u8>,
-        kid: &str,
-        aad: &[u8],
-        seed: [u8; 32],
-    ) -> Vec<u8> {
+    fn build_sign1(inner_payload_bytes: Vec<u8>, kid: &str, aad: &[u8], seed: [u8; 32]) -> Vec<u8> {
         let sk = signing_key(seed);
         let protected = HeaderBuilder::new()
             .algorithm(iana::Algorithm::EdDSA)
@@ -452,8 +447,8 @@ mod tests {
 
         let wasm = b"wasm";
         let cose = happy_envelope(wasm);
-        let err = verify_classifier_signature(wasm, &cose, &set, CLASSIFIER_ABI_VERSION)
-            .unwrap_err();
+        let err =
+            verify_classifier_signature(wasm, &cose, &set, CLASSIFIER_ABI_VERSION).unwrap_err();
         assert_eq!(err, ClassifierSigError::CoseVerifyFailed);
     }
 
@@ -776,12 +771,9 @@ mod tests {
         let max_kid: String = "x".repeat(MAX_INNER_KID_BYTES);
 
         let pk = signing_key(SEED).verifying_key();
-        let anchor = TrustAnchor::new_ed25519(
-            max_kid.clone(),
-            pk.as_bytes(),
-            AnchorRole::ClassifierSigner,
-        )
-        .unwrap();
+        let anchor =
+            TrustAnchor::new_ed25519(max_kid.clone(), pk.as_bytes(), AnchorRole::ClassifierSigner)
+                .unwrap();
         let mut set = TrustAnchorSet::new();
         set.insert(anchor).unwrap();
 
@@ -893,8 +885,7 @@ mod tests {
             abi_version: 99,
             signer_kid: TEST_KID.to_string(),
         };
-        let cose_a =
-            build_sign1(encode_payload(&payload_a), TEST_KID, CLASSIFIER_AAD, SEED);
+        let cose_a = build_sign1(encode_payload(&payload_a), TEST_KID, CLASSIFIER_AAD, SEED);
         assert_eq!(
             verify_classifier_signature(
                 wasm,
@@ -914,8 +905,7 @@ mod tests {
             abi_version: 99,
             signer_kid: "K_wrong_inner".to_string(),
         };
-        let cose_b =
-            build_sign1(encode_payload(&payload_b), TEST_KID, CLASSIFIER_AAD, SEED);
+        let cose_b = build_sign1(encode_payload(&payload_b), TEST_KID, CLASSIFIER_AAD, SEED);
         assert!(
             matches!(
                 verify_classifier_signature(
@@ -937,8 +927,7 @@ mod tests {
             abi_version: CLASSIFIER_ABI_VERSION,
             signer_kid: "K_wrong_inner".to_string(),
         };
-        let cose_c =
-            build_sign1(encode_payload(&payload_c), TEST_KID, CLASSIFIER_AAD, SEED);
+        let cose_c = build_sign1(encode_payload(&payload_c), TEST_KID, CLASSIFIER_AAD, SEED);
         assert!(
             matches!(
                 verify_classifier_signature(

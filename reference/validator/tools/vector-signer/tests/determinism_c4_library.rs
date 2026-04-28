@@ -31,8 +31,7 @@ use std::process::Command;
 ///
 /// Update this constant when intentionally regenerating vectors — it is a
 /// tripwire for silent non-determinism regressions.
-const DRY_RUN_SHA256: &str =
-    "4a356e992b5eeabf8ce8f2afaf8b6a8b8cd20c7d7f2e022940f6ebf529f9839a";
+const DRY_RUN_SHA256: &str = "4a356e992b5eeabf8ce8f2afaf8b6a8b8cd20c7d7f2e022940f6ebf529f9839a";
 
 fn vector_signer_bin() -> std::path::PathBuf {
     if let Ok(p) = std::env::var("CARGO_BIN_EXE_vector-signer") {
@@ -51,7 +50,10 @@ fn vector_signer_bin() -> std::path::PathBuf {
         .expect("cargo build");
     assert!(status.success(), "cargo build -p vector-signer failed");
 
-    workspace_root.join("target").join("debug").join("vector-signer")
+    workspace_root
+        .join("target")
+        .join("debug")
+        .join("vector-signer")
 }
 
 fn run_dry_run() -> Vec<u8> {
@@ -85,10 +87,22 @@ fn dry_run_contains_all_vector_ids() {
     let stdout = run_dry_run();
     let text = std::str::from_utf8(&stdout).expect("stdout is UTF-8");
     for id in [
-        "alrej-100", "alrej-101", "alrej-102", "alrej-103",
-        "alrej-104", "alrej-105", "alrej-106", "alrej-107",
-        "alrej-108", "alrej-109", "alrej-110", "alrej-111",
-        "alrej-112", "alrej-113", "alrej-114", "alrej-115",
+        "alrej-100",
+        "alrej-101",
+        "alrej-102",
+        "alrej-103",
+        "alrej-104",
+        "alrej-105",
+        "alrej-106",
+        "alrej-107",
+        "alrej-108",
+        "alrej-109",
+        "alrej-110",
+        "alrej-111",
+        "alrej-112",
+        "alrej-113",
+        "alrej-114",
+        "alrej-115",
         "alrej-116",
     ] {
         assert!(

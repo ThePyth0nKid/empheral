@@ -27,7 +27,10 @@ fn run_cli(args: &[&str]) -> (String, std::process::ExitStatus) {
 }
 
 fn schema_arg() -> String {
-    conformance_dir().join("schema.json").to_string_lossy().into_owned()
+    conformance_dir()
+        .join("schema.json")
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn vector_arg(name: &str) -> String {
@@ -96,17 +99,19 @@ fn attestation_mode_in_json_report() {
             .map_or(0, |d| d.as_nanos()),
     ));
     let tmp_str = tmp.to_string_lossy().into_owned();
-    let (_, status) = run_cli(&[
-        "--schema", &schema,
-        "--json-report", &tmp_str,
-        &mock, &live,
-    ]);
+    let (_, status) = run_cli(&["--schema", &schema, "--json-report", &tmp_str, &mock, &live]);
     assert!(status.success(), "cli exit: {status:?}");
     let bytes = std::fs::read(&tmp).expect("read json report");
     let v: serde_json::Value = serde_json::from_slice(&bytes).expect("parse json");
     let att = v.get("attestation").expect("attestation field present");
-    assert_eq!(att.get("mode").and_then(serde_json::Value::as_str), Some("mixed"));
+    assert_eq!(
+        att.get("mode").and_then(serde_json::Value::as_str),
+        Some("mixed")
+    );
     assert_eq!(att.get("live").and_then(serde_json::Value::as_u64), Some(8));
-    assert_eq!(att.get("mock").and_then(serde_json::Value::as_u64), Some(49));
+    assert_eq!(
+        att.get("mock").and_then(serde_json::Value::as_u64),
+        Some(49)
+    );
     let _ = std::fs::remove_file(&tmp);
 }

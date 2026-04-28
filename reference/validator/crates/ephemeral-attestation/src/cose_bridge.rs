@@ -39,8 +39,7 @@ pub(crate) fn verify_cose_sign1_es384(
     expected_aad: &[u8],
 ) -> Result<Vec<u8>, AttestError> {
     // ── 1. Decode outer CBOR (may or may not carry tag 18) ───────────────────
-    let top: CborValue = ciborium::de::from_reader(cose_bytes)
-        .map_err(malformed_cbor)?;
+    let top: CborValue = ciborium::de::from_reader(cose_bytes).map_err(malformed_cbor)?;
 
     // Unwrap tag 18 if present
     let array = match top {
@@ -84,11 +83,14 @@ pub(crate) fn verify_cose_sign1_es384(
 
     // ── 5. Verify ES384 signature ─────────────────────────────────────────────
     // P-384 raw signature is 96 bytes (r || s, 48 each)
-    let sig = Signature::from_slice(&sig_bytes)
-        .map_err(|e| AttestError::SignatureInvalid { source: EcdsaSource(e) })?;
+    let sig = Signature::from_slice(&sig_bytes).map_err(|e| AttestError::SignatureInvalid {
+        source: EcdsaSource(e),
+    })?;
     verifying_key
         .verify(&tbs, &sig)
-        .map_err(|e| AttestError::SignatureInvalid { source: EcdsaSource(e) })?;
+        .map_err(|e| AttestError::SignatureInvalid {
+            source: EcdsaSource(e),
+        })?;
 
     Ok(payload_bytes)
 }
@@ -98,8 +100,7 @@ fn extract_alg(protected_bstr: &[u8]) -> Result<i64, AttestError> {
     if protected_bstr.is_empty() {
         return Err(malformed_none());
     }
-    let header: CborValue =
-        ciborium::de::from_reader(protected_bstr).map_err(malformed_cbor)?;
+    let header: CborValue = ciborium::de::from_reader(protected_bstr).map_err(malformed_cbor)?;
     let CborValue::Map(pairs) = header else {
         return Err(malformed_none());
     };
@@ -159,10 +160,8 @@ mod tests {
     fn build_sign1(payload: &[u8], alg: i64, signing_key: &SigningKey) -> Vec<u8> {
         use ciborium::value::Value;
 
-        let protected_map: Vec<(Value, Value)> = vec![(
-            Value::Integer(1i64.into()),
-            Value::Integer(alg.into()),
-        )];
+        let protected_map: Vec<(Value, Value)> =
+            vec![(Value::Integer(1i64.into()), Value::Integer(alg.into()))];
         let mut protected_bytes = Vec::new();
         ciborium::ser::into_writer(&Value::Map(protected_map), &mut protected_bytes).unwrap();
 

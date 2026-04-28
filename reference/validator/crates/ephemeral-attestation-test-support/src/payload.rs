@@ -25,10 +25,7 @@ pub(crate) fn build_payload_cbor(
 ) -> Vec<u8> {
     use ciborium::value::Value;
 
-    let spki_bytes = leaf_vk
-        .to_public_key_der()
-        .expect("spki")
-        .into_vec();
+    let spki_bytes = leaf_vk.to_public_key_der().expect("spki").into_vec();
 
     let mut pcr_pairs: Vec<(Value, Value)> = pcrs
         .iter()
@@ -42,40 +39,25 @@ pub(crate) fn build_payload_cbor(
 
     if duplicate_pcr {
         // Inject a duplicate PCR-0 with a different hash value.
-        pcr_pairs.push((
-            Value::Integer(0i64.into()),
-            Value::Bytes(vec![0xBBu8; 48]),
-        ));
+        pcr_pairs.push((Value::Integer(0i64.into()), Value::Bytes(vec![0xBBu8; 48])));
     }
 
-    let ca_array: Vec<Value> = ca_ders
-        .iter()
-        .map(|d| Value::Bytes(d.clone()))
-        .collect();
+    let ca_array: Vec<Value> = ca_ders.iter().map(|d| Value::Bytes(d.clone())).collect();
 
     let mut map: Vec<(Value, Value)> = vec![
         (
             Value::Text("module_id".into()),
             Value::Text("i-test-module-00".into()),
         ),
-        (
-            Value::Text("digest".into()),
-            Value::Text("SHA384".into()),
-        ),
-        (
-            Value::Text("timestamp".into()),
-            Value::Integer(now.into()),
-        ),
+        (Value::Text("digest".into()), Value::Text("SHA384".into())),
+        (Value::Text("timestamp".into()), Value::Integer(now.into())),
         (Value::Text("pcrs".into()), Value::Map(pcr_pairs)),
         (
             Value::Text("certificate".into()),
             Value::Bytes(leaf_der.to_vec()),
         ),
         (Value::Text("cabundle".into()), Value::Array(ca_array)),
-        (
-            Value::Text("public_key".into()),
-            Value::Bytes(spki_bytes),
-        ),
+        (Value::Text("public_key".into()), Value::Bytes(spki_bytes)),
     ];
 
     if let Some(n) = nonce {

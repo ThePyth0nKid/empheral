@@ -129,10 +129,7 @@ pub fn execute(vector: &Vector) -> ValidationOutcome {
         Ok(a) => a,
         Err(e) => {
             return ValidationOutcome::Fail {
-                reason: format!(
-                    "anomaly-library vector {} anchor build: {e}",
-                    vector.id
-                ),
+                reason: format!("anomaly-library vector {} anchor build: {e}", vector.id),
             };
         }
     };

@@ -239,10 +239,7 @@ fn write_float(out: &mut Vec<u8>, f: f64) -> Result<(), CborError> {
         return put(out, &[0xfa, b[0], b[1], b[2], b[3]]);
     }
     let b = f.to_bits().to_be_bytes();
-    put(
-        out,
-        &[0xfb, b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]],
-    )
+    put(out, &[0xfb, b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
 }
 
 /// Returns `Some(f16_bits)` iff `f` is losslessly representable as IEEE 754
@@ -612,7 +609,10 @@ mod tests {
 
     #[test]
     fn kat_text_and_bytes() {
-        assert_eq!(to_hex(&encode(&CoreValue::Text(String::new())).unwrap()), "60");
+        assert_eq!(
+            to_hex(&encode(&CoreValue::Text(String::new())).unwrap()),
+            "60"
+        );
         assert_eq!(
             to_hex(&encode(&CoreValue::Text("a".into())).unwrap()),
             "6161"
@@ -642,10 +642,7 @@ mod tests {
 
         // Map `{"a": 1, "b": [2, 3]}` — keys in byte-lex order.
         let m = CoreValue::Map(vec![
-            (
-                CoreValue::Text("a".into()),
-                CoreValue::Int(1),
-            ),
+            (CoreValue::Text("a".into()), CoreValue::Int(1)),
             (
                 CoreValue::Text("b".into()),
                 CoreValue::Array(vec![CoreValue::Int(2), CoreValue::Int(3)]),

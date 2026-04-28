@@ -164,7 +164,10 @@ struct GenPhaseC2Args {
     /// The default points at a dedicated file so the mock-era
     /// `pcr-attestation-reject.json` stays schema-compatible until T15 wires
     /// the live-dispatch path.
-    #[arg(long, default_value = r"..\..\..\conformance\pcr-attestation-reject-c2-live.json")]
+    #[arg(
+        long,
+        default_value = r"..\..\..\conformance\pcr-attestation-reject-c2-live.json"
+    )]
     target: PathBuf,
     /// Dry-run: print the 8 JSON values to stdout; do not touch the file.
     #[arg(long)]
@@ -180,7 +183,10 @@ struct GenPhaseC2_5Args {
     /// router must load `pcr-attestation-reject-c2-5-rekor.json` alongside
     /// `pcr-attestation-reject.json` and `pcr-attestation-reject-c2-live.json`
     /// when selecting for the `pcr-attestation-reject` suite.
-    #[arg(long, default_value = r"..\..\..\conformance\pcr-attestation-reject-c2-5-rekor.json")]
+    #[arg(
+        long,
+        default_value = r"..\..\..\conformance\pcr-attestation-reject-c2-5-rekor.json"
+    )]
     target: PathBuf,
     /// Dry-run: print the 8 JSON values to stdout; do not touch the file.
     #[arg(long)]
@@ -206,7 +212,10 @@ struct GenPhaseC3_CArgs {
     /// The earlier C.2 / C.2.5 defaults carry a latent off-by-one (three
     /// `..` instead of two) — fixed here for C.3-C; CI and regeneration
     /// currently pass explicit `--target`, so neither is exercised today.
-    #[arg(long, default_value = r"..\..\conformance\tariff-reject-c3-c-classifier.json")]
+    #[arg(
+        long,
+        default_value = r"..\..\conformance\tariff-reject-c3-c-classifier.json"
+    )]
     target: PathBuf,
     /// Dry-run: print the 8 JSON values to stdout; do not touch the file.
     #[arg(long)]
@@ -362,12 +371,7 @@ fn run_sign(args: &SignArgs) -> Result<()> {
 }
 
 /// Core signing primitive. Deterministic in `(seed, kid, payload, aad)`.
-fn sign_blob(
-    seed_hex: &str,
-    kid: &str,
-    payload: &[u8],
-    aad: &[u8],
-) -> Result<(String, String)> {
+fn sign_blob(seed_hex: &str, kid: &str, payload: &[u8], aad: &[u8]) -> Result<(String, String)> {
     let seed_bytes = hex::decode(seed_hex).context("seed is not valid hex")?;
     let seed: [u8; 32] = seed_bytes
         .try_into()
@@ -419,8 +423,7 @@ fn run_gen_phase_c1() -> Result<()> {
     let tariff_payload = b"tariff-body-v1";
 
     // trej-069: sign a payload, then flip a byte inside it.
-    let (mut cose_hex, tariff_pk) =
-        sign_blob(SEED_TARIFF, KID_TARIFF, tariff_payload, b"tariff")?;
+    let (mut cose_hex, tariff_pk) = sign_blob(SEED_TARIFF, KID_TARIFF, tariff_payload, b"tariff")?;
     cose_hex = tamper_payload_byte(&cose_hex)?;
     let trej069 = build_tariff_reject_vector(
         "trej-069",
@@ -433,8 +436,7 @@ fn run_gen_phase_c1() -> Result<()> {
     );
 
     // trej-070: sign with the wrong AAD so verify (using b"tariff") fails.
-    let (cose_hex, _) =
-        sign_blob(SEED_TARIFF, KID_TARIFF, tariff_payload, b"delegation-link")?;
+    let (cose_hex, _) = sign_blob(SEED_TARIFF, KID_TARIFF, tariff_payload, b"delegation-link")?;
     let trej070 = build_tariff_reject_vector(
         "trej-070",
         "sig-live-aad-mismatch",
@@ -465,10 +467,8 @@ fn run_gen_phase_c1() -> Result<()> {
     let link_payload = b"delegation-link-body-v1";
     let mandate_payload = b"mandate-body-v1";
 
-    let (link0_cose, root_pk) =
-        sign_blob(SEED_ROOT, KID_ROOT, link_payload, b"delegation-link")?;
-    let (link1_cose, ops_pk) =
-        sign_blob(SEED_OPS, KID_OPS, link_payload, b"delegation-link")?;
+    let (link0_cose, root_pk) = sign_blob(SEED_ROOT, KID_ROOT, link_payload, b"delegation-link")?;
+    let (link1_cose, ops_pk) = sign_blob(SEED_OPS, KID_OPS, link_payload, b"delegation-link")?;
     let (mandate_cose_ok, mandate_pk) =
         sign_blob(SEED_MANDATE, KID_MANDATE, mandate_payload, b"mandate")?;
 
@@ -538,8 +538,8 @@ fn run_gen_phase_c1() -> Result<()> {
 /// truth for "what post-signing tamper looks like at the COSE_Sign1 layer".
 pub(crate) fn tamper_payload_byte(cose_hex: &str) -> Result<String> {
     let bytes = hex::decode(cose_hex)?;
-    let mut sign1 = coset::CoseSign1::from_slice(&bytes)
-        .map_err(|e| anyhow!("parse CoseSign1: {e}"))?;
+    let mut sign1 =
+        coset::CoseSign1::from_slice(&bytes).map_err(|e| anyhow!("parse CoseSign1: {e}"))?;
     let payload = sign1
         .payload
         .as_mut()
@@ -1149,14 +1149,7 @@ fn build_c2_vector_nonce(
 fn root_ders_from_seeds(seeds: &CaSeeds) -> Vec<String> {
     use ephemeral_attestation_test_support::ca;
     let now = C2_CURRENT_TIME;
-    let chain = ca::build_chain(
-        seeds,
-        now,
-        now - 3600,
-        now + 86400 * 365,
-        false,
-        false,
-    );
+    let chain = ca::build_chain(seeds, now, now - 3600, now + 86400 * 365, false, false);
     vec![hex::encode(&chain.root_der)]
 }
 
@@ -1214,10 +1207,9 @@ fn append_vectors(target: &Path, new_vecs: Vec<Value>) -> Result<()> {
     }
 
     let mut doc: Value = if target.exists() {
-        let raw = fs::read_to_string(target)
-            .with_context(|| format!("read {}", target.display()))?;
-        serde_json::from_str(&raw)
-            .with_context(|| format!("parse {} as JSON", target.display()))?
+        let raw =
+            fs::read_to_string(target).with_context(|| format!("read {}", target.display()))?;
+        serde_json::from_str(&raw).with_context(|| format!("parse {} as JSON", target.display()))?
     } else {
         build_c2_envelope()
     };
@@ -1314,10 +1306,9 @@ fn append_vectors_with_envelope(
     }
 
     let mut doc: Value = if target.exists() {
-        let raw = fs::read_to_string(target)
-            .with_context(|| format!("read {}", target.display()))?;
-        serde_json::from_str(&raw)
-            .with_context(|| format!("parse {} as JSON", target.display()))?
+        let raw =
+            fs::read_to_string(target).with_context(|| format!("read {}", target.display()))?;
+        serde_json::from_str(&raw).with_context(|| format!("parse {} as JSON", target.display()))?
     } else {
         envelope()
     };
@@ -1428,7 +1419,11 @@ fn run_gen_fuzz_c3_c(args: &GenFuzzC3_CArgs) -> Result<()> {
         // `build_all` — fuzz-190 before fuzz-200.
         let arr: Vec<Value> = patches.iter().map(|(_, v)| v.clone()).collect();
         let mut stdout = std::io::stdout().lock();
-        writeln!(stdout, "{}", serde_json::to_string_pretty(&Value::Array(arr))?)?;
+        writeln!(
+            stdout,
+            "{}",
+            serde_json::to_string_pretty(&Value::Array(arr))?
+        )?;
         return Ok(());
     }
 
@@ -1464,8 +1459,7 @@ fn patch_vectors_in_file(target: &Path, patches: Vec<(String, Value)>) -> Result
         );
     }
 
-    let raw = fs::read_to_string(target)
-        .with_context(|| format!("read {}", target.display()))?;
+    let raw = fs::read_to_string(target).with_context(|| format!("read {}", target.display()))?;
     let mut doc: Value = serde_json::from_str(&raw)
         .with_context(|| format!("parse {} as JSON", target.display()))?;
 
@@ -1509,8 +1503,7 @@ fn patch_vectors_in_file(target: &Path, patches: Vec<(String, Value)>) -> Result
     // only copy of `fuzz-baseline.json`.  Write to a sibling temp file
     // and rename — same-volume rename is atomic on POSIX and NTFS.
     let tmp = target.with_extension("json.tmp");
-    fs::write(&tmp, &out)
-        .with_context(|| format!("write tmp {}", tmp.display()))?;
+    fs::write(&tmp, &out).with_context(|| format!("write tmp {}", tmp.display()))?;
     fs::rename(&tmp, target)
         .with_context(|| format!("rename {} -> {}", tmp.display(), target.display()))?;
 

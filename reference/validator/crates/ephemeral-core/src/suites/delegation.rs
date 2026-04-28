@@ -396,14 +396,11 @@ fn check_mandate_signature(
     anchor_defs: Option<&[TrustAnchorKeyDef]>,
 ) -> Result<(), DelegationRejectCode> {
     match (&mandate.cose_sign1_bytes, anchor_defs) {
-        (Some(hex_bytes), Some(defs)) => verify_with_defs(
-            hex_bytes,
-            defs,
-            b"mandate",
-            AnchorRole::DelegationSigner,
-        )
-        .map(|_| ())
-        .map_err(|e| map_cose_error_to_delegation(&e)),
+        (Some(hex_bytes), Some(defs)) => {
+            verify_with_defs(hex_bytes, defs, b"mandate", AnchorRole::DelegationSigner)
+                .map(|_| ())
+                .map_err(|e| map_cose_error_to_delegation(&e))
+        }
         (Some(_), None) | (None, Some(_)) => Err(DelegationRejectCode::SignatureInvalid),
         (None, None) => {
             if mandate.signature_valid {
@@ -454,9 +451,7 @@ fn structural_chain_check(input: &VectorInput) -> Result<(), DelegationRejectCod
     }
 
     // Terminal child_key must match the mandate's signer hint (ds-022).
-    let terminal_child = chain
-        .last()
-        .map_or("", |l| l.child_key.as_str());
+    let terminal_child = chain.last().map_or("", |l| l.child_key.as_str());
     if let Some(hint) = input.mandate.signer_key_hint.as_deref() {
         if hint != terminal_child {
             return Err(DelegationRejectCode::SignatureChainBroken);
@@ -524,10 +519,7 @@ fn revocation_check(input: &VectorInput) -> Result<(), DelegationRejectCode> {
     Ok(())
 }
 
-fn scope_match(
-    mandate: &Mandate,
-    scope: &DelegationScope<'_>,
-) -> Result<(), DelegationRejectCode> {
+fn scope_match(mandate: &Mandate, scope: &DelegationScope<'_>) -> Result<(), DelegationRejectCode> {
     // Row 1: integration_ref must be in the link's allowlist.
     if !scope
         .integrations
@@ -546,9 +538,7 @@ fn scope_match(
     let verbs_wildcard = scope.allowed_verbs.iter().any(|v| v == "*");
     if !verbs_wildcard {
         for c in &mandate.cap {
-            if c.verb == "*"
-                || !scope.allowed_verbs.iter().any(|v| v == &c.verb)
-            {
+            if c.verb == "*" || !scope.allowed_verbs.iter().any(|v| v == &c.verb) {
                 return Err(DelegationRejectCode::ScopeVerbForbidden);
             }
         }
@@ -690,23 +680,59 @@ mod tests {
     #[test]
     fn reject_code_display_strings() {
         let pairs: &[(DelegationRejectCode, &str)] = &[
-            (DelegationRejectCode::RoleHierarchyViolation, "role-hierarchy-violation"),
-            (DelegationRejectCode::ChainDepthExceeded, "chain-depth-exceeded"),
+            (
+                DelegationRejectCode::RoleHierarchyViolation,
+                "role-hierarchy-violation",
+            ),
+            (
+                DelegationRejectCode::ChainDepthExceeded,
+                "chain-depth-exceeded",
+            ),
             (DelegationRejectCode::SignatureInvalid, "signature-invalid"),
-            (DelegationRejectCode::SignatureChainBroken, "signature-chain-broken"),
+            (
+                DelegationRejectCode::SignatureChainBroken,
+                "signature-chain-broken",
+            ),
             (DelegationRejectCode::Expired, "expired"),
             (DelegationRejectCode::Revoked, "revoked"),
-            (DelegationRejectCode::ParentDelegationRevoked, "parent-delegation-revoked"),
+            (
+                DelegationRejectCode::ParentDelegationRevoked,
+                "parent-delegation-revoked",
+            ),
             (DelegationRejectCode::VersionSkew, "version-skew"),
-            (DelegationRejectCode::ScopeIntegrationMismatch, "scope-integration-mismatch"),
-            (DelegationRejectCode::ScopeIntegrationsWildcardForbidden, "scope-integrations-wildcard-forbidden"),
-            (DelegationRejectCode::ScopeTierExceeded, "scope-tier-exceeded"),
-            (DelegationRejectCode::ScopeVerbForbidden, "scope-verb-forbidden"),
-            (DelegationRejectCode::ScopeResourceKindForbidden, "scope-resource-kind-forbidden"),
-            (DelegationRejectCode::ScopeBudgetExceeded, "scope-budget-exceeded"),
-            (DelegationRejectCode::ScopeExpiryTooLong, "scope-expiry-too-long"),
+            (
+                DelegationRejectCode::ScopeIntegrationMismatch,
+                "scope-integration-mismatch",
+            ),
+            (
+                DelegationRejectCode::ScopeIntegrationsWildcardForbidden,
+                "scope-integrations-wildcard-forbidden",
+            ),
+            (
+                DelegationRejectCode::ScopeTierExceeded,
+                "scope-tier-exceeded",
+            ),
+            (
+                DelegationRejectCode::ScopeVerbForbidden,
+                "scope-verb-forbidden",
+            ),
+            (
+                DelegationRejectCode::ScopeResourceKindForbidden,
+                "scope-resource-kind-forbidden",
+            ),
+            (
+                DelegationRejectCode::ScopeBudgetExceeded,
+                "scope-budget-exceeded",
+            ),
+            (
+                DelegationRejectCode::ScopeExpiryTooLong,
+                "scope-expiry-too-long",
+            ),
             (DelegationRejectCode::MandateEmptyCap, "mandate-empty-cap"),
-            (DelegationRejectCode::NarrownessRuleViolation, "narrowness-rule-violation"),
+            (
+                DelegationRejectCode::NarrownessRuleViolation,
+                "narrowness-rule-violation",
+            ),
         ];
         for (c, s) in pairs {
             assert_eq!(c.to_string(), *s);

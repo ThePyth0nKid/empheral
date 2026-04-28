@@ -172,10 +172,7 @@ impl TestReport {
 
     /// Total number of vectors that failed or errored across every suite.
     pub fn total_failing(&self) -> u32 {
-        self.per_suite
-            .values()
-            .map(|s| s.fail + s.error)
-            .sum()
+        self.per_suite.values().map(|s| s.fail + s.error).sum()
     }
 
     pub fn total_pass(&self) -> u32 {

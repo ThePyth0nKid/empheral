@@ -28,8 +28,7 @@ use std::process::Command;
 ///
 /// Update this constant when intentionally regenerating vectors — it is a
 /// tripwire for silent non-determinism regressions.
-const DRY_RUN_SHA256: &str =
-    "54ddf75e835ea07d0469bb92dd53493dc0e7c04485773296209c936ae0dbe869";
+const DRY_RUN_SHA256: &str = "54ddf75e835ea07d0469bb92dd53493dc0e7c04485773296209c936ae0dbe869";
 
 fn vector_signer_bin() -> std::path::PathBuf {
     if let Ok(p) = std::env::var("CARGO_BIN_EXE_vector-signer") {
@@ -48,7 +47,10 @@ fn vector_signer_bin() -> std::path::PathBuf {
         .expect("cargo build");
     assert!(status.success(), "cargo build -p vector-signer failed");
 
-    workspace_root.join("target").join("debug").join("vector-signer")
+    workspace_root
+        .join("target")
+        .join("debug")
+        .join("vector-signer")
 }
 
 fn run_dry_run() -> Vec<u8> {

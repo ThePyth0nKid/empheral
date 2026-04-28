@@ -16,6 +16,7 @@ use super::helpers::{
     tenant_stream,
 };
 
+#[allow(clippy::too_many_lines)]
 pub(super) fn build_arep_104_three_tenants_three_patterns() -> Value {
     // Tenant A: delete-storm
     let a_stream = literal_stream(vec![
@@ -27,17 +28,89 @@ pub(super) fn build_arep_104_three_tenants_three_patterns() -> Value {
     ]);
     // Tenant B: iam-attach-policy-storm
     let b_stream = literal_stream(vec![
-        canonical_event_named("eb-0", "m-b104", 0, 2, "aws", "attachrolepolicy", "iam-role", "role/r0"),
-        canonical_event_named("eb-1", "m-b104", 1, 2, "aws", "attachrolepolicy", "iam-role", "role/r0"),
-        canonical_event_named("eb-2", "m-b104", 2, 2, "aws", "attachrolepolicy", "iam-role", "role/r0"),
-        canonical_event_named("eb-3", "m-b104", 3, 2, "aws", "attachrolepolicy", "iam-role", "role/r0"),
-        canonical_event_named("eb-4", "m-b104", 4, 2, "aws", "attachrolepolicy", "iam-role", "role/r0"),
+        canonical_event_named(
+            "eb-0",
+            "m-b104",
+            0,
+            2,
+            "aws",
+            "attachrolepolicy",
+            "iam-role",
+            "role/r0",
+        ),
+        canonical_event_named(
+            "eb-1",
+            "m-b104",
+            1,
+            2,
+            "aws",
+            "attachrolepolicy",
+            "iam-role",
+            "role/r0",
+        ),
+        canonical_event_named(
+            "eb-2",
+            "m-b104",
+            2,
+            2,
+            "aws",
+            "attachrolepolicy",
+            "iam-role",
+            "role/r0",
+        ),
+        canonical_event_named(
+            "eb-3",
+            "m-b104",
+            3,
+            2,
+            "aws",
+            "attachrolepolicy",
+            "iam-role",
+            "role/r0",
+        ),
+        canonical_event_named(
+            "eb-4",
+            "m-b104",
+            4,
+            2,
+            "aws",
+            "attachrolepolicy",
+            "iam-role",
+            "role/r0",
+        ),
     ]);
     // Tenant C: vault-rotate-storm (count >= 3)
     let c_stream = literal_stream(vec![
-        canonical_event_named("ec-0", "m-c104", 0, 2, "vault", "rotate", "vault-secret", "secret/s0"),
-        canonical_event_named("ec-1", "m-c104", 1, 2, "vault", "rotate", "vault-secret", "secret/s0"),
-        canonical_event_named("ec-2", "m-c104", 2, 2, "vault", "rotate", "vault-secret", "secret/s0"),
+        canonical_event_named(
+            "ec-0",
+            "m-c104",
+            0,
+            2,
+            "vault",
+            "rotate",
+            "vault-secret",
+            "secret/s0",
+        ),
+        canonical_event_named(
+            "ec-1",
+            "m-c104",
+            1,
+            2,
+            "vault",
+            "rotate",
+            "vault-secret",
+            "secret/s0",
+        ),
+        canonical_event_named(
+            "ec-2",
+            "m-c104",
+            2,
+            2,
+            "vault",
+            "rotate",
+            "vault-secret",
+            "secret/s0",
+        ),
     ]);
 
     build_fire_vector(
@@ -58,7 +131,13 @@ pub(super) fn build_arep_104_three_tenants_three_patterns() -> Value {
             tenant_stream("t-c", c_stream),
         ],
         vec![
-            expected_record("t-a", "delete-storm", "high", "first-match", scope_mandate("m-a104")),
+            expected_record(
+                "t-a",
+                "delete-storm",
+                "high",
+                "first-match",
+                scope_mandate("m-a104"),
+            ),
             expected_record(
                 "t-a",
                 "git-force-push-storm",
@@ -99,14 +178,60 @@ pub(super) fn build_arep_104_three_tenants_three_patterns() -> Value {
     )
 }
 
+#[allow(clippy::too_many_lines)]
 pub(super) fn build_arep_105_iam_on_a_cross_tier_on_b() -> Value {
     // Tenant A: iam-attach-policy-storm
     let a_stream = literal_stream(vec![
-        canonical_event_named("ea-0", "m-a105", 0, 2, "aws", "attachrolepolicy", "iam-role", "role/r0"),
-        canonical_event_named("ea-1", "m-a105", 1, 2, "aws", "attachrolepolicy", "iam-role", "role/r0"),
-        canonical_event_named("ea-2", "m-a105", 2, 2, "aws", "attachrolepolicy", "iam-role", "role/r0"),
-        canonical_event_named("ea-3", "m-a105", 3, 2, "aws", "attachrolepolicy", "iam-role", "role/r0"),
-        canonical_event_named("ea-4", "m-a105", 4, 2, "aws", "attachrolepolicy", "iam-role", "role/r0"),
+        canonical_event_named(
+            "ea-0",
+            "m-a105",
+            0,
+            2,
+            "aws",
+            "attachrolepolicy",
+            "iam-role",
+            "role/r0",
+        ),
+        canonical_event_named(
+            "ea-1",
+            "m-a105",
+            1,
+            2,
+            "aws",
+            "attachrolepolicy",
+            "iam-role",
+            "role/r0",
+        ),
+        canonical_event_named(
+            "ea-2",
+            "m-a105",
+            2,
+            2,
+            "aws",
+            "attachrolepolicy",
+            "iam-role",
+            "role/r0",
+        ),
+        canonical_event_named(
+            "ea-3",
+            "m-a105",
+            3,
+            2,
+            "aws",
+            "attachrolepolicy",
+            "iam-role",
+            "role/r0",
+        ),
+        canonical_event_named(
+            "ea-4",
+            "m-a105",
+            4,
+            2,
+            "aws",
+            "attachrolepolicy",
+            "iam-role",
+            "role/r0",
+        ),
     ]);
     // Tenant B: cross-tier-escalation (tier 0 → 2 → 3)
     let b_stream = literal_stream(vec![
@@ -128,7 +253,10 @@ pub(super) fn build_arep_105_iam_on_a_cross_tier_on_b() -> Value {
          multi-tenant dispatch: the orchestrator must preserve per-\
          tenant bucket iteration state so SequenceMatch's ordered \
          match under t-b is not confused by t-a's flat counter.",
-        vec![tenant_stream("t-a", a_stream), tenant_stream("t-b", b_stream)],
+        vec![
+            tenant_stream("t-a", a_stream),
+            tenant_stream("t-b", b_stream),
+        ],
         vec![
             expected_record(
                 "t-a",
@@ -163,6 +291,7 @@ pub(super) fn build_arep_105_iam_on_a_cross_tier_on_b() -> Value {
     )
 }
 
+#[allow(clippy::too_many_lines)]
 pub(super) fn build_arep_106_fanout_a_pace_b() -> Value {
     // Tenant A: VerbFanout — 10× delete across distinct pods on one
     // mandate at tier 0 (fanout DistinctCount≥10).  No ProtectedBranches
@@ -214,7 +343,10 @@ pub(super) fn build_arep_106_fanout_a_pace_b() -> Value {
          predicates that bind `verb` or `tier` must surface those \
          fields on the emitted AnomalyFire. Orchestrator wrapping does \
          not re-project — it forwards the inner fire verbatim.",
-        vec![tenant_stream("t-a", a_stream), tenant_stream("t-b", b_stream)],
+        vec![
+            tenant_stream("t-a", a_stream),
+            tenant_stream("t-b", b_stream),
+        ],
         vec![
             // Tenant A — fanout DistinctCount≥10, delete-storm at 10≥5,
             // gfp-storm, gfp-slow-burn (cumulative threshold met at 10).
@@ -225,7 +357,13 @@ pub(super) fn build_arep_106_fanout_a_pace_b() -> Value {
                 "first-match",
                 scope_mandate_verb("m-a106", "delete"),
             ),
-            expected_record("t-a", "delete-storm", "high", "first-match", scope_mandate("m-a106")),
+            expected_record(
+                "t-a",
+                "delete-storm",
+                "high",
+                "first-match",
+                scope_mandate("m-a106"),
+            ),
             expected_record(
                 "t-a",
                 "git-force-push-storm",
@@ -311,7 +449,10 @@ pub(super) fn build_arep_107_slow_burn_cumulative() -> Value {
          multi-tenant: a slow-burn counter on tenant-A MUST NOT leak \
          into tenant-B's baseline; a leak would either inflate B's \
          counter toward threshold or suppress A's via a shared budget.",
-        vec![tenant_stream("t-a", a_stream), tenant_stream("t-b", b_stream)],
+        vec![
+            tenant_stream("t-a", a_stream),
+            tenant_stream("t-b", b_stream),
+        ],
         vec![
             expected_record(
                 "t-a",

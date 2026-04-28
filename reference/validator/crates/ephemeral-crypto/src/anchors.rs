@@ -147,8 +147,7 @@ impl TrustAnchor {
         let arr: [u8; 32] = pk_bytes
             .try_into()
             .map_err(|_| CoseError::InvalidPublicKeyEncoding)?;
-        let pk = VerifyingKey::from_bytes(&arr)
-            .map_err(|_| CoseError::InvalidPublicKeyEncoding)?;
+        let pk = VerifyingKey::from_bytes(&arr).map_err(|_| CoseError::InvalidPublicKeyEncoding)?;
         if pk.is_weak() {
             return Err(CoseError::WeakPublicKey);
         }
@@ -245,14 +244,12 @@ mod tests {
 
     /// A well-formed but arbitrary public key derived from a known seed.
     /// `ed25519-dalek` test vector round-trip basepoint.
-    const TEST_PK_HEX: &str =
-        "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
+    const TEST_PK_HEX: &str = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
 
     /// A different but well-formed Ed25519 public key — derived from a
     /// second canonical test vector so the duplicate-kid test compares
     /// against non-trivial bytes (not just the same key twice).
-    const OTHER_PK_HEX: &str =
-        "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c";
+    const OTHER_PK_HEX: &str = "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c";
 
     #[test]
     fn from_hex_accepts_well_formed_key() {
@@ -270,25 +267,16 @@ mod tests {
 
     #[test]
     fn from_hex_rejects_short_input() {
-        let err = TrustAnchor::from_hex(
-            "K_test",
-            Alg::Ed25519,
-            "deadbeef",
-            AnchorRole::TariffSigner,
-        )
-        .unwrap_err();
+        let err =
+            TrustAnchor::from_hex("K_test", Alg::Ed25519, "deadbeef", AnchorRole::TariffSigner)
+                .unwrap_err();
         assert!(matches!(err, CoseError::InvalidPublicKeyEncoding));
     }
 
     #[test]
     fn from_hex_rejects_invalid_hex() {
-        let err = TrustAnchor::from_hex(
-            "K_test",
-            Alg::Ed25519,
-            "zz",
-            AnchorRole::TariffSigner,
-        )
-        .unwrap_err();
+        let err = TrustAnchor::from_hex("K_test", Alg::Ed25519, "zz", AnchorRole::TariffSigner)
+            .unwrap_err();
         assert!(matches!(err, CoseError::HexDecode));
     }
 
@@ -346,13 +334,9 @@ mod tests {
         // Duplicate detection is kid-scoped, not `(kid, role)`-scoped —
         // re-registering the same kid under a different role would
         // otherwise let an attacker shadow the legitimate anchor.
-        let first = TrustAnchor::from_hex(
-            "K_dup",
-            Alg::Ed25519,
-            TEST_PK_HEX,
-            AnchorRole::TariffSigner,
-        )
-        .unwrap();
+        let first =
+            TrustAnchor::from_hex("K_dup", Alg::Ed25519, TEST_PK_HEX, AnchorRole::TariffSigner)
+                .unwrap();
         let second = TrustAnchor::from_hex(
             "K_dup",
             Alg::Ed25519,

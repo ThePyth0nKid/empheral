@@ -17,8 +17,7 @@ use std::process::Command;
 ///
 /// Update this constant when intentionally regenerating vectors — it is a
 /// tripwire for silent non-determinism regressions.
-const DRY_RUN_SHA256: &str =
-    "87f985aa9046b008851a30f6244fa168eeb65853442ed00179d33fb43ce46869";
+const DRY_RUN_SHA256: &str = "87f985aa9046b008851a30f6244fa168eeb65853442ed00179d33fb43ce46869";
 
 fn vector_signer_bin() -> std::path::PathBuf {
     // `cargo test` runs from the workspace root or crate root.  The binary is
@@ -42,7 +41,10 @@ fn vector_signer_bin() -> std::path::PathBuf {
         .expect("cargo build");
     assert!(status.success(), "cargo build -p vector-signer failed");
 
-    workspace_root.join("target").join("debug").join("vector-signer")
+    workspace_root
+        .join("target")
+        .join("debug")
+        .join("vector-signer")
 }
 
 fn run_dry_run() -> Vec<u8> {
@@ -75,8 +77,16 @@ fn dry_run_is_deterministic() {
 fn dry_run_contains_all_vector_ids() {
     let stdout = run_dry_run();
     let text = std::str::from_utf8(&stdout).expect("stdout is UTF-8");
-    for id in ["pcrrej-090", "pcrrej-091", "pcrrej-092", "pcrrej-093",
-               "pcrrej-094", "pcrrej-095", "pcrrej-096", "pcrrej-097"] {
+    for id in [
+        "pcrrej-090",
+        "pcrrej-091",
+        "pcrrej-092",
+        "pcrrej-093",
+        "pcrrej-094",
+        "pcrrej-095",
+        "pcrrej-096",
+        "pcrrej-097",
+    ] {
         assert!(
             text.contains(id),
             "dry-run stdout missing expected vector id: {id}"

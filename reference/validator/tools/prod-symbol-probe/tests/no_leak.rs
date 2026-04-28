@@ -418,7 +418,11 @@ fn test_fixtures_symbols_do_not_leak_into_prod_rlibs() {
                  src/lib.rs.  First 5 hits:\n  {}",
                 hits.len(),
                 rlib.display(),
-                hits.iter().take(5).map(|s| s.as_str()).collect::<Vec<_>>().join("\n  "),
+                hits.iter()
+                    .take(5)
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n  "),
             );
         }
 

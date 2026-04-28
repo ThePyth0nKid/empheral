@@ -20,8 +20,7 @@ use std::process::Command;
 ///
 /// Update this constant when intentionally regenerating vectors — it is a
 /// tripwire for silent non-determinism regressions.
-const DRY_RUN_SHA256: &str =
-    "65f0ef5dc819e025267d14a76857ca2e61761a90c995878941053c643b6d102f";
+const DRY_RUN_SHA256: &str = "65f0ef5dc819e025267d14a76857ca2e61761a90c995878941053c643b6d102f";
 
 fn vector_signer_bin() -> std::path::PathBuf {
     if let Ok(p) = std::env::var("CARGO_BIN_EXE_vector-signer") {
@@ -40,7 +39,10 @@ fn vector_signer_bin() -> std::path::PathBuf {
         .expect("cargo build");
     assert!(status.success(), "cargo build -p vector-signer failed");
 
-    workspace_root.join("target").join("debug").join("vector-signer")
+    workspace_root
+        .join("target")
+        .join("debug")
+        .join("vector-signer")
 }
 
 fn run_dry_run() -> Vec<u8> {
@@ -74,8 +76,14 @@ fn dry_run_contains_all_vector_ids() {
     let stdout = run_dry_run();
     let text = std::str::from_utf8(&stdout).expect("stdout is UTF-8");
     for id in [
-        "pcrrej-110", "pcrrej-111", "pcrrej-112", "pcrrej-113", "pcrrej-114",
-        "pcrrej-115", "pcrrej-116", "pcrrej-117",
+        "pcrrej-110",
+        "pcrrej-111",
+        "pcrrej-112",
+        "pcrrej-113",
+        "pcrrej-114",
+        "pcrrej-115",
+        "pcrrej-116",
+        "pcrrej-117",
     ] {
         assert!(
             text.contains(id),

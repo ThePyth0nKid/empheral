@@ -107,10 +107,7 @@ fn json_to_core_impl(v: &serde_json::Value, depth: usize) -> Result<CoreValue, C
         serde_json::Value::Object(obj) => {
             let mut out = Vec::with_capacity(obj.len());
             for (k, v) in obj {
-                out.push((
-                    CoreValue::Text(k.clone()),
-                    json_to_core_impl(v, depth + 1)?,
-                ));
+                out.push((CoreValue::Text(k.clone()), json_to_core_impl(v, depth + 1)?));
             }
             CoreValue::Map(out)
         }
