@@ -21,10 +21,10 @@ use super::helpers::{
 
 pub(super) fn build_arep_108_rotation_after_stream_zero() -> Value {
     // Stream 0: tenant-A fires delete-storm at AUDIT_INITIAL_TIME.
-    // Rotation swaps the library; tenant-A's `last_fired_at` resets.
+    // Rotation swaps the library; tenant-A's dedup ledger resets.
     // Stream 1: tenant-A's SECOND storm (post-rotation) at
     // ROTATE_INITIAL_TIME + offset fires AGAIN because the dedup
-    // table was cleared.  Pre- and post-rotation records BOTH appear
+    // ledger was cleared.  Pre- and post-rotation records BOTH appear
     // in the observed multiset.
     let a_stream_pre = literal_stream(vec![
         canonical_delete_event("ea-pre-0", "m-a108", 0, 2, "pod", "pod/x"),
@@ -50,11 +50,11 @@ pub(super) fn build_arep_108_rotation_after_stream_zero() -> Value {
          clears all tenant state, then tenant-A streams an identical \
          storm under v2 (stream 1). Observed records contain four \
          fires — TWO per library version (delete-storm + gfp×2), the \
-         second delete-storm emitted because `last_fired_at` was \
+         second delete-storm emitted because the dedup ledger was \
          cleared by rotate_library. Pins the state-reset invariant.",
         "design-final.md §3.5.1 library rotation + orchestrator \
          duplicate-tolerance contract: rotate_library MUST clear every \
-         tenant's last_fired_at so a pattern can fire anew under the \
+         tenant's dedup ledger so a pattern can fire anew under the \
          new library. Downstream consumers are required to be \
          duplicate-tolerant across rotation boundaries per the \
          orchestrator module-level docblock.",

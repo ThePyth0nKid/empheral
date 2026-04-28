@@ -94,14 +94,23 @@ fn firing_uses_buffer_length_not_session_counter() {
             .ingest_event(delete_event(&format!("e-{i}"), "m-1", ANCHOR + i))
             .expect("ingest");
     }
-    assert_eq!(state.evaluate_all().len(), 1);
+    assert_eq!(
+        state
+            .evaluate_all()
+            .expect("in-memory dedup ledger is infallible in tests")
+            .len(),
+        1
+    );
 
     // Advance past window + grace; evict aged events; counter remains
     // at 5 but buffer empties.  A second call sees an empty bucket
     // and does not fire.
     state.advance_clock(ANCHOR + 120).expect("clock advance");
     assert!(
-        state.evaluate_all().is_empty(),
+        state
+            .evaluate_all()
+            .expect("in-memory dedup ledger is infallible in tests")
+            .is_empty(),
         "firing source is buffer length after eviction, not session counter"
     );
     assert_eq!(state.per_mandate_counters().get("m-1").copied(), Some(5));
@@ -125,8 +134,11 @@ fn past_dated_flood_rejects_before_buffering() {
 
     let ten_days = 10 * 86_400_i64;
     for i in 0..20_i64 {
-        let result =
-            state.ingest_event(delete_event(&format!("old-{i}"), "m-flood", ANCHOR - ten_days + i));
+        let result = state.ingest_event(delete_event(
+            &format!("old-{i}"),
+            "m-flood",
+            ANCHOR - ten_days + i,
+        ));
         match result {
             Err(StreamError::PastDatedEventRejected { .. }) => {}
             other => panic!("expected PastDatedEventRejected, got {other:?}"),
@@ -136,7 +148,10 @@ fn past_dated_flood_rejects_before_buffering() {
     // No event made it past Stage 2 — buffers empty, counter zero.
     assert!(state.buffers().is_empty());
     assert!(state.per_mandate_counters().is_empty());
-    assert!(state.evaluate_all().is_empty());
+    assert!(state
+        .evaluate_all()
+        .expect("in-memory dedup ledger is infallible in tests")
+        .is_empty());
 }
 
 #[test]
@@ -164,7 +179,9 @@ fn past_dated_floor_accepts_fresh_events_interleaved_with_rejected_stale_ones() 
 
     // Fires on fresh events alone; the rejected stale event did not
     // inflate the bucket.
-    let fires = state.evaluate_all();
+    let fires = state
+        .evaluate_all()
+        .expect("in-memory dedup ledger is infallible in tests");
     assert_eq!(fires.len(), 1);
     assert_eq!(fires[0].pattern_id, "delete-storm");
     assert_eq!(fires[0].match_scope.mandate_id.as_deref(), Some("m-mix"));
@@ -189,7 +206,10 @@ fn past_dated_floor_sanitizes_attacker_controlled_event_id() {
     match result {
         Err(StreamError::PastDatedEventRejected { event_id, .. }) => {
             assert!(!event_id.contains('\n'), "newline must be sanitised");
-            assert!(!event_id.contains('\r'), "carriage return must be sanitised");
+            assert!(
+                !event_id.contains('\r'),
+                "carriage return must be sanitised"
+            );
         }
         other => panic!("expected PastDatedEventRejected, got {other:?}"),
     }

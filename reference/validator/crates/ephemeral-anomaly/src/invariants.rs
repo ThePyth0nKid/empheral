@@ -171,9 +171,7 @@ pub(crate) fn check_severity_action_consistency(
 /// intentionally opaque at this layer — Session-4 evaluator
 /// resolves it at runtime; a future ABI bump may move that field
 /// into this check if a walk-under variant emerges.
-pub(crate) fn check_verb_families_known(
-    patterns: &[PatternEntry],
-) -> Result<(), AnomalyLibError> {
+pub(crate) fn check_verb_families_known(patterns: &[PatternEntry]) -> Result<(), AnomalyLibError> {
     for pattern in patterns {
         check_scope_verb_families(&pattern.pattern_id, &pattern.scope)?;
     }
@@ -315,12 +313,7 @@ pub(crate) fn check_firing_rule_companions(
         let mut any_valid = false;
 
         for name in &pattern.firing_rule_companions {
-            match classify_companion(
-                name,
-                window,
-                patterns,
-                &pattern.pattern_id,
-            ) {
+            match classify_companion(name, window, patterns, &pattern.pattern_id) {
                 Ok(()) => {
                     any_valid = true;
                     break;
@@ -391,8 +384,7 @@ fn classify_companion(
         });
     }
 
-    let required_minimum =
-        primary_window.saturating_mul(ANTI_WALK_UNDER_COMPANION_MULTIPLIER);
+    let required_minimum = primary_window.saturating_mul(ANTI_WALK_UNDER_COMPANION_MULTIPLIER);
 
     match companion.window_seconds {
         Some(cw) if cw >= required_minimum => Ok(()),
@@ -591,10 +583,7 @@ mod tests {
             mandate_scope: MandateScope::default(),
         };
         let err = check_verb_families_known(&[p]).unwrap_err();
-        assert!(matches!(
-            err,
-            AnomalyLibError::UnknownVerbFamily { .. }
-        ));
+        assert!(matches!(err, AnomalyLibError::UnknownVerbFamily { .. }));
     }
 
     #[test]
@@ -728,8 +717,7 @@ mod tests {
             AnomalyLibError::FiringRuleCompanionMissing {
                 missing_reason:
                     FiringCompanionFailure::CompanionWindowTooShort {
-                        companion_window,
-                        ..
+                        companion_window, ..
                     },
                 ..
             } => {
@@ -774,10 +762,7 @@ mod tests {
         bad_companion.window_seconds = Some(ANTI_WALK_UNDER_WINDOW_SECONDS + 1);
         bad_companion.firing_rule_companions = vec![];
         let good_companion = cumulative_companion("good", 600);
-        assert!(
-            check_firing_rule_companions(&[primary, bad_companion, good_companion])
-                .is_ok()
-        );
+        assert!(check_firing_rule_companions(&[primary, bad_companion, good_companion]).is_ok());
     }
 
     #[test]

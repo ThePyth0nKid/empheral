@@ -375,12 +375,5 @@ fn literal_stream_events_roundtrip_through_json() {
 // -------------------------------------------------------------------
 
 fn canary_template() -> TemplateEvent {
-    TemplateEvent::new_for_testing(
-        "m-test",
-        1,
-        "kubernetes",
-        "get",
-        "pod",
-        Outcome::Executed,
-    )
+    TemplateEvent::new_for_testing("m-test", 1, "kubernetes", "get", "pod", Outcome::Executed)
 }

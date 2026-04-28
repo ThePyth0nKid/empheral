@@ -152,10 +152,7 @@ pub fn execute(vector: &Vector) -> ValidationOutcome {
         Ok(v) => v,
         Err(e) => {
             return ValidationOutcome::Fail {
-                reason: format!(
-                    "anomaly-detect vector {} input deserialize: {e}",
-                    vector.id
-                ),
+                reason: format!("anomaly-detect vector {} input deserialize: {e}", vector.id),
             };
         }
     };
@@ -168,10 +165,7 @@ pub fn execute(vector: &Vector) -> ValidationOutcome {
         Ok(a) => a,
         Err(e) => {
             return ValidationOutcome::Fail {
-                reason: format!(
-                    "anomaly-detect vector {} anchor build: {e}",
-                    vector.id
-                ),
+                reason: format!("anomaly-detect vector {} anchor build: {e}", vector.id),
             };
         }
     };
@@ -249,8 +243,8 @@ pub fn execute(vector: &Vector) -> ValidationOutcome {
     };
 
     // `DetectorState` is constructed ONCE per vector and is
-    // INTENTIONALLY reused across every stream.  The fire-dedup
-    // table (`state.fire_dedup`) and the per-bucket event buffers
+    // INTENTIONALLY reused across every stream.  The dedup ledger
+    // (`state.dedup_ledger()`) and the per-bucket event buffers
     // therefore retain state between streams, which is load-bearing
     // for vectors such as `adet-108` (stream 2 must be suppressed
     // because stream 1 already fired the same `(pattern_id,
@@ -274,7 +268,13 @@ pub fn execute(vector: &Vector) -> ValidationOutcome {
                 return stream_error_outcome(vector, stream_idx, "ingest_event", &e);
             }
         }
-        observed_fires.extend(state.evaluate_all());
+        match state.evaluate_all() {
+            Ok(fires) => observed_fires.extend(fires),
+            Err(e) => {
+                let stream_err = StreamError::from(e);
+                return stream_error_outcome(vector, stream_idx, "evaluate_all", &stream_err);
+            }
+        }
     }
 
     // ─── Stage C: render verdict against expected ──────────────────────
@@ -295,9 +295,7 @@ pub(crate) fn wire_code(err: &StreamError) -> &'static str {
     match err {
         StreamError::ExpansionExceeded { .. } => "anomaly-detect-stream-expansion-exceeded",
         StreamError::ClockSkewRejected { .. } => "anomaly-detect-stream-clock-skew-rejected",
-        StreamError::TimestampParseFailed { .. } => {
-            "anomaly-detect-stream-timestamp-parse-failed"
-        }
+        StreamError::TimestampParseFailed { .. } => "anomaly-detect-stream-timestamp-parse-failed",
         StreamError::PatternMissingIndexPlaceholder => {
             "anomaly-detect-stream-pattern-missing-index-placeholder"
         }
@@ -307,13 +305,10 @@ pub(crate) fn wire_code(err: &StreamError) -> &'static str {
         StreamError::PatternDescriptionCountZero => {
             "anomaly-detect-stream-pattern-description-count-zero"
         }
-        StreamError::PerMandateCapReached { .. } => {
-            "anomaly-detect-stream-per-mandate-cap-reached"
-        }
+        StreamError::PerMandateCapReached { .. } => "anomaly-detect-stream-per-mandate-cap-reached",
         StreamError::ClockRegression { .. } => "anomaly-detect-stream-clock-regression",
-        StreamError::PastDatedEventRejected { .. } => {
-            "anomaly-detect-stream-past-dated-event"
-        }
+        StreamError::PastDatedEventRejected { .. } => "anomaly-detect-stream-past-dated-event",
+        StreamError::DedupLedgerFailure { .. } => "anomaly-detect-stream-dedup-ledger-failure",
         _ => "anomaly-detect-stream-unknown-variant",
     }
 }
@@ -494,10 +489,7 @@ fn sort_key(a: &AnomalyFire, b: &AnomalyFire) -> std::cmp::Ordering {
                 .unwrap_or("")
                 .cmp(b.match_scope.mandate_id.as_deref().unwrap_or(""))
         })
-        .then_with(|| {
-            firing_rule_rank(a.firing_rule)
-                .cmp(&firing_rule_rank(b.firing_rule))
-        })
+        .then_with(|| firing_rule_rank(a.firing_rule).cmp(&firing_rule_rank(b.firing_rule)))
 }
 
 /// Total-order integer rank on [`FiringRule`] used as a sort tie-break.
@@ -579,9 +571,7 @@ mod tests {
     #[test]
     fn wire_code_maps_timestamp_parse_failed() {
         assert_eq!(
-            wire_code(&StreamError::TimestampParseFailed {
-                reason: "bad iso",
-            }),
+            wire_code(&StreamError::TimestampParseFailed { reason: "bad iso" }),
             "anomaly-detect-stream-timestamp-parse-failed"
         );
     }
@@ -638,6 +628,16 @@ mod tests {
                 floor: 1_000_000,
             }),
             "anomaly-detect-stream-past-dated-event"
+        );
+    }
+
+    #[test]
+    fn wire_code_maps_dedup_ledger_failure() {
+        assert_eq!(
+            wire_code(&StreamError::DedupLedgerFailure {
+                reason: "rocksdb: io error".into(),
+            }),
+            "anomaly-detect-stream-dedup-ledger-failure"
         );
     }
 

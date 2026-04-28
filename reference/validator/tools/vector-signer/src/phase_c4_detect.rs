@@ -649,11 +649,12 @@ fn build_adet_107_iam_walk_under_slow_burn() -> Value {
 /// (pattern_id, mandate_id).
 ///
 /// Stream 1: 5 delete events → delete-storm + git-force-push-storm
-/// fire, `last_fired_at[(delete-storm, m-a108)] = 4` (current_time
-/// after ingest).  Stream 2: 3 delete events at t=5..7. Evaluate_all
-/// runs; the bucket has 8 events in window so threshold crosses
-/// again, but `current_time (7) - fired_at (4) = 3 < 60` → suppressed
-/// → NO second fire.  Same for git-force-push-storm (3 < 300).
+/// fire; the dedup ledger records `(delete-storm, m-a108)` at
+/// fired_at = 4 (current_time after ingest).  Stream 2: 3 delete
+/// events at t=5..7. Evaluate_all runs; the bucket has 8 events in
+/// window so threshold crosses again, but
+/// `current_time (7) - fired_at (4) = 3 < 60` → suppressed →
+/// NO second fire.  Same for git-force-push-storm (3 < 300).
 fn build_adet_108_fire_once_dedup_across_streams() -> Value {
     let stream_one = literal_stream(vec![
         canonical_delete_event("e1-0", "m-a108", 0, 2, "pod", "pod/foo"),
@@ -675,8 +676,8 @@ fn build_adet_108_fire_once_dedup_across_streams() -> Value {
          fires delete-storm and gfp-storm; stream 2's additional 3 \
          events recross the threshold but land inside the 60 s (or \
          300 s) suppression window → no re-fire. Pins the fire-once \
-         dedup key against a future refactor that reset \
-         `last_fired_at` at stream boundaries.",
+         dedup key against a future refactor that reset the dedup \
+         ledger at stream boundaries.",
         "design-final.md §3.5.3 fire-once semantics + evaluators.rs \
          `is_fire_suppressed`: `current_time - fired_at < \
          window_seconds` is STRICT `<`, so equal-window re-fires are \

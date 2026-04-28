@@ -99,6 +99,7 @@
 /// within a major version.
 pub const ANOMALY_LIBRARY_ABI_VERSION: u32 = 1;
 
+pub mod dedup_ledger;
 pub mod errors;
 // `evaluators` hosts the Session 5-B per-firing-rule evaluators
 // (FirstMatch, SequenceMatch, CumulativeOverBaseline).  The public
@@ -127,6 +128,9 @@ pub mod state;
 #[cfg(feature = "test_fixtures")]
 pub mod test_fixtures;
 
+pub use dedup_ledger::{
+    DedupLedger, DedupLedgerError, InMemoryDedupLedger, MAX_DEDUP_ENTRIES_PER_TENANT,
+};
 pub use errors::{AnomalyLibError, FiringCompanionFailure, StreamError};
 pub use event::{
     AuditStreamInput, CanonicalizedEvent, Outcome, PatternDescription, TemplateEvent,

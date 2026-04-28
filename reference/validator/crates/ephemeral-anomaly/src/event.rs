@@ -77,7 +77,8 @@ pub const MAX_EXPANDED_EVENTS: u64 = 100_000;
 /// string is sufficient operationally — the signer's fix is
 /// "produce a well-formed RFC-3339 timestamp" regardless of which
 /// sub-field was malformed.
-const RFC3339_PARSE_REASON: &str = "not a valid RFC-3339 timestamp (expected YYYY-MM-DDTHH:MM:SS[.ffff]Z or with offset)";
+const RFC3339_PARSE_REASON: &str =
+    "not a valid RFC-3339 timestamp (expected YYYY-MM-DDTHH:MM:SS[.ffff]Z or with offset)";
 
 /// Execution outcome of a single audit event.
 ///
@@ -436,12 +437,13 @@ impl PatternDescription {
         // adversarial `count: u64::MAX, interval: > 0` overflow
         // before it touches allocation.
         let interval_for_bound = u64::from(self.interval_seconds).max(1);
-        let projected = self.count.checked_mul(interval_for_bound).ok_or(
-            StreamError::ExpansionExceeded {
-                requested: u64::MAX,
-                cap: MAX_EXPANDED_EVENTS,
-            },
-        )?;
+        let projected =
+            self.count
+                .checked_mul(interval_for_bound)
+                .ok_or(StreamError::ExpansionExceeded {
+                    requested: u64::MAX,
+                    cap: MAX_EXPANDED_EVENTS,
+                })?;
         if projected > MAX_EXPANDED_EVENTS {
             return Err(StreamError::ExpansionExceeded {
                 requested: projected,
@@ -762,7 +764,11 @@ mod tests {
         let mut ids: Vec<&str> = out.iter().map(|e| e.event_id.as_str()).collect();
         ids.sort_unstable();
         ids.dedup();
-        assert_eq!(ids.len(), 100, "event_ids MUST be distinct within one expansion");
+        assert_eq!(
+            ids.len(),
+            100,
+            "event_ids MUST be distinct within one expansion"
+        );
     }
 
     #[test]

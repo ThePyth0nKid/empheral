@@ -53,8 +53,7 @@
 use ephemeral_anomaly::{
     test_fixtures::{
         fixture_anomaly_verifying_key_bytes, seeded_ledger_at_version,
-        sign_minimum_library_with_version, FIXTURE_ANOMALY_KID,
-        FIXTURE_ANOMALY_LIBRARY_ID,
+        sign_minimum_library_with_version, FIXTURE_ANOMALY_KID, FIXTURE_ANOMALY_LIBRARY_ID,
     },
     verify_anomaly_library_signature_with_ledger, AnomalyLedger, AnomalyLibError,
     InMemoryAnomalyLedger, ANOMALY_LIBRARY_ABI_VERSION,
@@ -140,10 +139,8 @@ fn with_ledger_accepts_trait_object_and_preseeded_ledger() {
     //
     // The seeded HWM matches FIXTURE_ANOMALY_LIBRARY_ID at v5; the
     // v3 envelope below is strictly lower and rejects as rollback.
-    let pre: Box<dyn AnomalyLedger> = Box::new(seeded_ledger_at_version(
-        FIXTURE_ANOMALY_LIBRARY_ID,
-        5,
-    ));
+    let pre: Box<dyn AnomalyLedger> =
+        Box::new(seeded_ledger_at_version(FIXTURE_ANOMALY_LIBRARY_ID, 5));
     let mut pre = pre; // bind as mut so we can pass &mut
 
     let cose_v3 = sign_minimum_library_with_version(3);

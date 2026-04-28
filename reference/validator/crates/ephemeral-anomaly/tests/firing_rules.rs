@@ -136,7 +136,9 @@ fn first_match_fires_at_count_threshold() {
             .expect("ingest");
     }
 
-    let fires = state.evaluate_all();
+    let fires = state
+        .evaluate_all()
+        .expect("in-memory dedup ledger is infallible in tests");
     assert_eq!(fires.len(), 1);
     assert_eq!(fires[0].pattern_id, "delete-storm");
     assert_eq!(fires[0].match_scope.mandate_id.as_deref(), Some("m-1"));
@@ -155,7 +157,10 @@ fn first_match_does_not_fire_below_threshold() {
             .ingest_event(delete_event(&format!("e-{i}"), "m-1", ANCHOR + i))
             .expect("ingest");
     }
-    assert!(state.evaluate_all().is_empty());
+    assert!(state
+        .evaluate_all()
+        .expect("in-memory dedup ledger is infallible in tests")
+        .is_empty());
 }
 
 // -------------------------------------------------------------------
@@ -181,13 +186,12 @@ fn first_match_distinct_count_fires_at_threshold() {
             .expect("ingest");
     }
 
-    let fires = state.evaluate_all();
+    let fires = state
+        .evaluate_all()
+        .expect("in-memory dedup ledger is infallible in tests");
     assert_eq!(fires.len(), 1);
     assert_eq!(fires[0].pattern_id, "fanout-distinct-resources");
-    assert_eq!(
-        fires[0].match_scope.mandate_id.as_deref(),
-        Some("m-fanout")
-    );
+    assert_eq!(fires[0].match_scope.mandate_id.as_deref(), Some("m-fanout"));
 }
 
 #[test]
@@ -218,7 +222,10 @@ fn first_match_distinct_count_ignores_duplicates() {
         .expect("ingest");
 
     assert!(
-        state.evaluate_all().is_empty(),
+        state
+            .evaluate_all()
+            .expect("in-memory dedup ledger is infallible in tests")
+            .is_empty(),
         "duplicate resource_refs must not inflate DistinctCount",
     );
 }
@@ -244,7 +251,9 @@ fn sequence_match_fires_on_ordered_tier_walk() {
         .ingest_event(tiered_event("e-2", "m-esc", ANCHOR + 2, 3))
         .expect("ingest tier-3");
 
-    let fires = state.evaluate_all();
+    let fires = state
+        .evaluate_all()
+        .expect("in-memory dedup ledger is infallible in tests");
     assert_eq!(fires.len(), 1);
     assert_eq!(fires[0].pattern_id, "cross-tier-escalation");
     assert_eq!(fires[0].match_scope.mandate_id.as_deref(), Some("m-esc"));
@@ -264,7 +273,10 @@ fn sequence_match_does_not_fire_on_partial_walk() {
         .ingest_event(tiered_event("e-1", "m-esc", ANCHOR + 1, 2))
         .expect("ingest");
 
-    assert!(state.evaluate_all().is_empty());
+    assert!(state
+        .evaluate_all()
+        .expect("in-memory dedup ledger is infallible in tests")
+        .is_empty());
 }
 
 // -------------------------------------------------------------------
@@ -290,7 +302,9 @@ fn cumulative_over_baseline_fires_at_count_threshold() {
             .expect("ingest");
     }
 
-    let fires = state.evaluate_all();
+    let fires = state
+        .evaluate_all()
+        .expect("in-memory dedup ledger is infallible in tests");
     assert_eq!(fires.len(), 1);
     assert_eq!(fires[0].pattern_id, "machine-pace");
     assert_eq!(fires[0].match_scope.mandate_id.as_deref(), Some("m-pace"));
@@ -315,18 +329,14 @@ fn evaluate_all_fires_independent_mandates_in_parallel() {
                 .expect("ingest");
         }
     }
-    let fires = state.evaluate_all();
+    let fires = state
+        .evaluate_all()
+        .expect("in-memory dedup ledger is infallible in tests");
     assert_eq!(fires.len(), 2);
     // BTreeMap iteration is ordered — fires come back in mandate_id
     // lexicographic order.
-    assert_eq!(
-        fires[0].match_scope.mandate_id.as_deref(),
-        Some("m-a")
-    );
-    assert_eq!(
-        fires[1].match_scope.mandate_id.as_deref(),
-        Some("m-b")
-    );
+    assert_eq!(fires[0].match_scope.mandate_id.as_deref(), Some("m-a"));
+    assert_eq!(fires[1].match_scope.mandate_id.as_deref(), Some("m-b"));
 }
 
 #[test]
@@ -357,16 +367,15 @@ fn evaluate_all_dispatches_heterogeneous_library_patterns() {
         .ingest_event(tiered_event("e-esc", "m-mixed", ANCHOR + 5, 3))
         .expect("ingest tier-3");
 
-    let fires = state.evaluate_all();
+    let fires = state
+        .evaluate_all()
+        .expect("in-memory dedup ledger is infallible in tests");
     assert_eq!(fires.len(), 2, "both patterns must fire independently");
     let pattern_ids: Vec<&str> = fires.iter().map(|f| f.pattern_id.as_str()).collect();
     // BTreeMap iteration order — buckets keyed on (pattern_id,
     // mandate_id, ...) — gives `cross-tier-escalation` before
     // `delete-storm` lexicographically.
-    assert_eq!(
-        pattern_ids,
-        vec!["cross-tier-escalation", "delete-storm"]
-    );
+    assert_eq!(pattern_ids, vec!["cross-tier-escalation", "delete-storm"]);
 }
 
 #[test]
@@ -381,6 +390,9 @@ fn evaluate_all_does_not_fire_unmatched_patterns() {
             .ingest_event(pace_event(&format!("e-{i}"), "m-pace", ANCHOR + i))
             .expect("ingest");
     }
-    assert!(state.evaluate_all().is_empty());
-    assert!(state.last_fired_at().is_empty());
+    assert!(state
+        .evaluate_all()
+        .expect("in-memory dedup ledger is infallible in tests")
+        .is_empty());
+    assert!(state.dedup_ledger().is_empty());
 }

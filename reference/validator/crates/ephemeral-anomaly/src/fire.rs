@@ -182,15 +182,18 @@ pub struct MatchScope {
 ///
 /// # Duplicate-tolerance contract (load-bearing)
 ///
-/// [`crate::orchestrator::AuditOrchestrator`] does NOT persist its
-/// [`crate::state::DetectorState::last_fired_at`] dedup table.  A
-/// process restart re-initialises an empty dedup map, which means a
-/// pattern may fire again within its dedup window.  Downstream audit
-/// consumers MUST be duplicate-tolerant on the
+/// [`crate::orchestrator::AuditOrchestrator`] does NOT persist the
+/// [`crate::dedup_ledger::DedupLedger`] held inside its per-tenant
+/// [`crate::state::DetectorState`].  The default
+/// [`crate::dedup_ledger::InMemoryDedupLedger`] backend lives in
+/// process memory only, so a restart re-initialises an empty ledger
+/// and a pattern may fire again within its dedup window.  Downstream
+/// audit consumers MUST be duplicate-tolerant on the
 /// `(tenant_id, pattern_id, match_scope, ~record_timestamp)` tuple —
 /// idempotent alert fan-out at the dashboard layer is the canonical
-/// approach.  This is a deliberate scope-out of Session 5-B Commit C;
-/// an optional Commit D may add a persistent dedup ledger.
+/// approach.  Persistent backends may be plugged in via
+/// [`crate::state::DetectorState::with_ledger`] but are out of scope
+/// for the reference validator's default configuration.
 ///
 /// # Non-exhaustive
 ///

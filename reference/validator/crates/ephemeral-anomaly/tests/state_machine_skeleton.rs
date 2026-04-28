@@ -76,17 +76,16 @@ fn evaluate_all_fires_on_storm_fixture() {
 
     assert_eq!(state.per_mandate_counters().get("m-storm"), Some(&10));
 
-    let fires = state.evaluate_all();
+    let fires = state
+        .evaluate_all()
+        .expect("in-memory dedup ledger is infallible in tests");
     assert_eq!(
         fires.len(),
         1,
         "storm fixture crosses the 5-in-60s threshold → exactly one fire"
     );
     assert_eq!(fires[0].pattern_id, "delete-storm");
-    assert_eq!(
-        fires[0].match_scope.mandate_id.as_deref(),
-        Some("m-storm")
-    );
+    assert_eq!(fires[0].match_scope.mandate_id.as_deref(), Some("m-storm"));
 }
 
 #[test]
@@ -96,7 +95,10 @@ fn evaluate_all_is_empty_on_fresh_state() {
     // state, not an error case.
     let library = fixture_detector_library(vec![delete_storm_pattern()]);
     let mut state = DetectorState::new(library, FIXTURE_STORM_START_UNIX);
-    assert!(state.evaluate_all().is_empty());
+    assert!(state
+        .evaluate_all()
+        .expect("in-memory dedup ledger is infallible in tests")
+        .is_empty());
 }
 
 #[test]
@@ -114,9 +116,19 @@ fn evaluate_all_dedups_across_two_calls_on_storm_fixture() {
         state.ingest_event(event).expect("ingest");
     }
 
-    assert_eq!(state.evaluate_all().len(), 1, "first call fires");
+    assert_eq!(
+        state
+            .evaluate_all()
+            .expect("in-memory dedup ledger is infallible in tests")
+            .len(),
+        1,
+        "first call fires"
+    );
     assert!(
-        state.evaluate_all().is_empty(),
+        state
+            .evaluate_all()
+            .expect("in-memory dedup ledger is infallible in tests")
+            .is_empty(),
         "second call within dedup window must not refire"
     );
 }
@@ -309,7 +321,9 @@ fn ingest_accepts_past_dated_event_without_skew_check() {
         "ns/app/pod-past",
         Outcome::Executed,
     );
-    state.ingest_event(past).expect("past-dated ingest accepted");
+    state
+        .ingest_event(past)
+        .expect("past-dated ingest accepted");
     assert_eq!(state.per_mandate_counters().get("m-storm"), Some(&1));
 }
 
@@ -532,11 +546,14 @@ fn per_buffer_cap_evicts_oldest_event_silently() {
 // -------------------------------------------------------------------
 
 #[test]
-fn detector_state_is_thread_shareable() {
-    // Integration-side pin of the Send+Sync invariant — a regression
-    // that wired a !Sync field (e.g. Rc<_>, RefCell<_>) into
-    // DetectorState would surface here rather than only at the
-    // point-of-use in the audit pipeline.
-    fn assert_send_sync<T: Send + Sync>() {}
-    assert_send_sync::<DetectorState>();
+fn detector_state_is_thread_movable() {
+    // Integration-side pin of the `Send` invariant — a regression
+    // that wired a !Send field (e.g. Rc<_>) into DetectorState would
+    // surface here rather than only at the point-of-use in the audit
+    // pipeline.  `Sync` is intentionally NOT asserted because
+    // `DedupLedger` is `Send`-only by design (each detector worker
+    // owns its state instance — see the Concurrency section in
+    // `DetectorState`).
+    fn assert_send<T: Send>() {}
+    assert_send::<DetectorState>();
 }

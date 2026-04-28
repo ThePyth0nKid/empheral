@@ -18,8 +18,12 @@
 //! - Sliding-window eviction inside `evaluate_all` (via
 //!   [`PatternBuffer::evict_aged_events`]) before each firing-rule
 //!   call, so the evaluator sees only live events.
-//! - Fire-once dedup via [`DetectorState::last_fired_at`], keyed on
-//!   `(pattern_id, mandate_id)`.
+//! - Fire-once dedup via the pluggable
+//!   [`crate::dedup_ledger::DedupLedger`] backend held by
+//!   [`DetectorState`] (default:
+//!   [`crate::dedup_ledger::InMemoryDedupLedger`]), keyed on
+//!   `(pattern_id, mandate_id)`.  Persistent backends inject through
+//!   [`DetectorState::with_ledger`].
 //! - Dispatch to the three firing-rule evaluators:
 //!   [`crate::evaluators::evaluate_first_match`],
 //!   [`crate::evaluators::evaluate_sequence_match`], and
@@ -100,6 +104,7 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 
+use crate::dedup_ledger::{DedupLedger, DedupLedgerError, InMemoryDedupLedger};
 use crate::errors::{sanitize_log_string, StreamError};
 use crate::event::CanonicalizedEvent;
 use crate::fire::AnomalyFire;
@@ -360,11 +365,7 @@ impl PatternBuffer {
     /// epoch seconds value (≥ 1_700_000_000 as of 2023) so the
     /// saturation branch is unreachable — but the hardening is free
     /// and lets us skip an overflow-branch test.
-    pub(crate) fn evict_aged_events(
-        &mut self,
-        window_seconds: u32,
-        current_time: i64,
-    ) -> usize {
+    pub(crate) fn evict_aged_events(&mut self, window_seconds: u32, current_time: i64) -> usize {
         let window_start = current_time.saturating_sub(i64::from(window_seconds));
         let mut evicted = 0_usize;
         while let Some(front) = self.events.front() {
@@ -401,67 +402,119 @@ impl PatternBuffer {
 ///   Role is DoS containment (cap at [`MAX_EVENTS_PER_MANDATE`]), not
 ///   sliding-window counting — firing-rule evaluators read their
 ///   counts from `PatternBuffer::events.len()` after eviction.
-/// - `last_fired_at` carries one entry per `(pattern_id, mandate_id)`
-///   pair that has fired at least once; the stored value is
-///   `current_time` at the fire instant.  A pattern does NOT re-fire
-///   for the same mandate until `current_time - last_fired_at[key]
-///   >= window_seconds` (fire-once dedup).  Windowless patterns
-///   (e.g. `unusual-delegation-depth`) do not participate in the
-///   sliding-window dedup — they use a fixed dedup window of
-///   [`FALLBACK_FIRE_ONCE_WINDOW_SECONDS`].
+/// - `dedup` is the pluggable [`DedupLedger`] backend that records
+///   one entry per `(pattern_id, mandate_id)` pair that has fired at
+///   least once; the stored value is `current_time` at the fire
+///   instant.  A pattern does NOT re-fire for the same mandate until
+///   `current_time - last_fired >= window_seconds` (fire-once dedup),
+///   evaluated through [`DedupLedger::is_suppressed`].  Windowless
+///   patterns (e.g. `unusual-delegation-depth`) do not participate in
+///   the sliding-window dedup — they use a fixed dedup window of
+///   [`FALLBACK_FIRE_ONCE_WINDOW_SECONDS`].  The default backend is
+///   [`InMemoryDedupLedger`]; persistent backends (Sled, Redis, ...)
+///   inject through [`DetectorState::with_ledger`].
 ///
 /// # Concurrency
 ///
-/// `DetectorState` is `Send + Sync` because every field is
-/// `Send + Sync` (the `Arc<VerifiedAnomalyLibrarySignature>` is
-/// naturally shareable and the `BTreeMap`/`u64`/`i64` fields are
-/// sync-bound by standard derive).  The `detector_state_is_send_sync`
-/// test pins this.
+/// `DetectorState` is `Send` (every owned field is `Send`).  It is
+/// **not** `Sync` because [`DedupLedger`] is intentionally `Send`-only
+/// — backends like Sled/Redis serve a single writer per state and
+/// would have to add their own locking to support `&self` concurrent
+/// access.  Multi-thread fan-out runs one `DetectorState` per worker;
+/// the `detector_state_is_send` test pins this.
 #[derive(Debug)]
 pub struct DetectorState {
     pinned_library: Arc<VerifiedAnomalyLibrarySignature>,
     buffers: BTreeMap<ScopeBucketKey, PatternBuffer>,
     per_mandate_counters: BTreeMap<String, u64>,
     current_time: i64,
-    /// Fire-once dedup state, keyed on `(pattern_id, mandate_id)`.
-    /// Value = `current_time` at the last fire.  `BTreeMap` (not
-    /// `HashMap`) so iteration order is deterministic should any
-    /// future diagnostic need to traverse it.  See field-invariants
-    /// section of the struct-level doc.
+    /// Fire-once dedup ledger, keyed on `(pattern_id, mandate_id)`,
+    /// recording `current_time` at the last fire and answering
+    /// suppression queries via [`DedupLedger::is_suppressed`].  The
+    /// trait surface is the only access path; this field is private
+    /// to avoid leaking concrete-backend internals (raw timestamps,
+    /// btreemap layout) to callers.
+    ///
+    /// # Backend pluggability
+    ///
+    /// Defaults to the in-memory backend ([`InMemoryDedupLedger`])
+    /// when constructed via [`DetectorState::new`].  Persistent
+    /// backends inject through [`DetectorState::with_ledger`] —
+    /// production callers wrap a Sled/Redis backend so dedup state
+    /// survives detector-state recreation (e.g. a worker restart that
+    /// would otherwise re-fire every pattern on its first tick).
     ///
     /// # Growth bound
     ///
     /// Entries never expire within a single `DetectorState` lifetime
     /// — dedup marks persist so a long-quiet mandate can still be
     /// suppressed when it fires after a gap longer than the window.
-    /// The map's cardinality is therefore bounded by
+    /// The ledger's cardinality is therefore bounded by
     /// `patterns × distinct_mandates_that_have_ever_fired`.  The
     /// per-mandate ingest cap ([`MAX_EVENTS_PER_MANDATE`]) and the
     /// library's fixed pattern count keep this tractable; operators
     /// rotate state (new library version → new `DetectorState`) on
-    /// their normal cadence, which resets the map.  Mandate
-    /// cardinality itself is not capped here — that concern lives at
-    /// the audit-pipeline boundary.
-    last_fired_at: BTreeMap<(String, String), i64>,
+    /// their normal cadence, which resets the in-memory backend.
+    /// Persistent backends MUST enforce their own cardinality cap
+    /// ([`MAX_DEDUP_ENTRIES_PER_TENANT`]) and raise
+    /// [`DedupLedgerError::CapacityExhausted`] on overflow.
+    ///
+    /// [`MAX_DEDUP_ENTRIES_PER_TENANT`]:
+    ///     crate::dedup_ledger::MAX_DEDUP_ENTRIES_PER_TENANT
+    /// [`DedupLedgerError::CapacityExhausted`]:
+    ///     crate::dedup_ledger::DedupLedgerError::CapacityExhausted
+    dedup: Box<dyn DedupLedger>,
 }
 
 impl DetectorState {
     /// Construct a new state machine pinned to the given verified
     /// library and starting at the given `initial_time`
-    /// (unix-epoch seconds).
+    /// (unix-epoch seconds), defaulting to the in-memory dedup
+    /// backend ([`InMemoryDedupLedger`]).
     ///
     /// Typical callers: the audit-pipeline worker on first event
     /// after library-load, passing `initial_time` as the caller's
     /// trusted wall-clock (NOT an event-derived timestamp — see
     /// plan §15.5 on the trust boundary).
+    ///
+    /// Production deployments that need dedup state to survive
+    /// detector-state recreation (worker restart, library rotation
+    /// with carry-over) MUST use [`Self::with_ledger`] instead and
+    /// inject a persistent backend.
     #[must_use]
     pub fn new(pinned_library: Arc<VerifiedAnomalyLibrarySignature>, initial_time: i64) -> Self {
+        Self::with_ledger(
+            pinned_library,
+            initial_time,
+            Box::new(InMemoryDedupLedger::new()),
+        )
+    }
+
+    /// Construct a state machine with a caller-supplied dedup ledger.
+    ///
+    /// Use this when the in-memory default is not sufficient — e.g.
+    /// production deployments wrap a Sled/Redis backend so dedup
+    /// state survives a worker restart that would otherwise re-fire
+    /// every pattern on its first tick.  The injected backend is
+    /// expected to already contain whatever dedup history it inherits
+    /// (e.g. from a snapshot loaded at boot); this constructor does
+    /// not seed it.
+    ///
+    /// The trait surface ([`DedupLedger`]) is `Send`-only, so the
+    /// resulting `DetectorState` is `Send` but not `Sync` — fan out
+    /// across threads by giving each worker its own state instance.
+    #[must_use]
+    pub fn with_ledger(
+        pinned_library: Arc<VerifiedAnomalyLibrarySignature>,
+        initial_time: i64,
+        dedup: Box<dyn DedupLedger>,
+    ) -> Self {
         Self {
             pinned_library,
             buffers: BTreeMap::new(),
             per_mandate_counters: BTreeMap::new(),
             current_time: initial_time,
-            last_fired_at: BTreeMap::new(),
+            dedup,
         }
     }
 
@@ -490,12 +543,17 @@ impl DetectorState {
         self.current_time
     }
 
-    /// Read-only accessor for the fire-once dedup table.  Key =
-    /// `(pattern_id, mandate_id)`; value = `current_time` at the last
-    /// fire.  Empty until at least one pattern has fired.
+    /// Read-only accessor for the dedup ledger trait surface.
+    ///
+    /// Returns the [`DedupLedger`] backend held by this state;
+    /// callers can ask `is_suppressed`, `len`, or `is_empty` but
+    /// cannot read raw fire timestamps (the trait deliberately omits
+    /// a `last_fired_at` getter — those are sensitive scheduling hints
+    /// that an attacker probing dedup state would otherwise harvest,
+    /// see SEC-D-4 in the dedup-ledger threat model).
     #[must_use]
-    pub fn last_fired_at(&self) -> &BTreeMap<(String, String), i64> {
-        &self.last_fired_at
+    pub fn dedup_ledger(&self) -> &dyn DedupLedger {
+        &*self.dedup
     }
 
     /// Longest `window_seconds` declared by any windowed pattern in the
@@ -626,11 +684,8 @@ impl DetectorState {
         // verified library.
         for pattern in &self.pinned_library.patterns {
             if pattern.scope.matches(&event) {
-                let key = ScopeBucketKey::for_pattern_match(
-                    &pattern.pattern_id,
-                    &pattern.scope,
-                    &event,
-                );
+                let key =
+                    ScopeBucketKey::for_pattern_match(&pattern.pattern_id, &pattern.scope, &event);
                 let buffer = self
                     .buffers
                     .entry(key)
@@ -659,9 +714,24 @@ impl DetectorState {
     /// detector state, evicts aged events from windowed buffers, and
     /// dispatches to the per-firing-rule evaluator in
     /// [`crate::evaluators`].  Each successful fire records a
-    /// `(pattern_id, mandate_id) → current_time` entry in
-    /// [`Self::last_fired_at`] so subsequent calls within the dedup
-    /// window do not re-fire for the same mandate.
+    /// `(pattern_id, mandate_id) → current_time` entry in the dedup
+    /// ledger via [`DedupLedger::observe`] so subsequent calls within
+    /// the dedup window do not re-fire for the same mandate.
+    ///
+    /// # Failure mode
+    ///
+    /// Returns [`DedupLedgerError`] when the backing dedup ledger
+    /// rejects either a suppression query or a post-fire `observe`
+    /// call.  The in-memory backend ([`InMemoryDedupLedger`]) only
+    /// fails on [`DedupLedgerError::CapacityExhausted`] (per-tenant
+    /// cardinality cap); persistent backends additionally surface
+    /// transport / storage errors as [`DedupLedgerError::BackendFailure`].
+    ///
+    /// On error the caller must treat the partial fire vector as
+    /// dropped — the orchestrator collapses both variants into a
+    /// generic [`StreamError::DedupLedgerFailure`] so the operator log
+    /// never names which backend failed (role-isolation hardening
+    /// from the SEC-D-* threat model).
     ///
     /// # Why `&mut self`
     ///
@@ -677,9 +747,10 @@ impl DetectorState {
     ///    double the memory cost at the cap
     ///    ([`MAX_EVENTS_PER_BUFFER`]) — unacceptable on hot paths.
     /// 2. **Fire-once dedup bookkeeping.**  Successful fires must
-    ///    update `self.last_fired_at` atomically with the fire so
-    ///    concurrent evaluators cannot observe a fire without its
-    ///    dedup mark (which would re-fire on the next tick).
+    ///    update the dedup ledger via [`DedupLedger::observe`]
+    ///    atomically with the fire so concurrent evaluators cannot
+    ///    observe a fire without its dedup mark (which would re-fire
+    ///    on the next tick).
     ///
     /// Callers that need a read-only evaluation (e.g. diagnostic
     /// dumps) should `clone()` the `DetectorState` first and evaluate
@@ -710,9 +781,9 @@ impl DetectorState {
     /// `Vec<AnomalyFire>` is ordering-stable across runs for a given
     /// input stream — pinned by
     /// `evaluate_all_is_deterministic_across_calls`.
-    pub fn evaluate_all(&mut self) -> Vec<AnomalyFire> {
+    pub fn evaluate_all(&mut self) -> Result<Vec<AnomalyFire>, DedupLedgerError> {
         // Clone the Arc so we can index into `library.patterns` while
-        // mutably borrowing `self.buffers` and `self.last_fired_at`.
+        // mutably borrowing `self.buffers` and `self.dedup`.
         let library = Arc::clone(&self.pinned_library);
         let current_time = self.current_time;
         let library_version = library.library_version;
@@ -768,16 +839,16 @@ impl DetectorState {
                     &key,
                     library_version,
                     current_time,
-                    &self.last_fired_at,
-                ),
+                    &*self.dedup,
+                )?,
                 FiringRule::SequenceMatch => crate::evaluators::evaluate_sequence_match(
                     pattern,
                     buffer,
                     &key,
                     library_version,
                     current_time,
-                    &self.last_fired_at,
-                ),
+                    &*self.dedup,
+                )?,
                 FiringRule::CumulativeOverBaseline => {
                     crate::evaluators::evaluate_cumulative_over_baseline(
                         pattern,
@@ -785,28 +856,33 @@ impl DetectorState {
                         &key,
                         library_version,
                         current_time,
-                        &self.last_fired_at,
-                    )
-                }
-                // No `_` wildcard: `FiringRule` is `#[non_exhaustive]`
-                // for cross-crate forward-compat, but intra-crate the
-                // compiler enforces coverage.  Omitting `_` deliberately
-                // weaponises that: a new variant added to `patterns.rs`
-                // without a matching arm here becomes a compile error,
-                // surfacing the gap at build time rather than silently
-                // declining to fire at runtime.
+                        &*self.dedup,
+                    )?
+                } // No `_` wildcard: `FiringRule` is `#[non_exhaustive]`
+                  // for cross-crate forward-compat, but intra-crate the
+                  // compiler enforces coverage.  Omitting `_` deliberately
+                  // weaponises that: a new variant added to `patterns.rs`
+                  // without a matching arm here becomes a compile error,
+                  // surfacing the gap at build time rather than silently
+                  // declining to fire at runtime.
             };
 
             if let Some(fire) = fire {
-                self.last_fired_at.insert(
-                    (pattern.pattern_id.clone(), key.mandate_id.clone()),
-                    current_time,
-                );
+                // Record the fire in the dedup ledger BEFORE pushing
+                // into the result vector — if `observe` fails (e.g.
+                // CapacityExhausted on a persistent backend), we want
+                // to surface the error to the caller rather than emit
+                // a fire that the next tick will re-emit because the
+                // dedup mark was lost.  The orchestrator turns this
+                // into `StreamError::DedupLedgerFailure` and discards
+                // the in-flight batch.
+                self.dedup
+                    .observe(&pattern.pattern_id, &key.mandate_id, current_time)?;
                 fires.push(fire);
             }
         }
 
-        fires
+        Ok(fires)
     }
 }
 
@@ -867,7 +943,7 @@ mod tests {
         let state = DetectorState::new(library(vec![]), 1_700_000_000);
         assert!(state.buffers().is_empty());
         assert!(state.per_mandate_counters().is_empty());
-        assert!(state.last_fired_at().is_empty());
+        assert!(state.dedup_ledger().is_empty());
         assert_eq!(state.current_time(), 1_700_000_000);
     }
 
@@ -989,9 +1065,12 @@ mod tests {
     fn evaluate_all_returns_empty_when_no_buckets_exist() {
         // Fresh state with zero ingested events → zero fires.
         let mut state = DetectorState::new(library(vec![delete_storm_pattern()]), 1_700_000_000);
-        assert!(state.evaluate_all().is_empty());
+        assert!(state
+            .evaluate_all()
+            .expect("in-memory dedup ledger is infallible in tests")
+            .is_empty());
         // `last_fired_at` also remains empty when no fires occurred.
-        assert!(state.last_fired_at().is_empty());
+        assert!(state.dedup_ledger().is_empty());
     }
 
     #[test]
@@ -1004,8 +1083,11 @@ mod tests {
                 .ingest_event(base_event(&format!("e-{i}"), "m-42", 1_700_000_000 + i))
                 .unwrap();
         }
-        assert!(state.evaluate_all().is_empty());
-        assert!(state.last_fired_at().is_empty());
+        assert!(state
+            .evaluate_all()
+            .expect("in-memory dedup ledger is infallible in tests")
+            .is_empty());
+        assert!(state.dedup_ledger().is_empty());
     }
 
     #[test]
@@ -1017,17 +1099,21 @@ mod tests {
                 .ingest_event(base_event(&format!("e-{i}"), "m-42", 1_700_000_000 + i))
                 .unwrap();
         }
-        let fires = state.evaluate_all();
+        let fires = state
+            .evaluate_all()
+            .expect("in-memory dedup ledger is infallible in tests");
         assert_eq!(fires.len(), 1, "expected exactly one fire at threshold");
         assert_eq!(fires[0].pattern_id, "delete-storm");
-        // Fire records the dedup bookmark.
-        assert_eq!(
-            state
-                .last_fired_at()
-                .get(&("delete-storm".into(), "m-42".into()))
-                .copied(),
-            Some(1_700_000_000)
-        );
+        // Fire records the dedup bookmark — assert behaviourally
+        // through `is_suppressed` rather than reading raw timestamps,
+        // since the trait deliberately hides them (SEC-D-4 timestamp
+        // leak).  At the fire instant a fresh suppression check with
+        // the pattern's window must return `Suppressed = true`.
+        let suppressed = state
+            .dedup_ledger()
+            .is_suppressed("delete-storm", "m-42", 1_700_000_000, 60)
+            .expect("in-memory dedup ledger is infallible in tests");
+        assert!(suppressed, "fire must record dedup mark");
     }
 
     #[test]
@@ -1040,9 +1126,18 @@ mod tests {
                 .ingest_event(base_event(&format!("e-{i}"), "m-42", 1_700_000_000 + i))
                 .unwrap();
         }
-        assert_eq!(state.evaluate_all().len(), 1);
+        assert_eq!(
+            state
+                .evaluate_all()
+                .expect("in-memory dedup ledger is infallible in tests")
+                .len(),
+            1
+        );
         assert!(
-            state.evaluate_all().is_empty(),
+            state
+                .evaluate_all()
+                .expect("in-memory dedup ledger is infallible in tests")
+                .is_empty(),
             "second call within dedup window must not refire"
         );
     }
@@ -1066,16 +1161,32 @@ mod tests {
             }
             s
         };
-        let fires_a = make_state().evaluate_all();
-        let fires_b = make_state().evaluate_all();
+        let fires_a = make_state()
+            .evaluate_all()
+            .expect("in-memory dedup ledger is infallible in tests");
+        let fires_b = make_state()
+            .evaluate_all()
+            .expect("in-memory dedup ledger is infallible in tests");
         assert_eq!(fires_a.len(), 2);
         assert_eq!(
-            fires_a.iter().map(|f| f.pattern_id.clone()).collect::<Vec<_>>(),
-            fires_b.iter().map(|f| f.pattern_id.clone()).collect::<Vec<_>>()
+            fires_a
+                .iter()
+                .map(|f| f.pattern_id.clone())
+                .collect::<Vec<_>>(),
+            fires_b
+                .iter()
+                .map(|f| f.pattern_id.clone())
+                .collect::<Vec<_>>()
         );
         assert_eq!(
-            fires_a.iter().map(|f| f.match_scope.mandate_id.clone()).collect::<Vec<_>>(),
-            fires_b.iter().map(|f| f.match_scope.mandate_id.clone()).collect::<Vec<_>>()
+            fires_a
+                .iter()
+                .map(|f| f.match_scope.mandate_id.clone())
+                .collect::<Vec<_>>(),
+            fires_b
+                .iter()
+                .map(|f| f.match_scope.mandate_id.clone())
+                .collect::<Vec<_>>()
         );
     }
 
@@ -1091,7 +1202,13 @@ mod tests {
                 .ingest_event(base_event(&format!("e-{i}"), "m-42", 1_700_000_000 + i))
                 .unwrap();
         }
-        assert_eq!(state.evaluate_all().len(), 1);
+        assert_eq!(
+            state
+                .evaluate_all()
+                .expect("in-memory dedup ledger is infallible in tests")
+                .len(),
+            1
+        );
 
         // Advance past the 60s window.
         state.advance_clock(1_700_000_070).unwrap();
@@ -1102,7 +1219,10 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(
-            state.evaluate_all().len(),
+            state
+                .evaluate_all()
+                .expect("in-memory dedup ledger is infallible in tests")
+                .len(),
             1,
             "dedup must expire once window elapses"
         );
@@ -1120,7 +1240,9 @@ mod tests {
                     .unwrap();
             }
         }
-        let fires = state.evaluate_all();
+        let fires = state
+            .evaluate_all()
+            .expect("in-memory dedup ledger is infallible in tests");
         assert_eq!(fires.len(), 2, "each mandate should fire independently");
     }
 
@@ -1144,7 +1266,10 @@ mod tests {
                 .unwrap();
         }
         assert!(
-            state.evaluate_all().is_empty(),
+            state
+                .evaluate_all()
+                .expect("in-memory dedup ledger is infallible in tests")
+                .is_empty(),
             "aged events must not contribute to firing threshold"
         );
     }
@@ -1190,10 +1315,8 @@ mod tests {
         // Two patterns whose scopes both match the same event.
         let mut second = delete_storm_pattern();
         second.pattern_id = "delete-storm-v2".into();
-        let mut state = DetectorState::new(
-            library(vec![delete_storm_pattern(), second]),
-            1_700_000_000,
-        );
+        let mut state =
+            DetectorState::new(library(vec![delete_storm_pattern(), second]), 1_700_000_000);
         state
             .ingest_event(base_event("e-1", "m-42", 1_700_000_000))
             .unwrap();
@@ -1496,9 +1619,22 @@ mod tests {
     // ------------ concurrency ---------------------------------------
 
     #[test]
-    fn detector_state_is_send_sync() {
+    fn detector_state_is_send() {
+        // `DetectorState` is `Send` so workers can move it across
+        // threads (typical: spawn one detector per worker).  It is
+        // *not* `Sync` because [`DedupLedger`] is intentionally
+        // `Send`-only — see the Concurrency section of the
+        // `DetectorState` doc.
+        fn assert_send<T: Send>() {}
+        assert_send::<DetectorState>();
+    }
+
+    #[test]
+    fn aux_types_are_send_sync() {
+        // Plain-data field/value types remain `Send + Sync` — only
+        // `DetectorState` itself is `Send`-only because of the
+        // `Box<dyn DedupLedger>` field.
         fn assert_send_sync<T: Send + Sync>() {}
-        assert_send_sync::<DetectorState>();
         assert_send_sync::<ScopeBucketKey>();
         assert_send_sync::<SequenceTracker>();
         assert_send_sync::<PatternBuffer>();
@@ -1509,11 +1645,8 @@ mod tests {
     fn filled_buffer(timestamps: &[i64]) -> PatternBuffer {
         let mut buf = PatternBuffer::new("p-evict".into());
         for (i, ts) in timestamps.iter().enumerate() {
-            buf.events.push_back(base_event(
-                &format!("e-{i}"),
-                "m-42",
-                *ts,
-            ));
+            buf.events
+                .push_back(base_event(&format!("e-{i}"), "m-42", *ts));
         }
         buf
     }

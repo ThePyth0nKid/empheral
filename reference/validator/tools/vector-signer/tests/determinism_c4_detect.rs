@@ -41,7 +41,7 @@ use std::process::Command;
 ///
 /// Update this constant when intentionally regenerating vectors — it is a
 /// tripwire for silent non-determinism regressions.
-const DRY_RUN_SHA256: &str = "cc30f9f6cee108746f7995ffd52429fe01d812c66b4583f9867b99f7212155cd";
+const DRY_RUN_SHA256: &str = "03b405cafabc2410aa36b6918aed05be84078258b99519e3ed2b5eb9ec6be35a";
 
 fn vector_signer_bin() -> std::path::PathBuf {
     if let Ok(p) = std::env::var("CARGO_BIN_EXE_vector-signer") {

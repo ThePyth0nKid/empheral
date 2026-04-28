@@ -22,9 +22,9 @@
 //!   one tenant without ingesting an event (useful for silence-gate
 //!   evaluation).
 //! - [`AuditOrchestrator::rotate_library`] — swap to a newly
-//!   verified library.  All tenant states are cleared (new Arc, new
-//!   `last_fired_at`); downstream consumers MUST be duplicate-
-//!   tolerant across rotation boundaries.
+//!   verified library.  All tenant states are cleared (new Arc, fresh
+//!   [`crate::dedup_ledger::DedupLedger`]); downstream consumers MUST
+//!   be duplicate-tolerant across rotation boundaries.
 //! - [`AuditOrchestrator::tenants`] — iterate the registered set.
 //!   Useful for observability; does not expose per-tenant state.
 //!
@@ -40,17 +40,22 @@
 //!
 //! # Duplicate-tolerance contract
 //!
-//! The orchestrator does NOT persist `DetectorState::last_fired_at`.
-//! A process restart re-creates the map empty; a pattern may fire again
-//! within its normal dedup window post-restart.  Downstream audit
-//! consumers (alerting dashboard, revocation pusher, SIEM) MUST be
-//! duplicate-tolerant on the
+//! The orchestrator's per-tenant [`crate::state::DetectorState`] holds
+//! a [`crate::dedup_ledger::DedupLedger`] (default backend
+//! [`crate::dedup_ledger::InMemoryDedupLedger`]) which is NOT
+//! persisted.  A process restart re-creates the ledger empty; a
+//! pattern may fire again within its normal dedup window post-restart.
+//! Downstream audit consumers (alerting dashboard, revocation pusher,
+//! SIEM) MUST be duplicate-tolerant on the
 //! `(tenant_id, pattern_id, match_scope, ~record_timestamp)` tuple.
 //! Idempotent alert fan-out at the consumer layer is the canonical
 //! approach and matches the spec's §11.1 countersignature model (the
 //! audit service owns uniqueness at persist time).
 //!
-//! A persistent dedup ledger remains an optional future commit.
+//! Persistent backends can be plugged in by constructing
+//! [`crate::state::DetectorState`] with
+//! [`crate::state::DetectorState::with_ledger`] and a custom
+//! `Box<dyn DedupLedger>`; the orchestrator itself is backend-agnostic.
 //!
 //! # Attacker-influence bounds
 //!
@@ -175,10 +180,16 @@ impl AuditOrchestrator {
     ///
     /// # Errors
     ///
-    /// Propagates [`StreamError`] from either `advance_clock` or
-    /// `ingest_event` verbatim.  The tenant's state remains in a
-    /// consistent shape even on error — no partial bucket state is
-    /// left behind.
+    /// Propagates [`StreamError`] from `advance_clock`,
+    /// `ingest_event`, or `evaluate_all` verbatim.  Dedup-ledger
+    /// failures (capacity exhausted, persistent-backend transport
+    /// failure) surface as [`StreamError::DedupLedgerFailure`] via
+    /// the `From<DedupLedgerError>` conversion in
+    /// [`crate::errors`] — the underlying
+    /// [`crate::dedup_ledger::DedupLedgerError`] variant is
+    /// deliberately not exposed here (see that variant's docs for
+    /// rationale).  The tenant's state remains in a consistent shape
+    /// even on error — no partial bucket state is left behind.
     pub fn observe_event(
         &mut self,
         tenant_id: &str,
@@ -187,7 +198,7 @@ impl AuditOrchestrator {
         let state = self.tenant_state_mut(tenant_id);
         state.advance_clock(event.timestamp)?;
         state.ingest_event(event)?;
-        let fires = state.evaluate_all();
+        let fires = state.evaluate_all()?;
         let record_timestamp = state.current_time();
         Ok(fires
             .into_iter()
@@ -210,11 +221,7 @@ impl AuditOrchestrator {
     ///
     /// Propagates [`StreamError::ClockRegression`] when `new_time`
     /// regresses the tenant's clock.
-    pub fn advance_clock_for(
-        &mut self,
-        tenant_id: &str,
-        new_time: i64,
-    ) -> Result<(), StreamError> {
+    pub fn advance_clock_for(&mut self, tenant_id: &str, new_time: i64) -> Result<(), StreamError> {
         self.tenant_state_mut(tenant_id).advance_clock(new_time)
     }
 
@@ -226,18 +233,29 @@ impl AuditOrchestrator {
     /// [`AnomalyDetectedRecord`]s.  Used after
     /// [`Self::advance_clock_for`] on silence-based firing.
     ///
-    /// Returns an empty `Vec` if `tenant_id` is unregistered — that
-    /// is a valid "no fires" outcome, not an error.
-    pub fn drain_fires_for(&mut self, tenant_id: &str) -> Vec<AnomalyDetectedRecord> {
+    /// Returns `Ok(empty)` if `tenant_id` is unregistered — that is a
+    /// valid "no fires" outcome, not an error.
+    ///
+    /// # Errors
+    ///
+    /// Surfaces a [`StreamError::DedupLedgerFailure`] when the
+    /// pluggable dedup backend rejects evaluation (capacity exhausted
+    /// on a persistent backend, transport failure).  In-memory
+    /// backends do not produce this error in practice — see
+    /// [`crate::dedup_ledger::DedupLedger`].
+    pub fn drain_fires_for(
+        &mut self,
+        tenant_id: &str,
+    ) -> Result<Vec<AnomalyDetectedRecord>, StreamError> {
         let Some(state) = self.tenants.get_mut(tenant_id) else {
-            return Vec::new();
+            return Ok(Vec::new());
         };
-        let fires = state.evaluate_all();
+        let fires = state.evaluate_all()?;
         let record_timestamp = state.current_time();
-        fires
+        Ok(fires
             .into_iter()
             .map(|f| AnomalyDetectedRecord::new(tenant_id.to_owned(), record_timestamp, f))
-            .collect()
+            .collect())
     }
 
     /// Swap the pinned library and clear every tenant's state.
@@ -245,10 +263,14 @@ impl AuditOrchestrator {
     /// Models a production library-rotation event:
     ///
     /// - New `Arc<VerifiedAnomalyLibrarySignature>` replaces the old.
-    /// - Every tenant's `DetectorState` (buffers, counters,
-    ///   `last_fired_at`) is dropped.  Fresh state re-registers
-    ///   lazily on the next `observe_event` / `advance_clock_for`
-    ///   call.
+    /// - Every tenant's `DetectorState` (buffers, counters, dedup
+    ///   ledger) is dropped.  Fresh state re-registers lazily on the
+    ///   next `observe_event` / `advance_clock_for` call.  This
+    ///   automatically clears any in-memory dedup history; persistent
+    ///   backends injected via [`DetectorState::with_ledger`] are
+    ///   dropped along with the state and would need an external
+    ///   coordinator to retain history across rotation (out of scope
+    ///   for V1).
     /// - `initial_time` is updated to `new_initial_time` so the new
     ///   cohort of tenant states start at the caller-supplied clock.
     ///
@@ -256,8 +278,8 @@ impl AuditOrchestrator {
     ///
     /// A pattern that fired against the pre-rotation library MAY fire
     /// again against the post-rotation library within the new dedup
-    /// window — the `last_fired_at` table is reset by design.
-    /// Downstream consumers MUST be duplicate-tolerant across rotation
+    /// window — the dedup ledger is reset by design.  Downstream
+    /// consumers MUST be duplicate-tolerant across rotation
     /// boundaries; see the module-level contract.
     pub fn rotate_library(
         &mut self,
@@ -351,10 +373,7 @@ mod tests {
         assert_eq!(orch.tenant_count(), 1);
         let tenants: Vec<_> = orch.tenants().collect();
         assert_eq!(tenants, vec!["tenant-A"]);
-        assert_eq!(
-            orch.tenant_current_time("tenant-A"),
-            Some(initial_time + 5)
-        );
+        assert_eq!(orch.tenant_current_time("tenant-A"), Some(initial_time + 5));
         assert_eq!(orch.tenant_current_time("tenant-B"), None);
     }
 
@@ -423,7 +442,9 @@ mod tests {
         // empty of destructive verbs and drain_fires_for MUST return
         // an empty record set.  This is the multi-tenant isolation
         // invariant: A's storm does not leak into B's state.
-        let b_fires = orch.drain_fires_for("tenant-B");
+        let b_fires = orch
+            .drain_fires_for("tenant-B")
+            .expect("in-memory dedup ledger is infallible in tests");
         assert!(
             b_fires.is_empty(),
             "tenant-B must NOT fire — it only saw one non-delete event ({b_fires:?})"
@@ -485,7 +506,9 @@ mod tests {
     fn drain_fires_for_unknown_tenant_returns_empty() {
         let lib = verified_minimum_library();
         let mut orch = AuditOrchestrator::new(lib, 1_800_000_000);
-        let fires = orch.drain_fires_for("never-registered");
+        let fires = orch
+            .drain_fires_for("never-registered")
+            .expect("in-memory dedup ledger is infallible in tests");
         assert!(fires.is_empty());
     }
 

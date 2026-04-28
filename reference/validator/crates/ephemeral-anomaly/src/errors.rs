@@ -128,18 +128,14 @@ pub enum AnomalyLibError {
     /// field — the envelope is signed but not yet active.  Both
     /// values are unix epoch seconds; mismatched clocks between the
     /// signer and verifier are the usual cause.
-    #[error(
-        "anomaly-library is not yet valid: issued_at={issued_at}, now={now} (unix seconds)"
-    )]
+    #[error("anomaly-library is not yet valid: issued_at={issued_at}, now={now} (unix seconds)")]
     NotYetValid { issued_at: i64, now: i64 },
 
     /// Current verification time is past the library's `expires_at`
     /// field — the envelope has lapsed and MUST be rotated by the
     /// operator before further use.  Both values are unix epoch
     /// seconds.
-    #[error(
-        "anomaly-library has expired: expires_at={expires_at}, now={now} (unix seconds)"
-    )]
+    #[error("anomaly-library has expired: expires_at={expires_at}, now={now} (unix seconds)")]
     Expired { expires_at: i64, now: i64 },
 
     // ──────────────────────────────────────────────────────────────
@@ -151,7 +147,6 @@ pub enum AnomalyLibError {
     // structural contradictions inside the pattern table that the
     // signer MUST fix before a retry.
     // ──────────────────────────────────────────────────────────────
-
     /// Two or more pattern entries share the same `pattern_id`.  Per
     /// §4.2.1 R7.C6 the pattern table has SET semantics — dispatch
     /// keyed by `pattern_id` must be unambiguous, so duplicates
@@ -224,7 +219,6 @@ pub enum AnomalyLibError {
     // sanitises them via [`sanitize_log_string`] at the call site to
     // keep error display log-safe.
     // ──────────────────────────────────────────────────────────────
-
     /// The declared `library_version` did not strictly exceed the
     /// ledger's stored high-water-mark for this `library_id`.  Covers
     /// both replay (equal version) and rollback (lower version).  The
@@ -291,9 +285,7 @@ pub enum FiringCompanionFailure {
     /// `CumulativeOverBaseline`.  Per §3.5.3 only a cumulative-over-
     /// baseline companion closes the walk-under gap — a companion
     /// that is itself a FirstMatch provides no long-window backstop.
-    #[error(
-        "companion `{name}` exists but its firing_rule is not CumulativeOverBaseline"
-    )]
+    #[error("companion `{name}` exists but its firing_rule is not CumulativeOverBaseline")]
     CompanionNotCumulative { name: String },
 
     /// The companion is cumulative but its `window_seconds` is
@@ -389,10 +381,7 @@ pub enum StreamError {
         "event `{event_id}` timestamp is {skew_seconds}s ahead of current_time \
          (cap: MAX_CLOCK_SKEW_SECONDS)"
     )]
-    ClockSkewRejected {
-        event_id: String,
-        skew_seconds: i64,
-    },
+    ClockSkewRejected { event_id: String, skew_seconds: i64 },
 
     /// An RFC-3339 timestamp string in a `PatternDescription` (either
     /// `start_time` or `end_time`) failed to parse.  `reason` is a
@@ -494,6 +483,55 @@ pub enum StreamError {
         age_seconds: i64,
         floor: i64,
     },
+
+    /// The pluggable [`crate::dedup_ledger::DedupLedger`] backend
+    /// returned a failure during firing-rule evaluation.  Surfaced by
+    /// [`crate::orchestrator::AuditOrchestrator::observe_event`] (and
+    /// `drain_fires_for`) when a [`crate::state::DetectorState::evaluate_all`]
+    /// call's `Result` arm is the error variant.
+    ///
+    /// Reasons collapse to a sanitised `String` (256-byte cap, control
+    /// bytes → `'?'`) at the orchestrator boundary so a backend whose
+    /// own error message echoes attacker-controlled keys cannot inject
+    /// control characters into validator logs through this path.  The
+    /// underlying [`crate::dedup_ledger::DedupLedgerError`] is collapsed
+    /// here rather than re-exported because:
+    ///
+    /// 1. `StreamError` is the audit-pipeline's single error surface
+    ///    upstream consumers already match on; widening the orchestrator
+    ///    return type to a union (`StreamError | DedupLedgerError`) would
+    ///    re-paper an old boundary for one new variant.
+    /// 2. Collapsing prevents callers from branching on
+    ///    [`crate::dedup_ledger::DedupLedgerError::CapacityExhausted`]
+    ///    vs [`crate::dedup_ledger::DedupLedgerError::BackendFailure`]
+    ///    and taking divergent recovery paths — the pipeline-level
+    ///    response is identical (reject the event, surface the error,
+    ///    operator rotates the library to clear).
+    #[error("dedup ledger backend failed during evaluation: {reason}")]
+    DedupLedgerFailure { reason: String },
+}
+
+/// Variant-collapsing conversion from [`crate::dedup_ledger::DedupLedgerError`]
+/// to [`StreamError::DedupLedgerFailure`].
+///
+/// Centralised here (single source of truth) so every caller of
+/// [`crate::state::DetectorState::evaluate_all`] — orchestrator,
+/// suite executor, future tooling — collapses backend errors
+/// identically.  The reason string is run through
+/// [`sanitize_log_string`] so a backend whose `Display` implementation
+/// echoes attacker-controlled bytes (e.g. a serialized key) cannot
+/// inject control characters into validator logs.  The variant is
+/// collapsed (`CapacityExhausted` and `BackendFailure` both surface as
+/// `DedupLedgerFailure`) per the rationale on that variant.
+///
+/// Enables `?`-propagation:
+/// `state.evaluate_all()?` inside any `Result<_, StreamError>` body.
+impl From<crate::dedup_ledger::DedupLedgerError> for StreamError {
+    fn from(err: crate::dedup_ledger::DedupLedgerError) -> Self {
+        Self::DedupLedgerFailure {
+            reason: sanitize_log_string(&err.to_string()),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -844,6 +882,21 @@ mod tests {
         assert!(display.contains("172800"));
         assert!(display.contains("1699913600"));
         assert!(display.contains("past-dated floor"));
+    }
+
+    #[test]
+    fn stream_error_dedup_ledger_failure_sanitises_reason_in_display() {
+        // Construction site at the orchestrator must wrap the backend's
+        // reason through sanitize_log_string before storage; pin that
+        // Display does not re-leak control bytes via this surface.
+        let err = StreamError::DedupLedgerFailure {
+            reason: sanitize_log_string("rocksdb: io error\nINJ\x1b[31m"),
+        };
+        let display = format!("{err}");
+        assert!(!display.contains('\n'));
+        assert!(!display.contains('\x1b'));
+        assert!(display.contains("rocksdb: io error?INJ?[31m"));
+        assert!(display.contains("dedup ledger backend failed"));
     }
 
     #[test]

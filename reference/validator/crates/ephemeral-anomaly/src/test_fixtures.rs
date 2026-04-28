@@ -569,10 +569,7 @@ pub fn sign_anomaly_library_envelope_raw(
 /// Pass a payload whose `signer_kid` matches [`FIXTURE_ANOMALY_KID`]
 /// or Step 5's inner/outer consistency check rejects.
 #[must_use]
-pub fn sign_anomaly_library_envelope(
-    payload: &AnomalyLibraryPayload,
-    key: &SigningKey,
-) -> Vec<u8> {
+pub fn sign_anomaly_library_envelope(payload: &AnomalyLibraryPayload, key: &SigningKey) -> Vec<u8> {
     sign_anomaly_library_envelope_raw(
         cbor_encode_anomaly_payload(payload),
         FIXTURE_ANOMALY_KID,
@@ -694,10 +691,8 @@ pub fn shared_anomaly_artifacts() -> &'static SharedAnomalyArtifacts {
     POOL.get_or_init(|| {
         let key = fixture_anomaly_signing_key();
 
-        let minimum_library = sign_anomaly_library_envelope(
-            &minimum_anomaly_library_payload(),
-            &key,
-        );
+        let minimum_library =
+            sign_anomaly_library_envelope(&minimum_anomaly_library_payload(), &key);
 
         let empty_payload = AnomalyLibraryPayload {
             abi_version: ANOMALY_LIBRARY_ABI_VERSION,

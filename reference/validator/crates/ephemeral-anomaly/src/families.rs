@@ -47,11 +47,8 @@
 /// referenced in the conformance corpus; Session-2 scope keeps this
 /// to the three canonical members and leaves room for later
 /// additions under an ABI-version bump.
-pub const IAM_ATTACH_VERBS: &[&str] = &[
-    "attachrolepolicy",
-    "attachuserpolicy",
-    "attachgrouppolicy",
-];
+pub const IAM_ATTACH_VERBS: &[&str] =
+    &["attachrolepolicy", "attachuserpolicy", "attachgrouppolicy"];
 
 /// Destructive-verb family covering destroy/drop/truncate/rotate
 /// semantics.  Targeted by
@@ -59,7 +56,14 @@ pub const IAM_ATTACH_VERBS: &[&str] = &[
 /// indirectly by `vault-rotate-storm` and `delete-storm` companion
 /// slow-burn patterns.
 pub const DESTRUCTIVE_VERBS: &[&str] = &[
-    "delete", "destroy", "drop", "truncate", "purge", "rotate", "revoke", "forceremove",
+    "delete",
+    "destroy",
+    "drop",
+    "truncate",
+    "purge",
+    "rotate",
+    "revoke",
+    "forceremove",
 ];
 
 /// Read-only verb family — the negative filter for
@@ -72,9 +76,7 @@ pub const DESTRUCTIVE_VERBS: &[&str] = &[
 /// Keep this list CONSERVATIVE.  New read-only candidates require
 /// an ABI-version bump precisely because adding a verb here is a
 /// detection-relaxation.
-pub const READ_ONLY_VERBS: &[&str] = &[
-    "get", "list", "describe", "read", "head", "peek", "exists",
-];
+pub const READ_ONLY_VERBS: &[&str] = &["get", "list", "describe", "read", "head", "peek", "exists"];
 
 /// Resolve a family name to its canonical verb slice, or `None` if
 /// the name is not a registered family.  Session 2 callers are

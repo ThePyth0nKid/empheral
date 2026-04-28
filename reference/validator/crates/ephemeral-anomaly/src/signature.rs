@@ -96,8 +96,8 @@ use ephemeral_crypto::{verify_cose_sign1_with_cap, AnchorRole, TrustAnchorSet};
 
 use crate::errors::{sanitize_log_string, AnomalyLibError};
 use crate::invariants::{
-    check_firing_rule_companions, check_pattern_id_uniqueness,
-    check_severity_action_consistency, check_verb_families_known,
+    check_firing_rule_companions, check_pattern_id_uniqueness, check_severity_action_consistency,
+    check_verb_families_known,
 };
 use crate::ledger::{AnomalyLedger, LedgerError};
 use crate::patterns::PatternEntry;
@@ -611,12 +611,7 @@ mod tests {
         out
     }
 
-    fn build_sign1(
-        inner_payload_bytes: Vec<u8>,
-        kid: &str,
-        aad: &[u8],
-        seed: [u8; 32],
-    ) -> Vec<u8> {
+    fn build_sign1(inner_payload_bytes: Vec<u8>, kid: &str, aad: &[u8], seed: [u8; 32]) -> Vec<u8> {
         let sk = signing_key(seed);
         let protected = HeaderBuilder::new()
             .algorithm(iana::Algorithm::EdDSA)
@@ -644,7 +639,12 @@ mod tests {
             expires_at: T_EXPIRES,
             patterns: Vec::new(),
         };
-        build_sign1(encode_payload(&payload), TEST_KID, ANOMALY_LIBRARY_AAD, SEED)
+        build_sign1(
+            encode_payload(&payload),
+            TEST_KID,
+            ANOMALY_LIBRARY_AAD,
+            SEED,
+        )
     }
 
     #[test]
@@ -684,13 +684,8 @@ mod tests {
         set.insert(anchor).unwrap();
 
         let cose = happy_envelope();
-        let err = verify_anomaly_library_signature(
-            &cose,
-            &set,
-            ANOMALY_LIBRARY_ABI_VERSION,
-            T_NOW,
-        )
-        .unwrap_err();
+        let err = verify_anomaly_library_signature(&cose, &set, ANOMALY_LIBRARY_ABI_VERSION, T_NOW)
+            .unwrap_err();
         assert_eq!(err, AnomalyLibError::CoseVerifyFailed);
     }
 
@@ -1039,13 +1034,8 @@ mod tests {
         let inner = encode_payload(&payload);
         let cose = build_sign1(inner, &big_kid, ANOMALY_LIBRARY_AAD, SEED);
 
-        let err = verify_anomaly_library_signature(
-            &cose,
-            &set,
-            ANOMALY_LIBRARY_ABI_VERSION,
-            T_NOW,
-        )
-        .unwrap_err();
+        let err = verify_anomaly_library_signature(&cose, &set, ANOMALY_LIBRARY_ABI_VERSION, T_NOW)
+            .unwrap_err();
         assert_eq!(err, AnomalyLibError::PayloadDecodeFailed);
     }
 
@@ -1099,13 +1089,8 @@ mod tests {
         let inner = encode_payload(&payload);
         let cose = build_sign1(inner, &max_kid, ANOMALY_LIBRARY_AAD, SEED);
 
-        let out = verify_anomaly_library_signature(
-            &cose,
-            &set,
-            ANOMALY_LIBRARY_ABI_VERSION,
-            T_NOW,
-        )
-        .expect("max-length kid must accept at boundary");
+        let out = verify_anomaly_library_signature(&cose, &set, ANOMALY_LIBRARY_ABI_VERSION, T_NOW)
+            .expect("max-length kid must accept at boundary");
         assert_eq!(out.signer_kid.len(), MAX_INNER_KID_BYTES);
         // Byte-identical to the input — guards against a future cap
         // divergence between MAX_INNER_KID_BYTES and
@@ -1529,7 +1514,12 @@ mod tests {
             expires_at: T_EXPIRES,
             patterns,
         };
-        build_sign1(encode_payload(&payload), TEST_KID, ANOMALY_LIBRARY_AAD, SEED)
+        build_sign1(
+            encode_payload(&payload),
+            TEST_KID,
+            ANOMALY_LIBRARY_AAD,
+            SEED,
+        )
     }
 
     #[test]
@@ -1824,9 +1814,9 @@ mod tests {
         bad.firing_rule = FiringRule::FirstMatch; // 7d upper half
         bad.window_seconds = Some(300); // short window → needs companion
         bad.firing_rule_companions = vec![]; // 7d lower half
-        // Duplicate the row to synthesise 7a on top of the other
-        // three faults.  Both rows carry identical `pattern_id`
-        // "delete-storm", so uniqueness fails on the second insert.
+                                             // Duplicate the row to synthesise 7a on top of the other
+                                             // three faults.  Both rows carry identical `pattern_id`
+                                             // "delete-storm", so uniqueness fails on the second insert.
         let dup = bad.clone();
         let cose = envelope_with_patterns(vec![bad, dup]);
         let err = verify_anomaly_library_signature(
@@ -1871,7 +1861,12 @@ mod tests {
             expires_at: T_EXPIRES,
             patterns: Vec::new(),
         };
-        build_sign1(encode_payload(&payload), TEST_KID, ANOMALY_LIBRARY_AAD, SEED)
+        build_sign1(
+            encode_payload(&payload),
+            TEST_KID,
+            ANOMALY_LIBRARY_AAD,
+            SEED,
+        )
     }
 
     #[test]

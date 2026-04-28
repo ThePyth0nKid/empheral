@@ -62,9 +62,9 @@ use ephemeral_anomaly::{
     test_fixtures::{
         cbor_encode_anomaly_payload, fixture_anomaly_signing_key,
         fixture_anomaly_verifying_key_bytes, minimum_anomaly_library_payload,
-        shared_anomaly_artifacts, sign_anomaly_library_envelope,
-        sign_anomaly_library_envelope_raw, FIXTURE_ANOMALY_EXPIRES_AT,
-        FIXTURE_ANOMALY_ISSUED_AT, FIXTURE_ANOMALY_KID, FIXTURE_ANOMALY_LIBRARY_ID,
+        shared_anomaly_artifacts, sign_anomaly_library_envelope, sign_anomaly_library_envelope_raw,
+        FIXTURE_ANOMALY_EXPIRES_AT, FIXTURE_ANOMALY_ISSUED_AT, FIXTURE_ANOMALY_KID,
+        FIXTURE_ANOMALY_LIBRARY_ID,
     },
     verify_anomaly_library_signature, ANOMALY_LIBRARY_AAD, ANOMALY_LIBRARY_ABI_VERSION,
 };
@@ -116,7 +116,11 @@ fn shared_minimum_library_verifies_through_public_api() {
     )
     .expect("shared MINIMUM library must verify end-to-end");
 
-    assert_eq!(out.patterns.len(), 15, "MINIMUM library must carry 15 patterns");
+    assert_eq!(
+        out.patterns.len(),
+        15,
+        "MINIMUM library must carry 15 patterns"
+    );
     assert_eq!(out.library_id, FIXTURE_ANOMALY_LIBRARY_ID);
     assert_eq!(out.signer_kid, FIXTURE_ANOMALY_KID);
     assert_eq!(out.abi_version, ANOMALY_LIBRARY_ABI_VERSION);

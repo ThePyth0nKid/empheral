@@ -17,14 +17,24 @@
 //! ingestion + dispatch + dedup bookkeeping, which keeps that file
 //! under the 400-line soft cap the project style prefers.
 //!
-//! # Fire-once dedup model (plan §5)
+//! # Fire-once dedup model (plan §5; Commit D upgrade)
 //!
-//! Evaluators are READ-ONLY with respect to
-//! [`crate::state::DetectorState::last_fired_at`] — [`is_fire_suppressed`]
-//! looks up the dedup key and short-circuits the evaluator when the
-//! key is still inside its dedup window.  The actual INSERT of a
-//! fresh fire into `last_fired_at` lives in the dispatch layer so
-//! evaluators cannot accidentally double-record or skip recording.
+//! Evaluators are READ-ONLY with respect to the
+//! [`crate::dedup_ledger::DedupLedger`] backend held by
+//! [`crate::state::DetectorState`] — [`is_fire_suppressed`] dispatches
+//! [`crate::dedup_ledger::DedupLedger::is_suppressed`] and short-circuits
+//! the evaluator when the `(pattern_id, mandate_id)` pair is still
+//! inside its dedup window.  The actual `observe(...)` call that
+//! records a fresh fire lives in the dispatch layer
+//! ([`crate::state::DetectorState::evaluate_all`]) so evaluators
+//! cannot accidentally double-record or skip recording.
+//!
+//! Commit D widened the dedup surface from an inline
+//! `BTreeMap<(pattern_id, mandate_id), fired_at>` to a swappable trait
+//! (`Box<dyn DedupLedger>`); evaluators forward backend `Result`s via
+//! `?` so a persistent backend's I/O failure surfaces at
+//! [`crate::orchestrator::AuditOrchestrator::observe_event`] rather
+//! than silently drop the suppression check.
 //!
 //! Dedup window selection:
 //! - Windowed patterns use `pattern.window_seconds`.  The §3.5.4
@@ -47,16 +57,17 @@
 //! is downstream (Commit B `audit.rs`) and MUST route through
 //! [`crate::errors::sanitize_log_string`].
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
+use crate::dedup_ledger::{DedupLedger, DedupLedgerError};
 use crate::event::CanonicalizedEvent;
 use crate::fire::{AnomalyFire, MatchScope};
 use crate::patterns::{FiringRule, PatternEntry, Threshold};
 use crate::scope::{ScopePredicate, VerbPredicate};
 use crate::state::{PatternBuffer, ScopeBucketKey, FALLBACK_FIRE_ONCE_WINDOW_SECONDS};
 
-/// Returns `true` iff this pattern has already fired for the given
-/// bucket within its dedup window and should be suppressed.
+/// Returns `Ok(true)` iff this pattern has already fired for the
+/// given bucket within its dedup window and should be suppressed.
 ///
 /// Key = `(pattern_id, mandate_id)` — the 5-A bucketing granularity.
 /// Dedup window = `pattern.window_seconds` for windowed patterns,
@@ -66,20 +77,27 @@ use crate::state::{PatternBuffer, ScopeBucketKey, FALLBACK_FIRE_ONCE_WINDOW_SECO
 /// is at `current_time - window`; `saturating_sub` returns `window`
 /// which is NOT `< window`).  This keeps dedup and sliding-window
 /// eviction symmetric — the same boundary applies to both.
+///
+/// # Errors
+///
+/// Forwards any error raised by the underlying
+/// [`DedupLedger::is_suppressed`] call (persistent backends only;
+/// the in-memory default is infallible on this path).
 pub(crate) fn is_fire_suppressed(
     pattern: &PatternEntry,
     bucket_key: &ScopeBucketKey,
     current_time: i64,
-    last_fired_at: &BTreeMap<(String, String), i64>,
-) -> bool {
-    let key = (pattern.pattern_id.clone(), bucket_key.mandate_id.clone());
-    let Some(&fired_at) = last_fired_at.get(&key) else {
-        return false;
-    };
+    dedup: &dyn DedupLedger,
+) -> Result<bool, DedupLedgerError> {
     let window = pattern
         .window_seconds
         .unwrap_or(FALLBACK_FIRE_ONCE_WINDOW_SECONDS);
-    current_time.saturating_sub(fired_at) < i64::from(window)
+    dedup.is_suppressed(
+        &pattern.pattern_id,
+        &bucket_key.mandate_id,
+        current_time,
+        window,
+    )
 }
 
 /// Build the [`AnomalyFire`] DTO for a pattern firing in a given
@@ -237,33 +255,37 @@ fn build_match_scope(
 /// [`is_fire_suppressed`] gates the evaluator: if the pattern has
 /// fired for this bucket within the last `window_seconds`, the
 /// evaluator returns `None` even when the counter still crosses the
-/// threshold.  The dispatch layer (not this function) inserts the
-/// fresh fire into `last_fired_at` on a successful return.
+/// threshold.  The dispatch layer (not this function) calls
+/// [`crate::dedup_ledger::DedupLedger::observe`] with the fresh fire
+/// on a successful return.
 ///
 /// # Returns
 ///
-/// - `Some(AnomalyFire)` when the threshold is crossed AND dedup
+/// - `Ok(Some(AnomalyFire))` when the threshold is crossed AND dedup
 ///   does not suppress.
-/// - `None` otherwise (threshold not met, dedup-suppressed, wrong
+/// - `Ok(None)` otherwise (threshold not met, dedup-suppressed, wrong
 ///   firing rule / threshold shape, or the buffer is empty).
+/// - `Err(DedupLedgerError)` only if a persistent dedup backend
+///   raised an I/O failure during the suppression probe; the
+///   in-memory default is infallible on this path.
 pub(crate) fn evaluate_first_match(
     pattern: &PatternEntry,
     buffer: &PatternBuffer,
     bucket_key: &ScopeBucketKey,
     library_version: u64,
     current_time: i64,
-    last_fired_at: &BTreeMap<(String, String), i64>,
-) -> Option<AnomalyFire> {
+    dedup: &dyn DedupLedger,
+) -> Result<Option<AnomalyFire>, DedupLedgerError> {
     // Gate 1: firing-rule shape.  `FirstMatch` only.
     if !matches!(pattern.firing_rule, FiringRule::FirstMatch) {
-        return None;
+        return Ok(None);
     }
 
-    // Gate 2: dedup — cheap O(log n) BTreeMap lookup.  Runs BEFORE
-    // the threshold walk so a suppressed bucket skips the potentially
-    // O(n) DistinctCount scan entirely.
-    if is_fire_suppressed(pattern, bucket_key, current_time, last_fired_at) {
-        return None;
+    // Gate 2: dedup probe.  Runs BEFORE the threshold walk so a
+    // suppressed bucket skips the potentially O(n) DistinctCount scan
+    // entirely.  `?` forwards backend I/O failures.
+    if is_fire_suppressed(pattern, bucket_key, current_time, dedup)? {
+        return Ok(None);
     }
 
     // Gate 3: threshold.  `Count(_)` is the buffer length (saturating
@@ -273,29 +295,28 @@ pub(crate) fn evaluate_first_match(
     // shapes (Sequence, ChainDepth) pair with different firing rules
     // and fall through defensively.
     let (count, threshold) = match pattern.threshold {
-        Threshold::Count(n) => (
-            u32::try_from(buffer.events.len()).unwrap_or(u32::MAX),
-            n,
-        ),
+        Threshold::Count(n) => (u32::try_from(buffer.events.len()).unwrap_or(u32::MAX), n),
         Threshold::DistinctCount(n) => (count_distinct_resource_refs(buffer), n),
-        _ => return None,
+        _ => return Ok(None),
     };
     if count < threshold {
-        return None;
+        return Ok(None);
     }
 
     // Sample event for MatchScope projection.  Most recent event
     // anchors the downstream `event_id` for audit correlation.  A
     // threshold crossing with an empty buffer is contradictory (the
     // count check would have returned None), but we guard defensively
-    // via `?`.
-    let sample = buffer.events.back()?;
-    Some(build_anomaly_fire(
+    // via the `let-else` so the absence is explicit.
+    let Some(sample) = buffer.events.back() else {
+        return Ok(None);
+    };
+    Ok(Some(build_anomaly_fire(
         pattern,
         bucket_key,
         library_version,
         sample,
-    ))
+    )))
 }
 
 /// SequenceMatch evaluator (§3.5.3): fires when `completions ≥
@@ -337,16 +358,16 @@ pub(crate) fn evaluate_sequence_match(
     bucket_key: &ScopeBucketKey,
     library_version: u64,
     current_time: i64,
-    last_fired_at: &BTreeMap<(String, String), i64>,
-) -> Option<AnomalyFire> {
+    dedup: &dyn DedupLedger,
+) -> Result<Option<AnomalyFire>, DedupLedgerError> {
     if !matches!(pattern.firing_rule, FiringRule::SequenceMatch) {
-        return None;
+        return Ok(None);
     }
     let Threshold::Sequence(threshold) = pattern.threshold else {
-        return None;
+        return Ok(None);
     };
-    if is_fire_suppressed(pattern, bucket_key, current_time, last_fired_at) {
-        return None;
+    if is_fire_suppressed(pattern, bucket_key, current_time, dedup)? {
+        return Ok(None);
     }
 
     let completions = match &pattern.scope {
@@ -357,29 +378,26 @@ pub(crate) fn evaluate_sequence_match(
             silence_seconds,
             burst_seconds,
             burst_threshold,
-        } => count_silence_then_burst(
-            buffer,
-            *silence_seconds,
-            *burst_seconds,
-            *burst_threshold,
-        ),
+        } => count_silence_then_burst(buffer, *silence_seconds, *burst_seconds, *burst_threshold),
         // Other predicates have no sequence semantic.  Stage-7
         // invariants forbid pairing them with SequenceMatch at the
         // library layer; this arm is defense-in-depth.
-        _ => return None,
+        _ => return Ok(None),
     };
 
     if completions < threshold {
-        return None;
+        return Ok(None);
     }
 
-    let sample = buffer.events.back()?;
-    Some(build_anomaly_fire(
+    let Some(sample) = buffer.events.back() else {
+        return Ok(None);
+    };
+    Ok(Some(build_anomaly_fire(
         pattern,
         bucket_key,
         library_version,
         sample,
-    ))
+    )))
 }
 
 /// Count completed tier-progression traversals across the buffered
@@ -453,11 +471,8 @@ fn count_silence_then_burst(
     let mut completions = 0_u32;
     let mut i = 0_usize;
     while i + needed <= events.len() {
-        let silence_ok = i == 0
-            || events[i]
-                .timestamp
-                .saturating_sub(events[i - 1].timestamp)
-                >= silence;
+        let silence_ok =
+            i == 0 || events[i].timestamp.saturating_sub(events[i - 1].timestamp) >= silence;
         if !silence_ok {
             i += 1;
             continue;
@@ -503,13 +518,13 @@ pub(crate) fn evaluate_cumulative_over_baseline(
     bucket_key: &ScopeBucketKey,
     library_version: u64,
     current_time: i64,
-    last_fired_at: &BTreeMap<(String, String), i64>,
-) -> Option<AnomalyFire> {
+    dedup: &dyn DedupLedger,
+) -> Result<Option<AnomalyFire>, DedupLedgerError> {
     if !matches!(pattern.firing_rule, FiringRule::CumulativeOverBaseline) {
-        return None;
+        return Ok(None);
     }
-    if is_fire_suppressed(pattern, bucket_key, current_time, last_fired_at) {
-        return None;
+    if is_fire_suppressed(pattern, bucket_key, current_time, dedup)? {
+        return Ok(None);
     }
 
     let (count, threshold) = match pattern.threshold {
@@ -519,19 +534,21 @@ pub(crate) fn evaluate_cumulative_over_baseline(
         }
         Threshold::DistinctCount(n) => (count_distinct_resource_refs(buffer), n),
         // Sequence / ChainDepth do not pair with CumulativeOverBaseline.
-        _ => return None,
+        _ => return Ok(None),
     };
     if count < threshold {
-        return None;
+        return Ok(None);
     }
 
-    let sample = buffer.events.back()?;
-    Some(build_anomaly_fire(
+    let Some(sample) = buffer.events.back() else {
+        return Ok(None);
+    };
+    Ok(Some(build_anomaly_fire(
         pattern,
         bucket_key,
         library_version,
         sample,
-    ))
+    )))
 }
 
 /// Count the number of distinct `resource_ref` values across the
@@ -555,9 +572,81 @@ mod tests {
 
     use std::collections::VecDeque;
 
+    use crate::dedup_ledger::InMemoryDedupLedger;
     use crate::event::Outcome;
     use crate::patterns::{Action, FiringRule, PatternEntry, Severity, Threshold};
     use crate::scope::{MandateScope, ScopePredicate, VerbPredicate};
+
+    /// Test-helper wrappers that unwrap the evaluator `Result` arm
+    /// before returning the inner `Option<AnomalyFire>`.  All evaluator
+    /// tests in this module exercise the in-memory dedup ledger which
+    /// is infallible on every code path; a backend error here is a
+    /// regression and should panic.  Centralising the unwrap keeps the
+    /// per-test bodies focused on the semantic assertion.
+    fn first_match(
+        pattern: &PatternEntry,
+        buffer: &PatternBuffer,
+        bucket_key: &ScopeBucketKey,
+        library_version: u64,
+        current_time: i64,
+        dedup: &dyn DedupLedger,
+    ) -> Option<AnomalyFire> {
+        evaluate_first_match(
+            pattern,
+            buffer,
+            bucket_key,
+            library_version,
+            current_time,
+            dedup,
+        )
+        .expect("in-memory dedup ledger is infallible in tests")
+    }
+
+    fn sequence_match(
+        pattern: &PatternEntry,
+        buffer: &PatternBuffer,
+        bucket_key: &ScopeBucketKey,
+        library_version: u64,
+        current_time: i64,
+        dedup: &dyn DedupLedger,
+    ) -> Option<AnomalyFire> {
+        evaluate_sequence_match(
+            pattern,
+            buffer,
+            bucket_key,
+            library_version,
+            current_time,
+            dedup,
+        )
+        .expect("in-memory dedup ledger is infallible in tests")
+    }
+
+    fn cumulative(
+        pattern: &PatternEntry,
+        buffer: &PatternBuffer,
+        bucket_key: &ScopeBucketKey,
+        library_version: u64,
+        current_time: i64,
+        dedup: &dyn DedupLedger,
+    ) -> Option<AnomalyFire> {
+        evaluate_cumulative_over_baseline(
+            pattern,
+            buffer,
+            bucket_key,
+            library_version,
+            current_time,
+            dedup,
+        )
+        .expect("in-memory dedup ledger is infallible in tests")
+    }
+
+    /// Convenience: an empty in-memory dedup ledger ready to be
+    /// passed by reference.  Tests that need to seed prior fires use
+    /// `let mut d = InMemoryDedupLedger::new(); d.observe(...).unwrap();`
+    /// directly.
+    fn empty_dedup() -> InMemoryDedupLedger {
+        InMemoryDedupLedger::new()
+    }
 
     /// Local evaluator-test fixture for `delete-storm`.
     ///
@@ -627,11 +716,8 @@ mod tests {
         };
         #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
         for i in 0..n {
-            buf.events.push_back(base_event(
-                &format!("e-{i}"),
-                "m-42",
-                base_ts + (i as i64),
-            ));
+            buf.events
+                .push_back(base_event(&format!("e-{i}"), "m-42", base_ts + (i as i64)));
         }
         buf
     }
@@ -647,8 +733,8 @@ mod tests {
         pattern.firing_rule = FiringRule::SequenceMatch;
         let buffer = buffer_with(&pattern.pattern_id, 10, 1_700_000_000);
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
-        let last_fired = BTreeMap::new();
-        let out = evaluate_first_match(&pattern, &buffer, &key, 1, 1_700_000_100, &last_fired);
+        let dedup = empty_dedup();
+        let out = first_match(&pattern, &buffer, &key, 1, 1_700_000_100, &dedup);
         assert!(out.is_none());
     }
 
@@ -663,8 +749,8 @@ mod tests {
         pattern.threshold = Threshold::Sequence(1);
         let buffer = buffer_with(&pattern.pattern_id, 10, 1_700_000_000);
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
-        let last_fired = BTreeMap::new();
-        let out = evaluate_first_match(&pattern, &buffer, &key, 1, 1_700_000_100, &last_fired);
+        let dedup = empty_dedup();
+        let out = first_match(&pattern, &buffer, &key, 1, 1_700_000_100, &dedup);
         assert!(out.is_none());
     }
 
@@ -676,8 +762,8 @@ mod tests {
         let pattern = delete_storm_pattern();
         let buffer = buffer_with(&pattern.pattern_id, 5, 1_700_000_000);
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
-        let last_fired = BTreeMap::new();
-        let out = evaluate_first_match(&pattern, &buffer, &key, 42, 1_700_000_100, &last_fired);
+        let dedup = empty_dedup();
+        let out = first_match(&pattern, &buffer, &key, 42, 1_700_000_100, &dedup);
         let fire = out.expect("exactly-at-threshold MUST fire");
         assert_eq!(fire.pattern_id, "delete-storm");
         assert_eq!(fire.library_version, 42);
@@ -690,8 +776,8 @@ mod tests {
         let pattern = delete_storm_pattern();
         let buffer = buffer_with(&pattern.pattern_id, 4, 1_700_000_000);
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
-        let last_fired = BTreeMap::new();
-        let out = evaluate_first_match(&pattern, &buffer, &key, 1, 1_700_000_100, &last_fired);
+        let dedup = empty_dedup();
+        let out = first_match(&pattern, &buffer, &key, 1, 1_700_000_100, &dedup);
         assert!(out.is_none());
     }
 
@@ -701,8 +787,8 @@ mod tests {
         let pattern = delete_storm_pattern();
         let buffer = buffer_with(&pattern.pattern_id, 6, 1_700_000_000);
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
-        let last_fired = BTreeMap::new();
-        let out = evaluate_first_match(&pattern, &buffer, &key, 1, 1_700_000_100, &last_fired);
+        let dedup = empty_dedup();
+        let out = first_match(&pattern, &buffer, &key, 1, 1_700_000_100, &dedup);
         assert!(out.is_some());
     }
 
@@ -714,8 +800,8 @@ mod tests {
         let pattern = delete_storm_pattern();
         let buffer = buffer_with(&pattern.pattern_id, 0, 1_700_000_000);
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
-        let last_fired = BTreeMap::new();
-        let out = evaluate_first_match(&pattern, &buffer, &key, 1, 1_700_000_100, &last_fired);
+        let dedup = empty_dedup();
+        let out = first_match(&pattern, &buffer, &key, 1, 1_700_000_100, &dedup);
         assert!(out.is_none());
     }
 
@@ -729,12 +815,11 @@ mod tests {
         let pattern = delete_storm_pattern();
         let buffer = buffer_with(&pattern.pattern_id, 10, 1_700_000_000);
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
-        let mut last_fired = BTreeMap::new();
-        last_fired.insert(
-            ("delete-storm".to_string(), "m-42".to_string()),
-            1_700_000_070,
-        );
-        let out = evaluate_first_match(&pattern, &buffer, &key, 1, 1_700_000_100, &last_fired);
+        let mut dedup = empty_dedup();
+        dedup
+            .observe("delete-storm", "m-42", 1_700_000_070)
+            .unwrap();
+        let out = first_match(&pattern, &buffer, &key, 1, 1_700_000_100, &dedup);
         assert!(out.is_none(), "dedup MUST suppress re-fire");
     }
 
@@ -746,12 +831,11 @@ mod tests {
         let pattern = delete_storm_pattern();
         let buffer = buffer_with(&pattern.pattern_id, 10, 1_700_000_000);
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
-        let mut last_fired = BTreeMap::new();
-        last_fired.insert(
-            ("delete-storm".to_string(), "m-42".to_string()),
-            1_700_000_040,
-        );
-        let out = evaluate_first_match(&pattern, &buffer, &key, 1, 1_700_000_100, &last_fired);
+        let mut dedup = empty_dedup();
+        dedup
+            .observe("delete-storm", "m-42", 1_700_000_040)
+            .unwrap();
+        let out = first_match(&pattern, &buffer, &key, 1, 1_700_000_100, &dedup);
         assert!(out.is_some(), "boundary-of-window MUST allow re-fire");
     }
 
@@ -762,13 +846,11 @@ mod tests {
         let pattern = delete_storm_pattern();
         let buffer_99 = buffer_with(&pattern.pattern_id, 10, 1_700_000_000);
         let key_99 = bucket_key_for(&pattern.pattern_id, "m-99");
-        let mut last_fired = BTreeMap::new();
-        last_fired.insert(
-            ("delete-storm".to_string(), "m-42".to_string()),
-            1_700_000_070,
-        );
-        let out =
-            evaluate_first_match(&pattern, &buffer_99, &key_99, 1, 1_700_000_100, &last_fired);
+        let mut dedup = empty_dedup();
+        dedup
+            .observe("delete-storm", "m-42", 1_700_000_070)
+            .unwrap();
+        let out = first_match(&pattern, &buffer_99, &key_99, 1, 1_700_000_100, &dedup);
         assert!(out.is_some());
     }
 
@@ -788,9 +870,9 @@ mod tests {
         let pattern = delete_storm_pattern();
         let buffer = buffer_with(&pattern.pattern_id, 5, 1_700_000_000);
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
-        let last_fired = BTreeMap::new();
-        let fire = evaluate_first_match(&pattern, &buffer, &key, 1, 1_700_000_100, &last_fired)
-            .expect("should fire");
+        let dedup = empty_dedup();
+        let fire =
+            first_match(&pattern, &buffer, &key, 1, 1_700_000_100, &dedup).expect("should fire");
         assert_eq!(fire.match_scope.mandate_id.as_deref(), Some("m-42"));
         assert_eq!(fire.match_scope.verb.as_deref(), Some("delete"));
         assert_eq!(fire.match_scope.resource_kind.as_deref(), Some("pod"));
@@ -812,10 +894,13 @@ mod tests {
         };
         let buffer = buffer_with(&pattern.pattern_id, 5, 1_700_000_000);
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
-        let last_fired = BTreeMap::new();
-        let fire = evaluate_first_match(&pattern, &buffer, &key, 1, 1_700_000_100, &last_fired)
-            .expect("should fire");
-        assert!(fire.match_scope.verb.is_none(), "family predicate MUST NOT pin a specific verb");
+        let dedup = empty_dedup();
+        let fire =
+            first_match(&pattern, &buffer, &key, 1, 1_700_000_100, &dedup).expect("should fire");
+        assert!(
+            fire.match_scope.verb.is_none(),
+            "family predicate MUST NOT pin a specific verb"
+        );
         assert_eq!(fire.match_scope.resource_kind.as_deref(), Some("pod"));
     }
 
@@ -837,9 +922,9 @@ mod tests {
         };
         let buffer = buffer_with(&pattern.pattern_id, 5, 1_700_000_000);
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
-        let last_fired = BTreeMap::new();
-        let fire = evaluate_first_match(&pattern, &buffer, &key, 1, 1_700_000_100, &last_fired)
-            .expect("should fire");
+        let dedup = empty_dedup();
+        let fire =
+            first_match(&pattern, &buffer, &key, 1, 1_700_000_100, &dedup).expect("should fire");
         assert_eq!(
             fire.match_scope.integration_ref.as_deref(),
             Some("kubernetes")
@@ -856,9 +941,9 @@ mod tests {
         let pattern = delete_storm_pattern();
         let buffer = buffer_with(&pattern.pattern_id, 5, 1_700_000_000);
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
-        let last_fired = BTreeMap::new();
-        let fire = evaluate_first_match(&pattern, &buffer, &key, 42, 1_700_000_100, &last_fired)
-            .expect("should fire");
+        let dedup = empty_dedup();
+        let fire =
+            first_match(&pattern, &buffer, &key, 42, 1_700_000_100, &dedup).expect("should fire");
         assert_eq!(fire.severity, Severity::High);
         assert_eq!(fire.firing_rule, FiringRule::FirstMatch);
         assert_eq!(fire.library_version, 42);
@@ -870,8 +955,9 @@ mod tests {
     fn is_fire_suppressed_returns_false_when_no_prior_fire() {
         let pattern = delete_storm_pattern();
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
-        let last_fired = BTreeMap::new();
-        assert!(!is_fire_suppressed(&pattern, &key, 1_700_000_100, &last_fired));
+        let dedup = empty_dedup();
+        assert!(!is_fire_suppressed(&pattern, &key, 1_700_000_100, &dedup)
+            .expect("in-memory dedup ledger is infallible"));
     }
 
     #[test]
@@ -882,19 +968,27 @@ mod tests {
         pattern.window_seconds = None;
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
 
-        let mut last_fired = BTreeMap::new();
-        last_fired.insert(
-            ("delete-storm".to_string(), "m-42".to_string()),
-            1_700_000_100 - 1799,
-        );
-        assert!(is_fire_suppressed(&pattern, &key, 1_700_000_100, &last_fired));
+        let mut dedup = empty_dedup();
+        dedup
+            .observe("delete-storm", "m-42", 1_700_000_100 - 1799)
+            .unwrap();
+        assert!(is_fire_suppressed(&pattern, &key, 1_700_000_100, &dedup)
+            .expect("in-memory dedup ledger is infallible"));
 
-        last_fired.insert(
-            ("delete-storm".to_string(), "m-42".to_string()),
-            1_700_000_100 - i64::from(FALLBACK_FIRE_ONCE_WINDOW_SECONDS),
-        );
+        // Overwrite the prior bookmark to land exactly at the fallback
+        // window boundary; in-memory `observe` overwrites in place, so
+        // this matches the BTreeMap::insert semantics the original test
+        // relied on.
+        dedup
+            .observe(
+                "delete-storm",
+                "m-42",
+                1_700_000_100 - i64::from(FALLBACK_FIRE_ONCE_WINDOW_SECONDS),
+            )
+            .unwrap();
         assert!(
-            !is_fire_suppressed(&pattern, &key, 1_700_000_100, &last_fired),
+            !is_fire_suppressed(&pattern, &key, 1_700_000_100, &dedup)
+                .expect("in-memory dedup ledger is infallible"),
             "exactly-at-window MUST NOT suppress (strict `<`)"
         );
     }
@@ -946,12 +1040,7 @@ mod tests {
 
     /// Build a PatternBuffer where each event `i` has tier=`tiers[i]`
     /// and timestamp=`base_ts + i * spacing`.
-    fn tiered_buffer(
-        pattern_id: &str,
-        tiers: &[u8],
-        base_ts: i64,
-        spacing: i64,
-    ) -> PatternBuffer {
+    fn tiered_buffer(pattern_id: &str, tiers: &[u8], base_ts: i64, spacing: i64) -> PatternBuffer {
         let mut buf = PatternBuffer {
             pattern_id: pattern_id.into(),
             events: VecDeque::new(),
@@ -977,7 +1066,8 @@ mod tests {
             sequence_tracker: None,
         };
         for (i, &ts) in timestamps.iter().enumerate() {
-            buf.events.push_back(base_event(&format!("e-{i}"), "m-42", ts));
+            buf.events
+                .push_back(base_event(&format!("e-{i}"), "m-42", ts));
         }
         buf
     }
@@ -990,9 +1080,8 @@ mod tests {
         pattern.firing_rule = FiringRule::FirstMatch;
         let buffer = tiered_buffer(&pattern.pattern_id, &[0, 2, 3], 1_700_000_000, 10);
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
-        let last_fired = BTreeMap::new();
-        let out =
-            evaluate_sequence_match(&pattern, &buffer, &key, 1, 1_700_000_100, &last_fired);
+        let dedup = empty_dedup();
+        let out = sequence_match(&pattern, &buffer, &key, 1, 1_700_000_100, &dedup);
         assert!(out.is_none());
     }
 
@@ -1002,9 +1091,8 @@ mod tests {
         pattern.threshold = Threshold::Count(5);
         let buffer = tiered_buffer(&pattern.pattern_id, &[0, 2, 3], 1_700_000_000, 10);
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
-        let last_fired = BTreeMap::new();
-        let out =
-            evaluate_sequence_match(&pattern, &buffer, &key, 1, 1_700_000_100, &last_fired);
+        let dedup = empty_dedup();
+        let out = sequence_match(&pattern, &buffer, &key, 1, 1_700_000_100, &dedup);
         assert!(out.is_none());
     }
 
@@ -1020,9 +1108,8 @@ mod tests {
         };
         let buffer = tiered_buffer(&pattern.pattern_id, &[0, 2, 3], 1_700_000_000, 10);
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
-        let last_fired = BTreeMap::new();
-        let out =
-            evaluate_sequence_match(&pattern, &buffer, &key, 1, 1_700_000_100, &last_fired);
+        let dedup = empty_dedup();
+        let out = sequence_match(&pattern, &buffer, &key, 1, 1_700_000_100, &dedup);
         assert!(out.is_none());
     }
 
@@ -1035,8 +1122,8 @@ mod tests {
         let pattern = cross_tier_sequence_pattern(vec![0, 2, 3], 1);
         let buffer = tiered_buffer(&pattern.pattern_id, &[0, 2, 3], 1_700_000_000, 10);
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
-        let last_fired = BTreeMap::new();
-        let fire = evaluate_sequence_match(&pattern, &buffer, &key, 1, 1_700_000_100, &last_fired)
+        let dedup = empty_dedup();
+        let fire = sequence_match(&pattern, &buffer, &key, 1, 1_700_000_100, &dedup)
             .expect("ordered progression MUST fire at threshold=1");
         assert_eq!(fire.pattern_id, "cross-tier-escalation");
         assert_eq!(fire.firing_rule, FiringRule::SequenceMatch);
@@ -1048,9 +1135,8 @@ mod tests {
         let pattern = cross_tier_sequence_pattern(vec![0, 2, 3], 1);
         let buffer = tiered_buffer(&pattern.pattern_id, &[0, 2, 1], 1_700_000_000, 10);
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
-        let last_fired = BTreeMap::new();
-        let out =
-            evaluate_sequence_match(&pattern, &buffer, &key, 1, 1_700_000_100, &last_fired);
+        let dedup = empty_dedup();
+        let out = sequence_match(&pattern, &buffer, &key, 1, 1_700_000_100, &dedup);
         assert!(out.is_none());
     }
 
@@ -1063,10 +1149,12 @@ mod tests {
         let pattern = cross_tier_sequence_pattern(vec![2, 3], 1);
         let buffer = tiered_buffer(&pattern.pattern_id, &[2, 1, 1, 3], 1_700_000_000, 10);
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
-        let last_fired = BTreeMap::new();
-        let out =
-            evaluate_sequence_match(&pattern, &buffer, &key, 1, 1_700_000_100, &last_fired);
-        assert!(out.is_some(), "noise between steps MUST NOT reset the walker");
+        let dedup = empty_dedup();
+        let out = sequence_match(&pattern, &buffer, &key, 1, 1_700_000_100, &dedup);
+        assert!(
+            out.is_some(),
+            "noise between steps MUST NOT reset the walker"
+        );
     }
 
     #[test]
@@ -1075,21 +1163,13 @@ mod tests {
         let pattern = cross_tier_sequence_pattern(vec![0, 3], 2);
         let buffer = tiered_buffer(&pattern.pattern_id, &[0, 3, 0, 3], 1_700_000_000, 10);
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
-        let last_fired = BTreeMap::new();
-        let out =
-            evaluate_sequence_match(&pattern, &buffer, &key, 1, 1_700_000_100, &last_fired);
+        let dedup = empty_dedup();
+        let out = sequence_match(&pattern, &buffer, &key, 1, 1_700_000_100, &dedup);
         assert!(out.is_some());
 
         // One fewer event → only one completion → no fire.
         let buffer_short = tiered_buffer(&pattern.pattern_id, &[0, 3, 0], 1_700_000_000, 10);
-        let out_short = evaluate_sequence_match(
-            &pattern,
-            &buffer_short,
-            &key,
-            1,
-            1_700_000_100,
-            &last_fired,
-        );
+        let out_short = sequence_match(&pattern, &buffer_short, &key, 1, 1_700_000_100, &dedup);
         assert!(out_short.is_none());
     }
 
@@ -1099,9 +1179,8 @@ mod tests {
         let pattern = cross_tier_sequence_pattern(vec![], 1);
         let buffer = tiered_buffer(&pattern.pattern_id, &[0, 2, 3], 1_700_000_000, 10);
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
-        let last_fired = BTreeMap::new();
-        let out =
-            evaluate_sequence_match(&pattern, &buffer, &key, 1, 1_700_000_100, &last_fired);
+        let dedup = empty_dedup();
+        let out = sequence_match(&pattern, &buffer, &key, 1, 1_700_000_100, &dedup);
         assert!(out.is_none());
     }
 
@@ -1119,8 +1198,8 @@ mod tests {
             &[1_700_000_010, 1_700_000_011, 1_700_000_012],
         );
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
-        let last_fired = BTreeMap::new();
-        let fire = evaluate_sequence_match(&pattern, &buffer, &key, 1, 1_700_000_100, &last_fired)
+        let dedup = empty_dedup();
+        let fire = sequence_match(&pattern, &buffer, &key, 1, 1_700_000_100, &dedup)
             .expect("implicit silence before index 0 + burst MUST fire");
         assert_eq!(fire.pattern_id, "long-silence-before-burst");
     }
@@ -1134,23 +1213,11 @@ mod tests {
         let pattern = silence_then_burst_pattern(60, 10, 3);
         let buffer = timestamped_buffer(
             &pattern.pattern_id,
-            &[
-                1_700_000_000,
-                1_700_000_005,
-                1_700_000_006,
-                1_700_000_007,
-            ],
+            &[1_700_000_000, 1_700_000_005, 1_700_000_006, 1_700_000_007],
         );
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
-        let last_fired = BTreeMap::new();
-        let out = evaluate_sequence_match(
-            &pattern,
-            &buffer,
-            &key,
-            1,
-            1_700_000_100,
-            &last_fired,
-        );
+        let dedup = empty_dedup();
+        let out = sequence_match(&pattern, &buffer, &key, 1, 1_700_000_100, &dedup);
         // First burst attempt at index 0 has implicit silence but
         // only events 0+1+2=(0,5,6) span 6s; that's within burst.
         // Wait: implicit silence at index 0 + events [0, 5, 6] →
@@ -1174,14 +1241,8 @@ mod tests {
         // Scanner jumps to index 3.  Index 3 has prior event at index 2,
         // gap 1s < silence_seconds=60, so no completion there.
         // Total = 1 completion.
-        let out_contiguous = evaluate_sequence_match(
-            &pattern,
-            &buffer_no_silence,
-            &key,
-            1,
-            1_700_000_100,
-            &last_fired,
-        );
+        let out_contiguous =
+            sequence_match(&pattern, &buffer_no_silence, &key, 1, 1_700_000_100, &dedup);
         assert!(out_contiguous.is_some());
         // The first-burst already fires via implicit silence; this is
         // correct per spec.  To *actually* get no-silence-no-fire we
@@ -1192,21 +1253,9 @@ mod tests {
         // Index 2: silence = 1s → no.  Final: 0 completions → no fire.
         let buffer_fail = timestamped_buffer(
             &pattern.pattern_id,
-            &[
-                1_700_000_000,
-                1_700_000_020,
-                1_700_000_021,
-                1_700_000_022,
-            ],
+            &[1_700_000_000, 1_700_000_020, 1_700_000_021, 1_700_000_022],
         );
-        let out_fail = evaluate_sequence_match(
-            &pattern,
-            &buffer_fail,
-            &key,
-            1,
-            1_700_000_100,
-            &last_fired,
-        );
+        let out_fail = sequence_match(&pattern, &buffer_fail, &key, 1, 1_700_000_100, &dedup);
         assert!(out_fail.is_none());
         // Reference to satisfy clippy about `out` — it's the first,
         // informational call showing the shape-sensitive edge.
@@ -1223,9 +1272,8 @@ mod tests {
             &[1_700_000_010, 1_700_000_011, 1_700_000_012],
         );
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
-        let last_fired = BTreeMap::new();
-        let out =
-            evaluate_sequence_match(&pattern, &buffer, &key, 1, 1_700_000_100, &last_fired);
+        let dedup = empty_dedup();
+        let out = sequence_match(&pattern, &buffer, &key, 1, 1_700_000_100, &dedup);
         assert!(out.is_none());
     }
 
@@ -1244,9 +1292,8 @@ mod tests {
             ],
         );
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
-        let last_fired = BTreeMap::new();
-        let out =
-            evaluate_sequence_match(&pattern, &buffer, &key, 1, 1_700_000_100, &last_fired);
+        let dedup = empty_dedup();
+        let out = sequence_match(&pattern, &buffer, &key, 1, 1_700_000_100, &dedup);
         assert!(out.is_none());
     }
 
@@ -1257,19 +1304,11 @@ mod tests {
         let pattern = cross_tier_sequence_pattern(vec![0, 3], 1);
         let buffer = tiered_buffer(&pattern.pattern_id, &[0, 3], 1_700_000_000, 10);
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
-        let mut last_fired = BTreeMap::new();
-        last_fired.insert(
-            ("cross-tier-escalation".to_string(), "m-42".to_string()),
-            1_700_000_050,
-        );
-        let out = evaluate_sequence_match(
-            &pattern,
-            &buffer,
-            &key,
-            1,
-            1_700_000_100,
-            &last_fired,
-        );
+        let mut dedup = empty_dedup();
+        dedup
+            .observe("cross-tier-escalation", "m-42", 1_700_000_050)
+            .unwrap();
+        let out = sequence_match(&pattern, &buffer, &key, 1, 1_700_000_100, &dedup);
         assert!(out.is_none(), "dedup MUST suppress sequence re-fire");
     }
 
@@ -1321,7 +1360,9 @@ mod tests {
                 &format!("e-{i}"),
                 "m-42",
                 #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-                { 1_700_000_000_i64 + (i as i64) },
+                {
+                    1_700_000_000_i64 + (i as i64)
+                },
             );
             event.verb = "read".into();
             event.resource_ref = r.into();
@@ -1338,15 +1379,8 @@ mod tests {
         pattern.firing_rule = FiringRule::FirstMatch;
         let buffer = buffer_with(&pattern.pattern_id, 30, 1_700_000_000);
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
-        let last_fired = BTreeMap::new();
-        let out = evaluate_cumulative_over_baseline(
-            &pattern,
-            &buffer,
-            &key,
-            1,
-            1_700_000_100,
-            &last_fired,
-        );
+        let dedup = empty_dedup();
+        let out = cumulative(&pattern, &buffer, &key, 1, 1_700_000_100, &dedup);
         assert!(out.is_none());
     }
 
@@ -1358,15 +1392,8 @@ mod tests {
         pattern.threshold = Threshold::Sequence(1);
         let buffer = buffer_with(&pattern.pattern_id, 30, 1_700_000_000);
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
-        let last_fired = BTreeMap::new();
-        let out = evaluate_cumulative_over_baseline(
-            &pattern,
-            &buffer,
-            &key,
-            1,
-            1_700_000_100,
-            &last_fired,
-        );
+        let dedup = empty_dedup();
+        let out = cumulative(&pattern, &buffer, &key, 1, 1_700_000_100, &dedup);
         assert!(out.is_none());
     }
 
@@ -1376,15 +1403,8 @@ mod tests {
         pattern.threshold = Threshold::ChainDepth(4);
         let buffer = buffer_with(&pattern.pattern_id, 30, 1_700_000_000);
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
-        let last_fired = BTreeMap::new();
-        let out = evaluate_cumulative_over_baseline(
-            &pattern,
-            &buffer,
-            &key,
-            1,
-            1_700_000_100,
-            &last_fired,
-        );
+        let dedup = empty_dedup();
+        let out = cumulative(&pattern, &buffer, &key, 1, 1_700_000_100, &dedup);
         assert!(out.is_none());
     }
 
@@ -1395,16 +1415,9 @@ mod tests {
         let pattern = cumulative_count_pattern(10, 3600);
         let buffer = buffer_with(&pattern.pattern_id, 10, 1_700_000_000);
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
-        let last_fired = BTreeMap::new();
-        let fire = evaluate_cumulative_over_baseline(
-            &pattern,
-            &buffer,
-            &key,
-            1,
-            1_700_000_100,
-            &last_fired,
-        )
-        .expect("cumulative at-threshold MUST fire");
+        let dedup = empty_dedup();
+        let fire = cumulative(&pattern, &buffer, &key, 1, 1_700_000_100, &dedup)
+            .expect("cumulative at-threshold MUST fire");
         assert_eq!(fire.pattern_id, "delete-storm-cumulative");
         assert_eq!(fire.firing_rule, FiringRule::CumulativeOverBaseline);
     }
@@ -1414,15 +1427,8 @@ mod tests {
         let pattern = cumulative_count_pattern(10, 3600);
         let buffer = buffer_with(&pattern.pattern_id, 9, 1_700_000_000);
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
-        let last_fired = BTreeMap::new();
-        let out = evaluate_cumulative_over_baseline(
-            &pattern,
-            &buffer,
-            &key,
-            1,
-            1_700_000_100,
-            &last_fired,
-        );
+        let dedup = empty_dedup();
+        let out = cumulative(&pattern, &buffer, &key, 1, 1_700_000_100, &dedup);
         assert!(out.is_none());
     }
 
@@ -1432,21 +1438,11 @@ mod tests {
     fn evaluate_cumulative_distinct_count_fires_at_threshold() {
         // Three distinct refs + threshold=3 → fire.
         let pattern = fanout_distinct_pattern(3);
-        let buffer = buffer_with_resource_refs(
-            &pattern.pattern_id,
-            &["res-a", "res-b", "res-c"],
-        );
+        let buffer = buffer_with_resource_refs(&pattern.pattern_id, &["res-a", "res-b", "res-c"]);
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
-        let last_fired = BTreeMap::new();
-        let fire = evaluate_cumulative_over_baseline(
-            &pattern,
-            &buffer,
-            &key,
-            1,
-            1_700_000_100,
-            &last_fired,
-        )
-        .expect("distinct-count at-threshold MUST fire");
+        let dedup = empty_dedup();
+        let fire = cumulative(&pattern, &buffer, &key, 1, 1_700_000_100, &dedup)
+            .expect("distinct-count at-threshold MUST fire");
         assert_eq!(fire.pattern_id, "fanout-distinct-resources");
     }
 
@@ -1462,15 +1458,8 @@ mod tests {
         let buffer = buffer_with_resource_refs(&pattern.pattern_id, &refs);
         assert_eq!(buffer.events.len(), 10);
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
-        let last_fired = BTreeMap::new();
-        let out = evaluate_cumulative_over_baseline(
-            &pattern,
-            &buffer,
-            &key,
-            1,
-            1_700_000_100,
-            &last_fired,
-        );
+        let dedup = empty_dedup();
+        let out = cumulative(&pattern, &buffer, &key, 1, 1_700_000_100, &dedup);
         assert!(out.is_none(), "duplicates MUST NOT inflate distinct count");
     }
 
@@ -1480,15 +1469,8 @@ mod tests {
         let pattern = fanout_distinct_pattern(5);
         let buffer = buffer_with_resource_refs(&pattern.pattern_id, &["res-a", "res-b"]);
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
-        let last_fired = BTreeMap::new();
-        let out = evaluate_cumulative_over_baseline(
-            &pattern,
-            &buffer,
-            &key,
-            1,
-            1_700_000_100,
-            &last_fired,
-        );
+        let dedup = empty_dedup();
+        let out = cumulative(&pattern, &buffer, &key, 1, 1_700_000_100, &dedup);
         assert!(out.is_none());
     }
 
@@ -1499,19 +1481,11 @@ mod tests {
         let pattern = cumulative_count_pattern(10, 3600);
         let buffer = buffer_with(&pattern.pattern_id, 15, 1_700_000_000);
         let key = bucket_key_for(&pattern.pattern_id, "m-42");
-        let mut last_fired = BTreeMap::new();
-        last_fired.insert(
-            ("delete-storm-cumulative".to_string(), "m-42".to_string()),
-            1_700_000_050,
-        );
-        let out = evaluate_cumulative_over_baseline(
-            &pattern,
-            &buffer,
-            &key,
-            1,
-            1_700_000_100,
-            &last_fired,
-        );
+        let mut dedup = empty_dedup();
+        dedup
+            .observe("delete-storm-cumulative", "m-42", 1_700_000_050)
+            .unwrap();
+        let out = cumulative(&pattern, &buffer, &key, 1, 1_700_000_100, &dedup);
         assert!(out.is_none(), "dedup MUST suppress cumulative re-fire");
     }
 }
