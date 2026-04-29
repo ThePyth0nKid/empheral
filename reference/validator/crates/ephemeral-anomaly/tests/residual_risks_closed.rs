@@ -22,6 +22,18 @@
 //! `src/state.rs::tests`; this file pins them at the integration
 //! boundary so the behaviour is observable via the crate's PUBLIC
 //! API, not an implementation detail.
+//!
+//! 3. **`DetectorState: Send (NOT Sync)` post-Commit-D** — Commit D
+//!    moved the dedup bookkeeping behind a `Box<dyn DedupLedger +
+//!    Send>` field; the trait is intentionally NOT `Sync` so
+//!    persistent backends can hold their own internal mutex without
+//!    being forced through interior-mutability tricks.  A future
+//!    refactor that lifts the field to `Arc<dyn DedupLedger + Send +
+//!    Sync>` would silently re-introduce cross-thread read access
+//!    and undermine the per-backend mutex strategy.  The
+//!    `static_assertions` macros at the bottom of this file fire at
+//!    test-compile time (`cargo test` / `cargo check --tests`) so a
+//!    reversal breaks the test build, not just runtime behaviour.
 
 #![allow(clippy::unreadable_literal)]
 
@@ -29,6 +41,7 @@ use std::sync::Arc;
 
 use ephemeral_anomaly::test_fixtures::{delete_storm_pattern, fixture_detector_library};
 use ephemeral_anomaly::{CanonicalizedEvent, DetectorState, Outcome, StreamError};
+use static_assertions::{assert_impl_all, assert_not_impl_all};
 
 const ANCHOR: i64 = 1_800_000_000;
 
@@ -214,3 +227,29 @@ fn past_dated_floor_sanitizes_attacker_controlled_event_id() {
         other => panic!("expected PastDatedEventRejected, got {other:?}"),
     }
 }
+
+// -------------------------------------------------------------------
+// Risk #3 — `DetectorState: Send (NOT Sync)` post-Commit-D
+// -------------------------------------------------------------------
+//
+// Compile-time pins.  These macros expand to anonymous `const _:`
+// items that fail to compile if the auto-trait posture changes;
+// integration-test files compile under `cargo test` (and `cargo
+// check --tests`), not plain `cargo build`, so any developer running
+// the test suite or the project's clippy gate sees the regression.
+
+// `DetectorState` MUST stay `Send` so the orchestrator can move
+// per-tenant states across thread boundaries (worker-pool dispatch).
+assert_impl_all!(DetectorState: Send);
+
+// `DetectorState` MUST NOT be `Sync`.  Commit D's
+// `Box<dyn DedupLedger + Send>` field is the load-bearing reason: a
+// `&DetectorState` from two threads simultaneously would let both
+// observers call `dedup_ledger().is_suppressed(...)` in parallel,
+// and persistent backends typically synchronise their own internal
+// state under a backend-private mutex that does not extend
+// `&self`-shared semantics across thread boundaries.  Keeping
+// `Sync` off the auto-trait posture forces callers to use a higher-
+// level lock (per-tenant `Mutex<DetectorState>` or similar) and
+// makes the deployment-defined synchronisation strategy explicit.
+assert_not_impl_all!(DetectorState: Sync);

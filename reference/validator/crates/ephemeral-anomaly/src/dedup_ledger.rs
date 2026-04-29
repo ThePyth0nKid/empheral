@@ -243,11 +243,36 @@ pub trait DedupLedger: Send + std::fmt::Debug {
     /// Lifted onto the trait (not just the concrete in-memory type) so
     /// callers holding `&dyn DedupLedger` — most importantly
     /// [`crate::state::DetectorState::dedup_ledger`] consumers — can
-    /// introspect cardinality without downcast.  Cardinality is a
-    /// non-sensitive scalar (no fire-timing, no per-key data) so
-    /// exposing it on the trait does not violate the cross-tenant
-    /// metadata-leak constraint that keeps `last_fired_at` off the
-    /// trait.
+    /// introspect cardinality without downcast.  Cardinality is
+    /// non-sensitive *relative to cross-tenant metadata* (no
+    /// fire-timing, no per-key data exposed to other tenants); a
+    /// tenant observing its own ledger's `len` learns only its own
+    /// firing cardinality, which is already implicit in operator-side
+    /// capacity logging on
+    /// [`DedupLedgerError::CapacityExhausted`].  Exposing it on the
+    /// trait therefore does not violate the cross-tenant metadata-leak
+    /// constraint that keeps `last_fired_at` off the trait.
+    ///
+    /// # Performance contract
+    ///
+    /// The in-memory default ([`InMemoryDedupLedger`]) answers in
+    /// `O(1)` (`BTreeMap::len` is a constant-time field read).
+    /// Persistent backends (disk, RocksDB, Postgres) MAY answer in
+    /// `O(n)` if they cannot maintain a constant-time count alongside
+    /// their primary index — backends that diverge from `O(1)` MUST
+    /// document the cost in their own type-level docs.
+    ///
+    /// Callers SHOULD treat `len` as a stat-collection / observability
+    /// surface (operator dashboards, capacity-planning, post-mortem
+    /// telemetry) rather than a per-event hot-path call.  The
+    /// in-tree call sites — capacity logging on
+    /// [`DedupLedgerError::CapacityExhausted`] surface and rotation
+    /// post-conditions in [`crate::orchestrator::AuditOrchestrator`] —
+    /// satisfy this contract; new call sites MUST NOT call `len` from
+    /// inside the per-event evaluator path
+    /// ([`crate::state::DetectorState::evaluate_all`] tight loop) where
+    /// an `O(n)` backend would impose an `O(n × m)` cost on every
+    /// stream tick.
     fn len(&self) -> usize;
 
     /// `true` iff [`Self::len`] is zero.

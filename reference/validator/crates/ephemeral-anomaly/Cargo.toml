@@ -61,3 +61,10 @@ serde_json = { workspace = true }
 # workspace dep so classifier and anomaly share one resolver node.
 sha2 = { workspace = true }
 hex = { workspace = true }
+# Compile-time Send/Sync regression-pin macros.  Used by
+# `tests/residual_risks_closed.rs` to lock the post-Commit-D
+# `DetectorState: Send (NOT Sync)` posture so a future refactor that
+# swaps `Box<dyn DedupLedger + Send>` for `Arc<dyn ... + Send + Sync>`
+# breaks compilation rather than silently re-introducing cross-thread
+# read access (which would undermine the per-backend mutex strategy).
+static_assertions = { workspace = true }

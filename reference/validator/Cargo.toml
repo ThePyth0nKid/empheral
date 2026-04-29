@@ -66,6 +66,12 @@ zeroize = "1.8"
 # in the dep graph would hash-compare byte-equal but produce a
 # double-inclusion lockfile-resolver surprise at version-bump time.
 sha2 = "0.10"
+# `static_assertions` provides compile-time `assert_impl_all!` /
+# `assert_not_impl_all!` macros.  Used as a dev-dep only — production
+# code does not need the macros at runtime.  Pinned at workspace level
+# so any crate that adds a Send/Sync regression-pin in the future
+# resolves to the same node.
+static_assertions = "1.1"
 
 [profile.release]
 lto = "thin"
