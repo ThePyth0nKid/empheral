@@ -39,6 +39,17 @@
 //!   rotations, so preserved entries could silently mis-suppress
 //!   renamed patterns).
 //!
+//! Beyond the four security-load-bearing methods above, the trait
+//! exposes an **observability tier** ([`DedupLedger::len`],
+//! [`DedupLedger::is_empty`], [`DedupLedger::flush`],
+//! [`DedupLedger::stats`]) intended for operator dashboards,
+//! capacity-planning, and rotation post-conditions.  These are
+//! default-implemented or `O(1)`-on-in-memory and MUST NOT be
+//! called from the per-event evaluator hot path; persistent
+//! backends MAY incur higher cost on the observability tier and
+//! are required to document any divergence from the `O(1)`
+//! in-memory contract on their own type-level docs.
+//!
 //! # SEC-D-4 — Snapshot replay
 //!
 //! A persistent backend that recovers from a snapshot taken before
@@ -281,6 +292,133 @@ pub trait DedupLedger: Send + std::fmt::Debug {
     /// if they can answer cheaper than counting.
     fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// Force any buffered writes to durable storage.
+    ///
+    /// The default impl is a no-op returning `Ok(())` — appropriate
+    /// for backends whose [`Self::observe`] writes are already durable
+    /// at call return (the in-memory default ([`InMemoryDedupLedger`])
+    /// has no buffer; the `BTreeMap::insert` is the durable surface).
+    ///
+    /// Persistent backends (disk, RocksDB, Postgres) MUST override
+    /// this method whenever their `observe` defers the durable write
+    /// — otherwise a process crash between `observe` and the next
+    /// implicit flush (e.g. on rotation via [`Self::clear`]) silently
+    /// loses fire-bookmarks, which downgrades the deployment to the
+    /// Commit-A duplicate-tolerance contract (§11.2) without the
+    /// caller having opted into that.  Backends that defer writes
+    /// MUST document the durability semantics on their type-level
+    /// docs so callers can reason about crash-window exposure.
+    ///
+    /// The "MUST override on a deferring backend" obligation is a
+    /// **correctness / durability** concern, not a security control:
+    /// a missing override only degrades dedup quality across a
+    /// crash boundary (downstream consumers are already
+    /// duplicate-tolerant per §11.2), and an attacker who can
+    /// crash the process has crossed a more fundamental trust
+    /// boundary already.  This is documented here so future
+    /// auditors do not re-litigate the threat-model classification.
+    ///
+    /// Lifted onto the trait (default-impl-shielded) rather than
+    /// added as a future-Commit so that downstream consumers binding
+    /// against the C.4 trait shape do not have to re-compile when
+    /// the first persistent backend lands; the surface is stable.
+    ///
+    /// # Errors
+    ///
+    /// Persistent backends may raise
+    /// [`DedupLedgerError::BackendFailure`] if the durable write
+    /// fails (disk full, fsync error, etc.).  The in-memory default
+    /// is infallible.
+    fn flush(&mut self) -> Result<(), DedupLedgerError> {
+        Ok(())
+    }
+
+    /// Snapshot of operator-observable backend metrics.
+    ///
+    /// The default impl derives [`DedupLedgerStats::entry_count`]
+    /// from [`Self::len`] — appropriate for backends whose only
+    /// stat-of-interest is the entry count.  Persistent backends
+    /// MAY override to surface backend-specific telemetry through
+    /// the same struct (the `#[non_exhaustive]` posture on
+    /// [`DedupLedgerStats`] permits additive fields without
+    /// breaking downstream exhaustive matches; future fields would
+    /// arrive alongside a `with_*` builder method on
+    /// [`DedupLedgerStats`]).
+    ///
+    /// # Performance contract
+    ///
+    /// The default impl inherits [`Self::len`]'s performance
+    /// contract — `O(1)` on the in-memory default, MAY be `O(n)`
+    /// on persistent backends.  Persistent backends whose `len`
+    /// is `O(n)` MUST override `stats` to maintain `O(1)` (e.g.
+    /// by reading a counter the backend already maintains
+    /// alongside its primary index).  Without that override,
+    /// `stats` becomes a hidden `O(n)` per-call, which would
+    /// surprise operators using it as a polling-rate dashboard
+    /// metric.
+    ///
+    /// Like [`Self::len`], `stats` is intended for stat-collection
+    /// and capacity-planning surfaces — operator dashboards,
+    /// post-mortem telemetry, rotation post-conditions — never the
+    /// per-event evaluator hot path.
+    fn stats(&self) -> DedupLedgerStats {
+        DedupLedgerStats::with_entry_count(self.len())
+    }
+}
+
+/// Operator-observable snapshot of a [`DedupLedger`]'s backend
+/// metrics.
+///
+/// Returned by [`DedupLedger::stats`].  `#[non_exhaustive]` so
+/// future persistent backends can introduce additional metric
+/// fields (e.g. `cache_hit_rate`, `bytes_on_disk`) without breaking
+/// downstream exhaustive constructions or matches.  Cross-crate
+/// callers construct via [`DedupLedgerStats::with_entry_count`];
+/// tests within this crate may struct-literal-construct directly.
+///
+/// The `with_*`-prefixed constructor name is deliberate: as
+/// additional metric fields land they will arrive as further
+/// `with_<field>` chainable methods, mirroring the
+/// [`InMemoryDedupLedger::with_cap`] pattern used elsewhere in
+/// this module.  A bare `new(...)` taking a positional argument
+/// list would be hostile to future-additivity — every field
+/// addition would either rebreak the signature or strand callers
+/// on a frozen-shape constructor next to the chainable surface.
+///
+/// `Eq` is intentionally **not** derived: `entry_count` is a
+/// `usize` today, but adding any `f64` field in a future commit
+/// (e.g. `cache_hit_rate`) would silently fail to compile `Eq`,
+/// forcing its removal — a breaking change under semver.
+/// Pre-emptive `PartialEq`-only avoids that forced removal.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct DedupLedgerStats {
+    /// Distinct `(pattern_id, mandate_id)` entries currently held
+    /// by the backend.  Equivalent to [`DedupLedger::len`] for the
+    /// default [`DedupLedger::stats`] implementation.
+    pub entry_count: usize,
+}
+
+impl DedupLedgerStats {
+    /// Construct a stats snapshot with the given `entry_count`.
+    ///
+    /// Cross-crate callers — primarily persistent-backend
+    /// implementors overriding [`DedupLedger::stats`] — use this
+    /// constructor because the `#[non_exhaustive]` posture forbids
+    /// struct-literal construction from outside this crate.
+    ///
+    /// Future additive fields will arrive as further `with_*`
+    /// chainable methods, leaving this constructor's signature
+    /// stable.  Callers using only `with_entry_count` after such
+    /// a field lands will see the new field default-initialised
+    /// to its `Default` (e.g. `0` for numeric, `None` for option);
+    /// operator-dashboard code that reads new fields MUST chain
+    /// the corresponding `with_*` setter to surface accurate data
+    /// rather than silent zeros.
+    pub fn with_entry_count(entry_count: usize) -> Self {
+        Self { entry_count }
     }
 }
 
@@ -642,6 +780,118 @@ mod tests {
         let display = format!("{err}");
         assert!(display.contains("rocksdb: io error"));
         assert!(display.contains("backend failure"));
+    }
+
+    #[test]
+    fn in_memory_flush_is_noop_ok_and_preserves_state() {
+        // Default-impl `flush` on the in-memory backend MUST be a
+        // no-op returning `Ok(())` — the BTreeMap insert in
+        // `observe` is the durable surface, no buffer to drain.
+        // A regression that overrode `flush` with a state-clearing
+        // body would silently drop fire-bookmarks at every flush
+        // point (rotation post-condition, end-of-stream tick, etc.)
+        // and degrade dedup correctness without surfacing an error.
+        let mut ledger = InMemoryDedupLedger::new();
+        ledger
+            .observe("delete-storm", "m-42", 1_700_000_070)
+            .unwrap();
+        assert_eq!(ledger.len(), 1);
+
+        ledger.flush().expect("in-memory flush is infallible");
+
+        // State preserved across flush (anti-clear regression pin).
+        assert_eq!(ledger.len(), 1);
+        assert_eq!(
+            ledger.last_fired_at("delete-storm", "m-42"),
+            Some(1_700_000_070)
+        );
+        let suppressed = ledger
+            .is_suppressed("delete-storm", "m-42", 1_700_000_100, 60)
+            .unwrap();
+        assert!(suppressed, "fire bookmark must survive flush");
+    }
+
+    #[test]
+    fn in_memory_stats_entry_count_matches_len_across_lifecycle() {
+        // Default-impl `stats` derives `entry_count` from `len`.
+        // Pin the parity across the buffer's lifecycle (empty,
+        // single, multi, post-clear) so a regression that diverges
+        // the two — e.g. a future override that reads from a stale
+        // cached counter — is caught.
+        let mut ledger = InMemoryDedupLedger::new();
+
+        // Empty
+        assert_eq!(ledger.stats(), DedupLedgerStats::with_entry_count(0));
+        assert_eq!(ledger.stats().entry_count, ledger.len());
+
+        // Single
+        ledger.observe("p1", "m-a", 1_700_000_000).unwrap();
+        assert_eq!(ledger.stats(), DedupLedgerStats::with_entry_count(1));
+        assert_eq!(ledger.stats().entry_count, ledger.len());
+
+        // Multi (3 distinct keys)
+        ledger.observe("p1", "m-b", 1_700_000_000).unwrap();
+        ledger.observe("p2", "m-a", 1_700_000_000).unwrap();
+        assert_eq!(ledger.stats(), DedupLedgerStats::with_entry_count(3));
+        assert_eq!(ledger.stats().entry_count, ledger.len());
+
+        // Overwrite of an existing key MUST NOT inflate entry_count
+        ledger.observe("p1", "m-a", 1_700_000_050).unwrap();
+        assert_eq!(ledger.stats(), DedupLedgerStats::with_entry_count(3));
+        assert_eq!(ledger.stats().entry_count, ledger.len());
+
+        // Post-clear
+        ledger.clear().unwrap();
+        assert_eq!(ledger.stats(), DedupLedgerStats::with_entry_count(0));
+        assert_eq!(ledger.stats().entry_count, ledger.len());
+    }
+
+    #[test]
+    fn dedup_ledger_stats_constructor_clone_partial_eq_round_trip() {
+        // Cross-crate callers override `stats` and construct via
+        // `DedupLedgerStats::with_entry_count` because
+        // `#[non_exhaustive]` forbids struct-literal construction.
+        // Pin Clone+PartialEq so a regression that diverges the
+        // two — e.g. accidentally hand-rolling PartialEq with a
+        // custom comparator — surfaces here, separate from the
+        // Debug-surface pin below.
+        let s = DedupLedgerStats::with_entry_count(42);
+        assert_eq!(s.entry_count, 42);
+        let cloned = s.clone();
+        assert_eq!(s, cloned);
+    }
+
+    #[test]
+    fn dedup_ledger_stats_debug_surface_includes_struct_name_and_count() {
+        // Operator dashboards / log lines render `DedupLedgerStats`
+        // via `Debug`.  Pin both the struct-name and the count so
+        // a regression that swapped to a tuple-struct or stripped
+        // the field name would surface here.  Kept separate from
+        // the Clone/PartialEq pin so a Debug-only regression does
+        // not masquerade as an equality bug.
+        let s = DedupLedgerStats::with_entry_count(42);
+        let rendered = format!("{s:?}");
+        assert!(rendered.contains("42"), "Debug must surface count");
+        assert!(
+            rendered.contains("DedupLedgerStats"),
+            "Debug must name the struct"
+        );
+    }
+
+    #[test]
+    fn flush_and_stats_dispatch_through_box_dyn() {
+        // Trait-object pin: both new methods MUST be reachable via
+        // `Box<dyn DedupLedger>` so a persistent backend wrapped in
+        // a Box at construction (the canonical
+        // `DetectorState::with_ledger` injection path) can have
+        // `flush` and `stats` called on it without downcast.  A
+        // regression that accidentally added a generic parameter
+        // to either method would break object-safety and fail this
+        // test at compile time.
+        let mut boxed: Box<dyn DedupLedger> = Box::new(InMemoryDedupLedger::new());
+        boxed.observe("p1", "m-a", 1_700_000_000).unwrap();
+        boxed.flush().expect("dispatch-via-dyn flush works");
+        assert_eq!(boxed.stats(), DedupLedgerStats::with_entry_count(1));
     }
 
     #[test]

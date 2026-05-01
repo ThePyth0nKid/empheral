@@ -129,7 +129,8 @@ pub mod state;
 pub mod test_fixtures;
 
 pub use dedup_ledger::{
-    DedupLedger, DedupLedgerError, InMemoryDedupLedger, MAX_DEDUP_ENTRIES_PER_TENANT,
+    DedupLedger, DedupLedgerError, DedupLedgerStats, InMemoryDedupLedger,
+    MAX_DEDUP_ENTRIES_PER_TENANT,
 };
 pub use errors::{AnomalyLibError, FiringCompanionFailure, StreamError};
 pub use event::{
