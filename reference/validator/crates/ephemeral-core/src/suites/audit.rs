@@ -467,6 +467,7 @@ pub(crate) fn wire_code(err: &StreamError) -> &'static str {
         StreamError::PerMandateCapReached { .. } => "audit-replay-stream-per-mandate-cap-reached",
         StreamError::ClockRegression { .. } => "audit-replay-stream-clock-regression",
         StreamError::PastDatedEventRejected { .. } => "audit-replay-stream-past-dated-event",
+        StreamError::DedupLedgerFailure { .. } => "audit-replay-stream-dedup-ledger-failure",
         _ => "audit-replay-stream-unknown-variant",
     }
 }
@@ -693,7 +694,7 @@ mod tests {
         assert_eq!(sorted.len(), 3, "ranks must be pairwise distinct");
     }
 
-    // ---------------- wire_code mapping (9 variants + wildcard) -------
+    // ---------------- wire_code mapping (10 variants + wildcard) ------
 
     #[test]
     fn wire_code_maps_expansion_exceeded() {
@@ -777,6 +778,16 @@ mod tests {
                 floor: 1_000_000,
             }),
             "audit-replay-stream-past-dated-event"
+        );
+    }
+
+    #[test]
+    fn wire_code_maps_dedup_ledger_failure() {
+        assert_eq!(
+            wire_code(&StreamError::DedupLedgerFailure {
+                reason: "rocksdb: io error".into(),
+            }),
+            "audit-replay-stream-dedup-ledger-failure"
         );
     }
 

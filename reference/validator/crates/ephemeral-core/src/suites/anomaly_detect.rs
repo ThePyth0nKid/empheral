@@ -544,7 +544,7 @@ mod tests {
         assert_eq!(sorted.len(), 3, "ranks must be pairwise distinct");
     }
 
-    // ---------------- wire_code mapping (9 variants + wildcard) -------------
+    // ---------------- wire_code mapping (10 variants + wildcard) -----------
 
     #[test]
     fn wire_code_maps_expansion_exceeded() {
